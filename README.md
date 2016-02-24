@@ -3,7 +3,7 @@
 
 A golang AWS S3 fake server.
 
-A 'poor mans' object storage based on [BoltDB](https://github.com/boltdb/bolt).
+A _poor man's_ object storage based on [BoltDB](https://github.com/boltdb/bolt).
 
 ```
   s3client -> [gofakes3:9000] -- Get    Bucket (List)
