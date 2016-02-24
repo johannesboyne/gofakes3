@@ -59,18 +59,34 @@ func (g *GoFakeS3) StartServer() {
 	// BUCKET
 	r.HandleFunc("/", g.GetBucket).Methods("GET")
 	r.HandleFunc("/", g.CreateBucket).Methods("PUT")
-	r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
+	//r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
 	r.HandleFunc("/", g.DeleteBucket).Methods("DELETE")
 	r.HandleFunc("/", g.HeadBucket).Methods("HEAD")
 	// OBJECT
 	r.HandleFunc("/{ObjectName:.{1,}}", g.GetObject).Methods("GET")
 	r.HandleFunc("/{ObjectName:.{1,}}", g.CreateObject).Methods("PUT")
-	r.HandleFunc("/", g.CreateObject).Methods("POST")
+	r.HandleFunc("/{ObjectName:.{0,}}", g.CreateObject).Methods("POST")
 	r.HandleFunc("/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
 	r.HandleFunc("/{ObjectName:.{1,}}", g.HeadObject).Methods("HEAD")
 
-	http.Handle("/", r)
-	http.ListenAndServe(":9000", nil)
+	r.Handle("/{path:.{1,}}", &WithCORS{r})
+
+	http.ListenAndServe(":9000", r)
+}
+
+type WithCORS struct {
+	r *mux.Router
+}
+
+func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-*")
+	if r.Method == "OPTIONS" {
+		log.Println(" -> options")
+		return
+	}
+	s.r.ServeHTTP(w, r)
 }
 
 // GetBucket lists the contents of a bucket.
@@ -155,17 +171,28 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CreateBucket creates a new S3 bucket in the BoltDB storage.
+// DeleteBucket creates a new S3 bucket in the BoltDB storage.
 func (g *GoFakeS3) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "delete bucket")
 }
 
 // HeadBucket checks whether a bucket exists.
 func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
-	//@TODO(jb): implement
-	vars := mux.Vars(r)
-	log.Println("HEAD BUCKET", vars["BucketName"])
-	io.WriteString(w, "head bucket")
+	bucketName := strings.Replace(r.Host, ".localhost:9000", "", -1)
+	log.Println("HEAD BUCKET", bucketName)
+	log.Println("bucketname:", bucketName)
+	g.storage.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			log.Println("no bucket")
+			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+		}
+		w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
+		w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
+		w.Header().Set("Server", "AmazonS3")
+		w.Write([]byte{})
+		return nil
+	})
 }
 
 // GetObject retrievs a bucket object.
@@ -233,7 +260,7 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 	meta["Last-Modified"] = time.Now().Format("Mon, 2 Jan 2006 15:04:05 MST")
 
 	obj := &Object{meta, body}
-	log.Println(string(body))
+
 	g.storage.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
@@ -251,6 +278,7 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("error while creating")
 		}
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 		w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 		w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
@@ -291,7 +319,6 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 			panic(err)
 		}
 		hash := md5.Sum(t.Obj)
-		fmt.Printf("The answer is: %s\n", v)
 		w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 		w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 		for mk, mv := range t.Metadata {
