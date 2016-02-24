@@ -34,3 +34,28 @@ A 'poor mans' object storage based on [BoltDB](https://github.com/boltdb/bolt).
 ## What to use it for?
 
 We're using it in combination with local running AWS lambda functions.
+
+## How to use it?
+
+Do not use it at the moment ;-) I'll have to tune and refactor it a bit before.
+But, you'll have to do the following:
+
+- change `/etc/hosts`: 127.0.0.1 <bucket-name>.localhost
+- start the gofakes3 service
+
+```javascript
+var AWS   = require('aws-sdk')
+
+var ep = new AWS.Endpoint('http://localhost:9000');
+var s3 = new AWS.S3({endpoint: ep});
+
+exports.handle = function (e, ctx) {
+  s3.createBucket({
+    Bucket: '<bucket-name>',
+  }, function(err, data) {
+    if (err) return console.log(err, err.stack);
+    ctx.succeed(data)
+  });
+}
+```
+
