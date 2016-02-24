@@ -1,4 +1,3 @@
-//go:generate mockgen -destination mock/s3iface.go  github.com/aws/aws-sdk-go/service/s3/s3iface S3API
 package gofakes3
 
 import (
@@ -52,8 +51,8 @@ func New() *GoFakeS3 {
 	return &GoFakeS3{storage: db}
 }
 
-// Start the AWS S3 API, port 9000
-func (g *GoFakeS3) StartServer() {
+// Create the AWS S3 API
+func (g *GoFakeS3) Server() http.Handler {
 	r := mux.NewRouter()
 	r.Queries("marker", "prefix")
 	// BUCKET
@@ -71,7 +70,7 @@ func (g *GoFakeS3) StartServer() {
 
 	r.Handle("/{path:.{1,}}", &WithCORS{r})
 
-	http.ListenAndServe(":9000", r)
+	return r
 }
 
 type WithCORS struct {
@@ -83,7 +82,6 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-*")
 	if r.Method == "OPTIONS" {
-		log.Println(" -> options")
 		return
 	}
 	s.r.ServeHTTP(w, r)

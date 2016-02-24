@@ -1,10 +1,12 @@
 package main
 
 import (
+	"net/http"
+
 	"github.com/johannesboyne/gofakes3"
 )
 
 func main() {
 	faker := gofakes3.New()
-	faker.StartServer()
+	http.ListenAndServe(":9000", faker.Server())
 }
