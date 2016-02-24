@@ -1,3 +1,4 @@
+![Logo](/GoFakeS3.png)
 # AWS (GOFAKE)S3 
 
 A golang AWS S3 fake server.
