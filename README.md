@@ -40,7 +40,7 @@ We're using it in combination with local running AWS lambda functions.
 Do not use it at the moment ;-) I'll have to tune and refactor it a bit before.
 But, you'll have to do the following:
 
-- change `/etc/hosts`: 127.0.0.1 <bucket-name>.localhost
+- change `/etc/hosts`: `127.0.0.1 <bucket-name>.localhost`
 - start the gofakes3 service
 
 ```javascript
