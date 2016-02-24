@@ -34,7 +34,7 @@ A _poor man's_ object storage based on [BoltDB](https://github.com/boltdb/bolt).
 
 ## What to use it for?
 
-We're using it in combination with local running AWS lambda functions.
+We're using it for running AWS lambda functions locally and to test browser based direct uploads to S3 locally.
 
 ## How to use it?
 
