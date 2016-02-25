@@ -59,7 +59,6 @@ func (g *GoFakeS3) Server() http.Handler {
 	// BUCKET
 	r.HandleFunc("/{BucketName}", g.GetBucket).Methods("GET")
 	r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
-	//r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
 	r.HandleFunc("/{BucketName}", g.DeleteBucket).Methods("DELETE")
 	r.HandleFunc("/{BucketName}", g.HeadBucket).Methods("HEAD")
 	// OBJECT
@@ -79,7 +78,7 @@ type WithCORS struct {
 func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename, x-amz-meta-private")
 	if r.Method == "OPTIONS" {
 		return
 	}
