@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -41,8 +42,8 @@ type Object struct {
 }
 
 // Setup a new fake object storage
-func New() *GoFakeS3 {
-	db, err := bolt.Open("locals3.db", 0600, nil)
+func New(dbname string) *GoFakeS3 {
+	db, err := bolt.Open(dbname, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,21 +57,19 @@ func (g *GoFakeS3) Server() http.Handler {
 	r := mux.NewRouter()
 	r.Queries("marker", "prefix")
 	// BUCKET
-	r.HandleFunc("/", g.GetBucket).Methods("GET")
-	r.HandleFunc("/", g.CreateBucket).Methods("PUT")
+	r.HandleFunc("/{BucketName}", g.GetBucket).Methods("GET")
+	r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
 	//r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
-	r.HandleFunc("/", g.DeleteBucket).Methods("DELETE")
-	r.HandleFunc("/", g.HeadBucket).Methods("HEAD")
+	r.HandleFunc("/{BucketName}", g.DeleteBucket).Methods("DELETE")
+	r.HandleFunc("/{BucketName}", g.HeadBucket).Methods("HEAD")
 	// OBJECT
-	r.HandleFunc("/{ObjectName:.{1,}}", g.GetObject).Methods("GET")
-	r.HandleFunc("/{ObjectName:.{1,}}", g.CreateObject).Methods("PUT")
-	r.HandleFunc("/{ObjectName:.{0,}}", g.CreateObject).Methods("POST")
-	r.HandleFunc("/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
-	r.HandleFunc("/{ObjectName:.{1,}}", g.HeadObject).Methods("HEAD")
+	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.GetObject).Methods("GET")
+	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.CreateObject).Methods("PUT")
+	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.CreateObject).Methods("POST")
+	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
+	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.HeadObject).Methods("HEAD")
 
-	r.Handle("/{path:.{1,}}", &WithCORS{r})
-
-	return r
+	return &WithCORS{r}
 }
 
 type WithCORS struct {
@@ -80,10 +79,23 @@ type WithCORS struct {
 func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-*")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename")
 	if r.Method == "OPTIONS" {
 		return
 	}
+	// Bucket name rewriting
+	// this is due to some inconsistencies in the AWS SDKs
+	re := regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})")
+	bucket := re.ReplaceAllString(r.Host, "")
+	if len(bucket) > 0 {
+		p := r.URL.Path
+		r.URL.Path = "/" + bucket
+		if p != "/" {
+			r.URL.Path += p
+		}
+	}
+	log.Println("=>", r.URL)
+
 	s.r.ServeHTTP(w, r)
 }
 
@@ -113,7 +125,6 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			fmt.Printf("%v %s %s\n", strings.Contains(string(k), r.URL.Query().Get("prefix")), string(k), r.URL.Query().Get("prefix"))
 			if strings.Contains(string(k), r.URL.Query().Get("prefix")) {
 				hash := md5.Sum(v)
 				bucketc.Contents = append(bucketc.Contents, &Content{
@@ -128,9 +139,6 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					panic(err)
 				}
-				log.Println(t)
-			} else {
-				fmt.Printf("%s | %s\n", string(k), r.URL.Query().Get("prefix"))
 			}
 		}
 
@@ -148,12 +156,12 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	var bucketName string
+	log.Println("CREATE BUCKET:", bucketName)
 	if len(vars["BucketName"]) > 0 {
 		bucketName = vars["BucketName"]
 	} else {
 		bucketName = strings.Replace(r.Host, ".localhost:9000", "", -1)
 	}
-	log.Println("CREATE BUCKET:", bucketName)
 
 	g.storage.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucket([]byte(bucketName))
@@ -176,7 +184,8 @@ func (g *GoFakeS3) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 
 // HeadBucket checks whether a bucket exists.
 func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
-	bucketName := strings.Replace(r.Host, ".localhost:9000", "", -1)
+	vars := mux.Vars(r)
+	bucketName := vars["BucketName"]
 	log.Println("HEAD BUCKET", bucketName)
 	log.Println("bucketname:", bucketName)
 	g.storage.View(func(tx *bolt.Tx) error {
@@ -197,7 +206,7 @@ func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
 func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	log.Println("GET OBJECT")
 	vars := mux.Vars(r)
-	bucketName := strings.Replace(r.Host, ".localhost:9000", "", -1)
+	bucketName := vars["BucketName"]
 	log.Println("Bucket:", bucketName)
 	log.Println("└── Object:", vars["ObjectName"])
 
@@ -212,6 +221,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			log.Println("no object")
 			http.Error(w, "object does not exist", http.StatusInternalServerError)
+			return nil
 		}
 		t := Object{}
 		err := bson.Unmarshal(v, &t)

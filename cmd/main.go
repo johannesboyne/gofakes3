@@ -7,6 +7,6 @@ import (
 )
 
 func main() {
-	faker := gofakes3.New()
+	faker := gofakes3.New("locals3.db")
 	http.ListenAndServe(":9000", faker.Server())
 }
