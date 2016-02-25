@@ -84,9 +84,10 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Bucket name rewriting
 	// this is due to some inconsistencies in the AWS SDKs
-	re := regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})")
+	re := regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})|(localhost:\\d{1,7})")
 	bucket := re.ReplaceAllString(r.Host, "")
 	if len(bucket) > 0 {
+		log.Println("rewrite bucket ->", bucket)
 		p := r.URL.Path
 		r.URL.Path = "/" + bucket
 		if p != "/" {
@@ -101,8 +102,8 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // GetBucket lists the contents of a bucket.
 func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 	log.Println("GET BUCKET")
-
-	bucketName := strings.Replace(r.Host, ".localhost:9000", "", -1)
+	vars := mux.Vars(r)
+	bucketName := vars["BucketName"]
 
 	log.Println("bucketname:", bucketName)
 	log.Println("prefix    :", r.URL.Query().Get("prefix"))
@@ -154,13 +155,8 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 // CreateBucket creates a new S3 bucket in the BoltDB storage.
 func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	var bucketName string
+	bucketName := vars["BucketName"]
 	log.Println("CREATE BUCKET:", bucketName)
-	if len(vars["BucketName"]) > 0 {
-		bucketName = vars["BucketName"]
-	} else {
-		bucketName = strings.Replace(r.Host, ".localhost:9000", "", -1)
-	}
 
 	g.storage.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucket([]byte(bucketName))
@@ -246,12 +242,8 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 // CreateObject creates a new S3 object.
 func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	var bucketName string
-	if len(vars["BucketName"]) > 0 {
-		bucketName = vars["BucketName"]
-	} else {
-		bucketName = strings.Replace(r.Host, ".localhost:9000", "", -1)
-	}
+	bucketName := vars["BucketName"]
+
 	log.Println("CREATE OBJECT:", bucketName, vars["ObjectName"])
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -337,5 +329,4 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte{})
 		return nil
 	})
-
 }
