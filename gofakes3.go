@@ -66,7 +66,7 @@ func (g *GoFakeS3) Server() http.Handler {
 	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.CreateObject).Methods("PUT")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.CreateObject).Methods("POST")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
-	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.HeadObject).Methods("HEAD")
+	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.HeadObject).Methods("HEAD")
 
 	return &WithCORS{r}
 }
@@ -296,7 +296,7 @@ func (g *GoFakeS3) DeleteObject(w http.ResponseWriter, r *http.Request) {
 func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 	log.Println("HEAD OBJECT")
 	vars := mux.Vars(r)
-	bucketName := strings.Replace(r.Host, ".localhost:9000", "", -1)
+	bucketName := vars["BucketName"]
 	log.Println("Bucket:", bucketName)
 	log.Println("└── Object:", vars["ObjectName"])
 

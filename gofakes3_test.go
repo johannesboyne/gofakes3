@@ -1,8 +1,7 @@
 package gofakes3_test
 
 import (
-	"fmt"
-
+	"bytes"
 	"net/http/httptest"
 	"testing"
 
@@ -24,15 +23,38 @@ func TestCreateBucket(t *testing.T) {
 	config.WithRegion("mine")
 
 	svc := s3.New(session.New(), config)
-	resp, err := svc.HeadBucket(&s3.HeadBucketInput{
-		Bucket: aws.String("BucketName"), // Required
-	})
 
-	if err != nil {
-		fmt.Println(err.Error())
-		return
+	_, err := svc.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String("BucketName"),
+	})
+	_, err = svc.HeadBucket(&s3.HeadBucketInput{
+		Bucket: aws.String("BucketName"),
+	})
+	_, err = svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String("BucketName"),
+		Key:    aws.String("ObjectKey"),
+		Body:   bytes.NewReader([]byte("{\"test\": \"foo\"}")),
+		Metadata: map[string]*string{
+			"Key": aws.String("MetadataValue"),
+		},
+	})
+	obj, _ := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String("BucketName"),
+		Key:    aws.String("ObjectKey"),
+	})
+	head, _ := svc.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String("BucketName"),
+		Key:    aws.String("ObjectKey"),
+	})
+	if *obj.ContentLength != 15 {
+		t.Error("wrong content length")
+	}
+	if *head.ETag != "\"b2cf3fa731f5d49f742992d020537c4d\"" {
+		t.Error("wrong head")
 	}
 
-	fmt.Println(resp)
-
+	if err != nil {
+		t.Errorf("ERROR:\n%+v\n", err)
+		return
+	}
 }
