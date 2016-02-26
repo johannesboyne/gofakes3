@@ -63,4 +63,4 @@ exports.handle = function (e, ctx) {
 ```
 ## Missing
 
-- [ ] Delete Buckets and Objects
+- [] Delete Buckets and Objects
