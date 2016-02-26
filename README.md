@@ -39,7 +39,9 @@ We're using it for running AWS lambda functions locally and to test browser base
 ## How to use it?
 
 Do not use it at the moment ;-) I'll have to tune and refactor it a bit before.
-But, you'll have to do the following:
+Please feel free to check it out and to provide usefull feedback (using github issues)!
+
+For seting it up locally, you'll have to do the following:
 
 - change `/etc/hosts`: `127.0.0.1 <bucket-name>.localhost`
 - start the gofakes3 service
@@ -59,4 +61,6 @@ exports.handle = function (e, ctx) {
   });
 }
 ```
+## Missing
 
+- [ ] Delete Buckets and Objects
