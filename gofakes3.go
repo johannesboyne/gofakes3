@@ -57,6 +57,7 @@ func (g *GoFakeS3) Server() http.Handler {
 	r := mux.NewRouter()
 	r.Queries("marker", "prefix")
 	// BUCKET
+	r.HandleFunc("/", g.GetBuckets).Methods("GET")
 	r.HandleFunc("/{BucketName}", g.GetBucket).Methods("GET")
 	r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
 	r.HandleFunc("/{BucketName}", g.DeleteBucket).Methods("DELETE")
@@ -97,6 +98,19 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Println("=>", r.URL)
 
 	s.r.ServeHTTP(w, r)
+}
+
+// Get a list of all Buckets
+func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01">
+  <Owner>
+    <ID>bcaf1ffd86f461ca5fb16fd081034f</ID>
+    <DisplayName>webfile</DisplayName>
+  </Owner>
+  <Buckets>
+  </Buckets>
+</ListAllMyBucketsResult>`))
 }
 
 // GetBucket lists the contents of a bucket.
