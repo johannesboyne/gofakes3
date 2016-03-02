@@ -2,6 +2,8 @@ build:
   image: drone/golang:1.5
   environment:
     - GO15VENDOREXPERIMENT=1
+    - AWS_ACCESS_KEY_ID=AKID1234567890
+    - AWS_SECRET_ACCESS_KEY=MY-SECRET-KEY
   commands:
     - |
     git submodule init
