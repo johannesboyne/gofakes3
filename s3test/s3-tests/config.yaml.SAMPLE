@@ -1,0 +1,82 @@
+fixtures:
+## All the buckets created will start with this prefix;
+## {random} will be filled with random characters to pad
+## the prefix to 30 characters long, and avoid collisions
+  bucket prefix: YOURNAMEHERE-{random}-
+
+file_generation:
+  groups:
+## File generation works by creating N groups of files. Each group of
+## files is defined by three elements: number of files, avg(filesize),
+## and stddev(filesize) -- in that order.
+    - [1, 2, 3]
+    - [4, 5, 6]
+
+## Config for the readwrite tool.
+## The readwrite tool concurrently reads and writes to files in a
+## single bucket for a set duration.
+## Note: the readwrite tool does not need the s3.alt connection info.
+## only s3.main is used.
+readwrite:
+## The number of reader and writer worker threads. This sets how many
+## files will be read and written concurrently.
+  readers: 2
+  writers: 2
+## The duration to run in seconds. Doesn't count setup/warmup time
+  duration: 15
+
+  files:
+## The number of files to use. This number of files is created during the
+## "warmup" phase. After the warmup, readers will randomly pick a file to
+## read, and writers will randomly pick a file to overwrite
+    num: 3
+## The file size to use, in KB
+    size: 1024
+## The stddev for the file size, in KB
+    stddev: 0
+
+s3:
+## This section contains all the connection information
+
+  defaults:
+## This section contains the defaults for all of the other connections
+## below. You can also place these variables directly there.
+
+## Replace with e.g. "localhost" to run against local software
+    host: s3.amazonaws.com
+
+## Uncomment the port to use soemthing other than 80
+#    port: 8080
+
+## Say "no" to disable TLS.
+    is_secure: yes
+
+## The tests assume two accounts are defined, "main" and "alt". You
+## may add other connections to be instantianted as well, however
+## any additional ones will not be used unless your tests use them.
+
+  main:
+
+## The User ID that the S3 provider gives you. For AWS, this is
+## typically a 64-char hexstring.
+    user_id: AWS_USER_ID
+
+## Display name typically looks more like a unix login, "jdoe" etc
+    display_name: AWS_DISPLAY_NAME
+
+## The email for this account.
+    email: AWS_EMAIL
+
+## Replace these with your access keys.
+    access_key: AWS_ACCESS_KEY
+    secret_key: AWS_SECRET_KEY
+
+  alt:
+## Another user accout, used for ACL-related tests.
+
+    user_id: AWS_USER_ID
+    display_name: AWS_DISPLAY_NAME
+    email: AWS_EMAIL
+    access_key: AWS_ACCESS_KEY
+    secret_key: AWS_SECRET_KEY
+

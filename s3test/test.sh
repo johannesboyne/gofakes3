@@ -8,7 +8,7 @@ S3PROXY_PORT="9000"
 export S3TEST_CONF="${PWD}/s3test/s3-tests.conf"
 
 # configure s3-tests
-pushd s3-tests
+pushd s3test/s3-test
 ./bootstrap
 popd
 
@@ -31,7 +31,7 @@ do
 done
 
 # execute s3-tests
-pushd s3-tests
+pushd s3test/s3-tests
 ./virtualenv/bin/nosetests -a '!fails_on_s3proxy'
 EXIT_CODE=$?
 popd
