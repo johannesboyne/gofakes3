@@ -5,7 +5,7 @@
 set -o errexit
 set -o nounset
 
-GOFAKEs3_BIN="go run ${PWD}/cmd/main.go"
+GOFAKEs3_BIN="${PWD}/cmd/gofakes3"
 GOFAKEs3_PORT="9000"
 S3TEST_D="${PWD}/s3test/s3-tests"
 export S3TEST_CONF="${PWD}/s3test/s3-tests.conf"
@@ -17,17 +17,7 @@ popd
 
 $GOFAKEs3_BIN &
 GOFAKEs3_PID=$!
-
-for i in $(seq 30);
-do
-    if exec 3<>"/dev/tcp/localhost/${GOFAKEs3_PORT}";
-    then 
-        exec 3<&-  # Close for read
-        exec 3>&-  # Close for write
-        break
-    fi
-    sleep 1
-done
+sleep 3
 
 # execute s3-tests
 pushd $S3TEST_D
