@@ -2,7 +2,6 @@ package gofakes3_test
 
 import (
 	"bytes"
-	"log"
 	"net/http/httptest"
 	"testing"
 
@@ -39,19 +38,22 @@ func TestCreateBucket(t *testing.T) {
 			"Key": aws.String("MetadataValue"),
 		},
 	})
-	obj, _ := svc.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String("BucketName"),
-		Key:    aws.String("ObjectKey"),
-	})
-	head, _ := svc.HeadObject(&s3.HeadObjectInput{
-		Bucket: aws.String("BucketName"),
-		Key:    aws.String("ObjectKey"),
-	})
-	log.Println("-> CONTENT LENGTH", *obj.ContentLength)
-	log.Println("-> HEAD ETAG     ", *head.ETag)
-
+	//obj, err := svc.GetObject(&s3.GetObjectInput{
+	//	Bucket: aws.String("BucketName"),
+	//	Key:    aws.String("ObjectKey"),
+	//})
+	//if err != nil {
+	//	t.Errorf("ERROR:\n%+v\n", err)
+	//	return
+	//}
+	//head, err := svc.HeadObject(&s3.HeadObjectInput{
+	//	Bucket: aws.String("BucketName"),
+	//	Key:    aws.String("ObjectKey"),
+	//})
 	if err != nil {
 		t.Errorf("ERROR:\n%+v\n", err)
 		return
 	}
+	//log.Println("-> HEAD ETAG     ", *head.ETag)
+
 }
