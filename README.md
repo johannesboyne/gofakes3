@@ -1,6 +1,8 @@
 ![Logo](/GoFakeS3.png)
 # AWS (GOFAKE)S3 
 
+[![Build Status](https://drone.io/github.com/johannesboyne/gofakes3/status.png)](https://drone.io/github.com/johannesboyne/gofakes3/latest)
+
 A golang AWS S3 fake server.
 
 A _poor man's_ object storage based on [BoltDB](https://github.com/boltdb/bolt).
