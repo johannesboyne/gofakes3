@@ -66,3 +66,7 @@ exports.handle = function (e, ctx) {
 ## Missing
 
 - [] Delete Buckets and Objects
+
+## Similar notable projects
+
+- https://github.com/andrewgaul/s3proxy by @andrewgaul
