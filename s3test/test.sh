@@ -5,7 +5,7 @@ set -o nounset
 
 S3PROXY_BIN="go run ${PWD}/cmd/main.go"
 S3PROXY_PORT="9000"
-S3TEST_D="${PWD}/s3test/s3-test"
+S3TEST_D="${PWD}/s3test/s3-tests"
 export S3TEST_CONF="${PWD}/s3test/s3-tests.conf"
 
 # configure s3-tests
