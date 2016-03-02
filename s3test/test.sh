@@ -5,10 +5,11 @@ set -o nounset
 
 S3PROXY_BIN="go run ${PWD}/cmd/main.go"
 S3PROXY_PORT="9000"
+S3TEST_D="${PWD}/s3test/s3-test"
 export S3TEST_CONF="${PWD}/s3test/s3-tests.conf"
 
 # configure s3-tests
-pushd s3test/s3-test
+pushd $S3TEST_D
 ./bootstrap
 popd
 
@@ -31,7 +32,7 @@ do
 done
 
 # execute s3-tests
-pushd s3test/s3-tests
+pushd $S3TEST_D
 ./virtualenv/bin/nosetests -a '!fails_on_s3proxy'
 EXIT_CODE=$?
 popd
