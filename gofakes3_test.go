@@ -38,22 +38,13 @@ func TestCreateBucket(t *testing.T) {
 			"Key": aws.String("MetadataValue"),
 		},
 	})
-	//obj, err := svc.GetObject(&s3.GetObjectInput{
-	//	Bucket: aws.String("BucketName"),
-	//	Key:    aws.String("ObjectKey"),
-	//})
-	//if err != nil {
-	//	t.Errorf("ERROR:\n%+v\n", err)
-	//	return
-	//}
-	//head, err := svc.HeadObject(&s3.HeadObjectInput{
-	//	Bucket: aws.String("BucketName"),
-	//	Key:    aws.String("ObjectKey"),
-	//})
+	_, err = svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String("BucketName"),
+		Key:    aws.String("ObjectKey"),
+	})
 	if err != nil {
 		t.Errorf("ERROR:\n%+v\n", err)
 		return
 	}
-	//log.Println("-> HEAD ETAG     ", *head.ETag)
 
 }

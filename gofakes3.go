@@ -63,6 +63,7 @@ func (g *GoFakeS3) Server() http.Handler {
 	r.HandleFunc("/{BucketName}", g.DeleteBucket).Methods("DELETE")
 	r.HandleFunc("/{BucketName}", g.HeadBucket).Methods("HEAD")
 	// OBJECT
+	r.HandleFunc("/{BucketName}/", g.CreateObjectBrowserUpload).Methods("POST")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.GetObject).Methods("GET")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.CreateObject).Methods("PUT")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.CreateObject).Methods("POST")
@@ -235,6 +236,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 		t := Object{}
 		err := bson.Unmarshal(v, &t)
 		if err != nil {
+			log.Println(err)
 			panic(err)
 		}
 		hash := md5.Sum(t.Obj)
@@ -249,6 +251,67 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%v", len(t.Obj)))
 		w.Header().Set("Connection", "close")
 		w.Write(t.Obj)
+		return nil
+	})
+}
+
+// CreateObject (Browser Upload) creates a new S3 object.
+func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Request) {
+	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
+	const _24K = (1 << 20) * 24
+	if err := r.ParseMultipartForm(_24K); nil != err {
+		panic(err)
+	}
+	vars := mux.Vars(r)
+	bucketName := vars["BucketName"]
+	key := r.MultipartForm.Value["key"][0]
+
+	log.Println("(BUC)", bucketName)
+	log.Println("(KEY)", key)
+	fileHeader := r.MultipartForm.File["file"][0]
+	infile, err := fileHeader.Open()
+	if nil != err {
+		panic(err)
+	}
+	body, err := ioutil.ReadAll(infile)
+	if err != nil {
+		panic(err)
+	}
+
+	meta := make(map[string]string)
+	log.Println(r.MultipartForm)
+	for hk, hv := range r.MultipartForm.Value {
+		if strings.Contains(hk, "X-Amz-") {
+			meta[hk] = hv[0]
+		}
+	}
+	meta["Last-Modified"] = time.Now().Format("Mon, 2 Jan 2006 15:04:05 MST")
+
+	obj := &Object{meta, body}
+
+	g.storage.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			log.Println("no bucket")
+			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+			return nil
+		}
+		log.Println("bucket", bucketName, "found")
+		data, err := bson.Marshal(obj)
+		if err != nil {
+			panic(err)
+		}
+		err = b.Put([]byte(key), data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return fmt.Errorf("error while creating")
+		}
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
+		w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
+		w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
+		w.Header().Set("Server", "AmazonS3")
+		w.Write([]byte{})
 		return nil
 	})
 }
