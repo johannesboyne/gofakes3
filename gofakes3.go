@@ -21,6 +21,17 @@ import (
 type GoFakeS3 struct {
 	storage *bolt.DB
 }
+type Storage struct {
+	XMLName     xml.Name     `xml:"ListAllMyBucketsResult"`
+	Xmlns       string       `xml:"xmlns,attr"`
+	Id          string       `xml:"Owner>ID"`
+	DisplayName string       `xml:"Owner>DisplayName"`
+	Buckets     []BucketInfo `xml:"Buckets"`
+}
+type BucketInfo struct {
+	Name         string `xml:"Bucket>Name"`
+	CreationDate string `xml:"Bucket>CreationDate"`
+}
 type Content struct {
 	Key          string    `xml:"Key"`
 	LastModified time.Time `xml:"LastModified"`
@@ -103,15 +114,25 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Get a list of all Buckets
 func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01">
-  <Owner>
-    <ID>bcaf1ffd86f461ca5fb16fd081034f</ID>
-    <DisplayName>webfile</DisplayName>
-  </Owner>
-  <Buckets>
-  </Buckets>
-</ListAllMyBucketsResult>`))
+	var buckets []BucketInfo
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	err := g.storage.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+			buckets = append(buckets, BucketInfo{string(name), ""})
+			return nil
+		})
+	})
+	s := &Storage{
+		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
+		Id:          "fe7272ea58be830e56fe1663b10fafef",
+		DisplayName: "GoFakeS3",
+		Buckets:     buckets,
+	}
+	x, err := xml.MarshalIndent(s, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+	w.Write(x)
 }
 
 // GetBucket lists the contents of a bucket.
