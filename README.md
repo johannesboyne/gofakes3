@@ -46,7 +46,9 @@ Please feel free to check it out and to provide useful feedback (using github is
 For setting it up locally, you'll have to do the following:
 
 - change `/etc/hosts`: `127.0.0.1 <bucket-name>.localhost`
-- start the gofakes3 service
+- start the gofakes3 service, e.g.: `./s3f_darwin_amd64 -db tests3.db -port ":9000"`
+
+### Exemplary usage
 
 ```javascript
 var AWS   = require('aws-sdk')
