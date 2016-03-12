@@ -49,6 +49,8 @@ Please feel free to check it out and to provide useful feedback (using github is
 
 ### Exemplary usage
 
+#### Lambda Example
+
 ```javascript
 var AWS   = require('aws-sdk')
 
@@ -64,6 +66,39 @@ exports.handle = function (e, ctx) {
   });
 }
 ```
+
+#### Upload Example
+
+```html
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  </head>
+  <body>
+
+  <form action="http://localhost:9000/<bucket-name>/" method="post" enctype="multipart/form-data">
+    Key to upload: 
+    <input type="input"  name="key" value="user/user1/test/<filename>" /><br />
+    <input type="hidden" name="acl" value="public-read" />
+    <input type="hidden" name="x-amz-meta-uuid" value="14365123651274" /> 
+    <input type="hidden" name="x-amz-server-side-encryption" value="AES256" /> 
+    <input type="text"   name="X-Amz-Credential" value="AKIAIOSFODNN7EXAMPLE/20151229/us-east-1/s3/aws4_request" />
+    <input type="text"   name="X-Amz-Algorithm" value="AWS4-HMAC-SHA256" />
+    <input type="text"   name="X-Amz-Date" value="20151229T000000Z" />
+
+    Tags for File: 
+    <input type="input"  name="x-amz-meta-tag" value="" /><br />
+    <input type="hidden" name="Policy" value='<Base64-encoded policy string>' />
+    <input type="hidden" name="X-Amz-Signature" value="<signature-value>" />
+    File: 
+    <input type="file"   name="file" /> <br />
+    <!-- The elements after this will be ignored -->
+    <input type="submit" name="submit" value="Upload to Amazon S3" />
+  </form>
+</html>
+```
+
+
 ## Missing
 
 - [] Delete Buckets and Objects
