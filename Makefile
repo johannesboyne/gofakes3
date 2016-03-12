@@ -5,7 +5,6 @@ release:
 	@$(MAKE) build
 	@echo "[+] comitting"
 	@git tag $(VERSION)
-	@git release $(VERSION)
 	@echo "[+] complete"
 .PHONY: release
 
