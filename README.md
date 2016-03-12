@@ -3,7 +3,7 @@
 
 [![Build Status](https://drone.io/github.com/johannesboyne/gofakes3/status.png)](https://drone.io/github.com/johannesboyne/gofakes3/latest)
 
-A golang AWS S3 fake server.
+AWS S3 fake server.
 
 A _poor man's_ object storage based on [BoltDB](https://github.com/boltdb/bolt).
 
@@ -36,16 +36,15 @@ A _poor man's_ object storage based on [BoltDB](https://github.com/boltdb/bolt).
 
 ## What to use it for?
 
-We're using it for running AWS lambda functions locally and to test browser based direct uploads to S3 locally.
+We're using it for the local development of S3 dependent Lambda functions and to test browser based direct uploads to S3 locally.
 
 ## How to use it?
 
-Do not use it at the moment ;-) I'll have to tune and refactor it a bit before.
-Please feel free to check it out and to provide useful feedback (using github issues)!
+Please feel free to check it out and to provide useful feedback (using github issues), but be aware, this software is used internally and for the local development only. Thus, it has no demand for correctness, performance or security.
 
-For setting it up locally, you'll have to do the following:
+**For setting it up locally, you'll have to do the following:**
 
-- change `/etc/hosts`: `127.0.0.1 <bucket-name>.localhost`
+- add the following to your `/etc/hosts`: `127.0.0.1 <bucket-name>.localhost`
 - start the gofakes3 service, e.g.: `./s3f_darwin_amd64 -db tests3.db -port ":9000"`
 
 ### Exemplary usage
