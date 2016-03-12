@@ -3,3 +3,4 @@ DS_Store
 node_modules/
 logs/
 *.db
+s3f_*
