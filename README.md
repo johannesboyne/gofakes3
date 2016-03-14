@@ -105,4 +105,5 @@ exports.handle = function (e, ctx) {
 
 ## Similar notable projects
 
+- https://github.com/minio/minio **not similar but powerfull ;-)**
 - https://github.com/andrewgaul/s3proxy by @andrewgaul
