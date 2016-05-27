@@ -148,7 +148,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 		// Assume bucket exists and has keys
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
-			http.Error(w, "No bucket", http.StatusInternalServerError)
+			http.Error(w, "No bucket", http.StatusNotFound)
 			return nil
 		}
 		c := b.Cursor()
@@ -223,7 +223,7 @@ func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			log.Println("no bucket")
-			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+			http.Error(w, "bucket does not exist", http.StatusNotFound)
 		}
 		w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 		w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
@@ -245,7 +245,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			log.Println("no bucket")
-			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+			http.Error(w, "bucket does not exist", http.StatusNotFound)
 		}
 		v := b.Get([]byte(vars["ObjectName"]))
 
@@ -314,7 +314,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			log.Println("no bucket")
-			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+			http.Error(w, "bucket does not exist", http.StatusNotFound)
 			return nil
 		}
 		log.Println("bucket", bucketName, "found")
@@ -362,7 +362,7 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			log.Println("no bucket")
-			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+			http.Error(w, "bucket does not exist", http.StatusNotFound)
 			return nil
 		}
 		log.Println("bucket", bucketName, "found")
@@ -402,7 +402,7 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			log.Println("no bucket")
-			http.Error(w, "bucket does not exist", http.StatusInternalServerError)
+			http.Error(w, "bucket does not exist", http.StatusNotFound)
 		}
 		v := b.Get([]byte(vars["ObjectName"]))
 
