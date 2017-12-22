@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"log"
+	"net"
 	"net/http"
 
 	"github.com/johannesboyne/gofakes3"
@@ -13,5 +15,17 @@ func main() {
 	flag.Parse()
 
 	faker := gofakes3.New(*db)
-	http.ListenAndServe(*port, faker.Server())
+	listenAndServe(*port, faker.Server())
+}
+
+func listenAndServe(addr string, handler http.Handler) {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Println("failed to listen:", err)
+		return
+	}
+
+	log.Println("using port:", listener.Addr().(*net.TCPAddr).Port)
+	server := &http.Server{Addr: addr, Handler: handler}
+	server.Serve(listener)
 }
