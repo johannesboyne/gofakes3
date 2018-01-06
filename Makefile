@@ -21,6 +21,10 @@ build:
 	@mv cmd_linux_arm s3f_linux_arm
 .PHONY: build
 
+builddocker:
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/gofakes3/main.go
+	docker build -t gofakes3 .
+
 clean:
 	@git clean -f
 .PHONY: clean
