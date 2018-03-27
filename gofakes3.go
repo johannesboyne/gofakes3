@@ -33,11 +33,11 @@ type BucketInfo struct {
 	CreationDate string `xml:"Bucket>CreationDate"`
 }
 type Content struct {
-	Key          string    `xml:"Key"`
-	LastModified time.Time `xml:"LastModified"`
-	ETag         string    `xml:"ETag"`
-	Size         int       `xml:"Size"`
-	StorageClass string    `xml:"StorageClass"`
+	Key          string `xml:"Key"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         int    `xml:"Size"`
+	StorageClass string `xml:"StorageClass"`
 }
 type Bucket struct {
 	XMLName  xml.Name   `xml:"ListBucketResult"`
@@ -92,6 +92,8 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename, x-amz-meta-private")
+	w.Header().Set("Content-Type", "application/xml")
+
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -165,7 +167,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 				hash := md5.Sum(v)
 				bucketc.Contents = append(bucketc.Contents, &Content{
 					Key:          string(k),
-					LastModified: time.Now(),
+					LastModified: time.Now().UTC().Format(time.RFC3339),
 					ETag:         "\"" + hex.EncodeToString(hash[:]) + "\"",
 					Size:         len(v),
 					StorageClass: "STANDARD",
