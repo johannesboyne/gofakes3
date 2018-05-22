@@ -19,7 +19,8 @@ import (
 )
 
 type GoFakeS3 struct {
-	storage *bolt.DB
+	storage      *bolt.DB
+	timeLocation *time.Location
 }
 type Storage struct {
 	XMLName     xml.Name     `xml:"ListAllMyBucketsResult"`
@@ -60,7 +61,13 @@ func New(dbname string) *GoFakeS3 {
 	}
 
 	log.Println("locals3 db created or opened")
-	return &GoFakeS3{storage: db}
+
+	timeLocation, err := time.LoadLocation("GMT")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return &GoFakeS3{storage: db, timeLocation: timeLocation}
 }
 
 // Create the AWS S3 API
@@ -167,7 +174,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 				hash := md5.Sum(v)
 				bucketc.Contents = append(bucketc.Contents, &Content{
 					Key:          string(k),
-					LastModified: time.Now().UTC().Format(time.RFC3339),
+					LastModified: g.timeNow().Format(time.RFC3339),
 					ETag:         "\"" + hex.EncodeToString(hash[:]) + "\"",
 					Size:         len(v),
 					StorageClass: "STANDARD",
@@ -268,7 +275,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 		for mk, mv := range t.Metadata {
 			w.Header().Set(mk, mv)
 		}
-		w.Header().Set("Last-Modified", time.Now().Format("Mon, 2 Jan 2006 15:04:05 MST"))
+		w.Header().Set("Last-Modified", g.timeNow().Format("Mon, 2 Jan 2006 15:04:05 MST"))
 		w.Header().Set("ETag", "\""+hex.EncodeToString(hash[:])+"\"")
 		w.Header().Set("Server", "AmazonS3")
 		w.Header().Set("Content-Length", fmt.Sprintf("%v", len(t.Obj)))
@@ -308,7 +315,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 			meta[hk] = hv[0]
 		}
 	}
-	meta["Last-Modified"] = time.Now().Format("Mon, 2 Jan 2006 15:04:05 MST")
+	meta["Last-Modified"] = g.timeNow().Format("Mon, 2 Jan 2006 15:04:05 MST")
 
 	obj := &Object{meta, body}
 
@@ -356,7 +363,7 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 			meta[hk] = hv[0]
 		}
 	}
-	meta["Last-Modified"] = time.Now().Format("Mon, 2 Jan 2006 15:04:05 MST")
+	meta["Last-Modified"] = g.timeNow().Format("Mon, 2 Jan 2006 15:04:05 MST")
 
 	obj := &Object{meta, body}
 
@@ -429,4 +436,8 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte{})
 		return nil
 	})
+}
+
+func (g *GoFakeS3) timeNow() time.Time {
+	return time.Now().In(g.timeLocation)
 }
