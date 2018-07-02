@@ -24,6 +24,7 @@ build:
 builddocker:
 	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/gofakes3/main.go
 	docker build -t johannesboyne/gofakes3 .
+.PHONY: builddocker
 
 clean:
 	@git clean -f
