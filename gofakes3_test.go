@@ -9,12 +9,38 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3bolt"
 )
+
+type TT struct {
+	*testing.T
+}
+
+func (t TT) OK(err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (t TT) OKAll(vs ...interface{}) {
+	t.Helper()
+	for _, v := range vs {
+		if err, ok := v.(error); ok && err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestCreateBucket(t *testing.T) {
 	//@TODO(jb): implement them for sanity reasons
 
-	faker := gofakes3.New("tests3.db")
+	tt := TT{t}
+
+	backend, err := s3bolt.NewFile("tests3.db")
+	tt.OK(err)
+
+	faker := gofakes3.New(backend)
 	ts := httptest.NewServer(faker.Server())
 	defer ts.Close()
 
@@ -24,27 +50,22 @@ func TestCreateBucket(t *testing.T) {
 
 	svc := s3.New(session.New(), config)
 
-	_, err := svc.CreateBucket(&s3.CreateBucketInput{
+	tt.OKAll(svc.CreateBucket(&s3.CreateBucketInput{
 		Bucket: aws.String("BucketName"),
-	})
-	_, err = svc.HeadBucket(&s3.HeadBucketInput{
+	}))
+	tt.OKAll(svc.HeadBucket(&s3.HeadBucketInput{
 		Bucket: aws.String("BucketName"),
-	})
-	_, err = svc.PutObject(&s3.PutObjectInput{
+	}))
+	tt.OKAll(svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String("BucketName"),
 		Key:    aws.String("ObjectKey"),
 		Body:   bytes.NewReader([]byte("{\"test\": \"foo\"}")),
 		Metadata: map[string]*string{
 			"Key": aws.String("MetadataValue"),
 		},
-	})
-	_, err = svc.GetObject(&s3.GetObjectInput{
+	}))
+	tt.OKAll(svc.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String("BucketName"),
 		Key:    aws.String("ObjectKey"),
-	})
-	if err != nil {
-		t.Errorf("ERROR:\n%+v\n", err)
-		return
-	}
-
+	}))
 }

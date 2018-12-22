@@ -11,13 +11,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
 )
 
 type GoFakeS3 struct {
 	storage    Backend
 	timeSource TimeSource
+}
+
+type Option func(g *GoFakeS3)
+
+func WithTimeSource(timeSource TimeSource) Option {
+	return func(g *GoFakeS3) { g.timeSource = timeSource }
 }
 
 type Storage struct {
@@ -34,11 +39,19 @@ type BucketInfo struct {
 }
 
 type Content struct {
-	Key          string `xml:"Key"`
-	LastModified string `xml:"LastModified"`
-	ETag         string `xml:"ETag"`
-	Size         int    `xml:"Size"`
-	StorageClass string `xml:"StorageClass"`
+	Key          string      `xml:"Key"`
+	LastModified ContentTime `xml:"LastModified"`
+	ETag         string      `xml:"ETag"`
+	Size         int         `xml:"Size"`
+	StorageClass string      `xml:"StorageClass"`
+}
+
+type ContentTime time.Time
+
+func (c ContentTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// This is the format expected by the aws xml code, not the default.
+	var s = time.Time(c).Format("2006-01-02T15:04:05Z")
+	return e.EncodeElement(s, start)
 }
 
 type Bucket struct {
@@ -50,7 +63,7 @@ type Bucket struct {
 	Contents []*Content `xml:"Contents"`
 }
 
-func newBucket(name string) *Bucket {
+func NewBucket(name string) *Bucket {
 	return &Bucket{
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 		Name:  name,
@@ -64,41 +77,19 @@ type Object struct {
 	Hash     []byte
 }
 
-type TimeSource interface {
-	Now() time.Time
-}
-
-type locatedTimeSource struct {
-	timeLocation *time.Location
-}
-
-func (l *locatedTimeSource) Now() time.Time {
-	return time.Now().In(l.timeLocation)
-}
-
 // Setup a new fake object storage
-func New(dbname string) *GoFakeS3 {
-	db, err := bolt.Open(dbname, 0600, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+func New(backend Backend, options ...Option) *GoFakeS3 {
 	log.Println("locals3 db created or opened")
 
-	timeLocation, err := time.LoadLocation("GMT")
-	if err != nil {
-		log.Fatal(err)
+	s3 := &GoFakeS3{storage: backend}
+	for _, opt := range options {
+		opt(s3)
 	}
-	timeSource := &locatedTimeSource{
-		timeLocation: timeLocation,
-	}
-
-	backend := &BoltDBBackend{
-		timeSource: timeSource,
-		bolt:       db,
+	if s3.timeSource == nil {
+		s3.timeSource = DefaultTimeSource()
 	}
 
-	return &GoFakeS3{timeSource: timeSource, storage: backend}
+	return s3
 }
 
 // Create the AWS S3 API
@@ -278,7 +269,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	for mk, mv := range obj.Metadata {
 		w.Header().Set(mk, mv)
 	}
-	w.Header().Set("Last-Modified", g.timeSource.Now().Format("Mon, 2 Jan 2006 15:04:05 MST"))
+	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
 	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
 	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
@@ -320,9 +311,9 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 			meta[hk] = hv[0]
 		}
 	}
-	meta["Last-Modified"] = g.timeSource.Now().Format("Mon, 2 Jan 2006 15:04:05 MST")
+	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
-	if err := g.storage.CreateObject(bucketName, key, meta, infile); err != nil {
+	if err := g.storage.PutObject(bucketName, key, meta, infile); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -349,9 +340,9 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 			meta[hk] = hv[0]
 		}
 	}
-	meta["Last-Modified"] = g.timeSource.Now().Format("Mon, 2 Jan 2006 15:04:05 MST")
+	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
-	if err := g.storage.CreateObject(bucketName, objectName, meta, r.Body); err != nil {
+	if err := g.storage.PutObject(bucketName, objectName, meta, r.Body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -390,10 +381,19 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 	for mk, mv := range obj.Metadata {
 		w.Header().Set(mk, mv)
 	}
-	w.Header().Set("Last-Modified", g.timeSource.Now().Format("Mon, 2 Jan 2006 15:04:05 MST"))
+	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
 	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
 	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 	w.Header().Set("Connection", "close")
 	w.Write([]byte{})
+}
+
+func formatHeaderTime(t time.Time) string {
+	// https://github.com/aws/aws-sdk-go/issues/1937 - FIXED
+	// https://github.com/aws/aws-sdk-go-v2/issues/178 - Still open
+	// .Format("Mon, 2 Jan 2006 15:04:05 MST")
+
+	tc := t.In(time.UTC)
+	return tc.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
 }
