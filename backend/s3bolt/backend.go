@@ -72,7 +72,7 @@ func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
 		// Assume bucket exists and has keys
 		b := tx.Bucket([]byte(name))
 		if b == nil {
-			return fmt.Errorf("gofakes3: bucket not found")
+			return gofakes3.NotFound(name, "")
 		}
 
 		c := b.Cursor()
@@ -128,12 +128,12 @@ func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, e
 	err := db.bolt.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
-			return fmt.Errorf("gofakes3: bucket %q does not exist", bucketName)
+			return gofakes3.NotFound(bucketName, objectName)
 		}
 
 		v := b.Get([]byte(objectName))
 		if v == nil {
-			return fmt.Errorf("gofakes3: object %q does not exist", objectName)
+			return gofakes3.NotFound(bucketName, objectName)
 		}
 
 		if err := bson.Unmarshal(v, &t); err != nil {
@@ -161,7 +161,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 	return db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
-			return fmt.Errorf("gofakes3: bucket %q does not exist", bucketName)
+			return gofakes3.NotFound(bucketName, objectName)
 		}
 
 		data, err := bson.Marshal(&boltObject{
@@ -175,6 +175,19 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		}
 		if err := b.Put([]byte(objectName), data); err != nil {
 			return err
+		}
+		return nil
+	})
+}
+
+func (db *Backend) DeleteObject(bucketName, objectName string) error {
+	return db.bolt.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			return gofakes3.NotFound(bucketName, objectName)
+		}
+		if err := b.Delete([]byte(objectName)); err != nil {
+			return fmt.Errorf("gofakes3: delete failed for object %q in bucket %q", objectName, bucketName)
 		}
 		return nil
 	})

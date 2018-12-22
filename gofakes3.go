@@ -143,11 +143,20 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.r.ServeHTTP(w, r)
 }
 
+func (g *GoFakeS3) httpError(w http.ResponseWriter, err error) {
+	if IsNotFound(err) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+	} else {
+		log.Println(err)
+		http.Error(w, "Server Error", http.StatusInternalServerError)
+	}
+}
+
 // Get a list of all Buckets
 func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	buckets, err := g.storage.ListBuckets()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -160,7 +169,7 @@ func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 	x, err := xml.MarshalIndent(s, "", "  ")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 	w.Write(x)
@@ -178,7 +187,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	bucket, err := g.storage.GetBucket(bucketName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -195,7 +204,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	x, err := xml.MarshalIndent(bucket, "", "  ")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -209,7 +218,7 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	log.Println("CREATE BUCKET:", bucketName)
 
 	if err := g.storage.CreateBucket(bucketName); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -233,7 +242,7 @@ func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
 
 	exists, err := g.storage.BucketExists(bucketName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 	if !exists {
@@ -258,8 +267,9 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	log.Println("└── Object:", vars["ObjectName"])
 
 	obj, err := g.storage.GetObject(bucketName, objectName)
+
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 	defer obj.Contents.Close()
@@ -273,10 +283,9 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
 	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
-	w.Header().Set("Connection", "close")
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 }
@@ -286,7 +295,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
 	const _24MB = (1 << 20) * 24
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -300,7 +309,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 
 	infile, err := fileHeader.Open()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 	defer infile.Close()
@@ -314,7 +323,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
 	if err := g.storage.PutObject(bucketName, key, meta, infile); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -343,7 +352,7 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
 	if err := g.storage.PutObject(bucketName, objectName, meta, r.Body); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
 
@@ -357,7 +366,19 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 
 // DeleteObject deletes a S3 object from the bucket.
 func (g *GoFakeS3) DeleteObject(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "delete object")
+	vars := mux.Vars(r)
+	bucketName := vars["BucketName"]
+	objectName := vars["ObjectName"]
+
+	log.Println("DELETE:", bucketName, objectName)
+
+	if err := g.storage.DeleteObject(bucketName, objectName); err != nil {
+		g.httpError(w, err)
+		return
+	}
+
+	w.Header().Set("x-amz-delete-marker", "false")
+	w.Write([]byte{})
 }
 
 // HeadObject retrieves only meta information of an object and not the whole.
@@ -372,9 +393,10 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 
 	obj, err := g.storage.HeadObject(bucketName, objectName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.httpError(w, err)
 		return
 	}
+	defer obj.Contents.Close()
 
 	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")

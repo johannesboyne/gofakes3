@@ -60,7 +60,7 @@ func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
 
 	storedBucket := db.buckets[name]
 	if storedBucket == nil {
-		return nil, fmt.Errorf("gofakes3: bucket %q not found", name)
+		return nil, gofakes3.NotFound(name, "")
 	}
 
 	response := gofakes3.NewBucket(name)
@@ -102,12 +102,22 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	obj, err := db.GetObject(bucketName, objectName)
-	if err != nil {
-		return nil, err
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return nil, gofakes3.NotFound(bucketName, objectName)
 	}
-	obj.Contents = noOpReadCloser{}
-	return obj, nil
+
+	obj := bucket.data[objectName]
+	if obj == nil {
+		return nil, gofakes3.NotFound(bucketName, objectName)
+	}
+
+	return &gofakes3.Object{
+		Hash:     obj.hash,
+		Metadata: obj.metadata,
+		Size:     int64(len(obj.data)),
+		Contents: noOpReadCloser{},
+	}, nil
 }
 
 func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, error) {
@@ -116,12 +126,12 @@ func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, e
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return nil, fmt.Errorf("gofakes3: bucket %q does not exist", bucketName)
+		return nil, gofakes3.NotFound(bucketName, objectName)
 	}
 
 	obj := bucket.data[objectName]
 	if obj == nil {
-		return nil, fmt.Errorf("gofakes3: object %q does not existin bucket %q", objectName, bucketName)
+		return nil, gofakes3.NotFound(bucketName, objectName)
 	}
 
 	return &gofakes3.Object{
@@ -141,7 +151,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return fmt.Errorf("gofakes3: bucket %q does not exist", bucketName)
+		return gofakes3.NotFound(bucketName, objectName)
 	}
 
 	bts, err := ioutil.ReadAll(input)
@@ -158,6 +168,21 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		key:          objectName,
 		lastModified: db.timeSource.Now(),
 	}
+
+	return nil
+}
+
+func (db *Backend) DeleteObject(bucketName, objectName string) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return gofakes3.NotFound(bucketName, objectName)
+	}
+
+	// TODO: should a non-existent object raise a "not found" error?
+	delete(bucket.data, objectName)
 
 	return nil
 }
