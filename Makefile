@@ -29,10 +29,3 @@ builddocker:
 clean:
 	@git clean -f
 .PHONY: clean
-
-install:
-	@go get gopkg.in/mgo.v2
-	@go get github.com/gorilla/mux
-	@go get github.com/aws/aws-sdk-go
-	@go get github.com/boltdb/bolt
-.PHONY: install
