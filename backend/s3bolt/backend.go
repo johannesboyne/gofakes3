@@ -63,13 +63,12 @@ func (b *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, err
 }
 
-func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
+func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
 	var bucket *gofakes3.Bucket
 
 	mod := gofakes3.ContentTime(db.timeSource.Now())
 
 	err := db.bolt.View(func(tx *bolt.Tx) error {
-		// Assume bucket exists and has keys
 		b := tx.Bucket([]byte(name))
 		if b == nil {
 			return gofakes3.BucketNotFound(name)
@@ -79,14 +78,25 @@ func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
 		bucket = gofakes3.NewBucket(name)
 
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			hash := md5.Sum(v)
-			bucket.Contents = append(bucket.Contents, &gofakes3.Content{
-				Key:          string(k),
-				LastModified: mod,
-				ETag:         "\"" + hex.EncodeToString(hash[:]) + "\"",
-				Size:         len(v),
-				StorageClass: "STANDARD",
-			})
+			key := string(k)
+			match := prefix.Match(key)
+			if match == nil {
+				continue
+
+			} else if match.CommonPrefix {
+				bucket.AddPrefix(match.MatchedPart)
+
+			} else {
+				hash := md5.Sum(v)
+				item := &gofakes3.Content{
+					Key:          string(k),
+					LastModified: mod,
+					ETag:         "\"" + hex.EncodeToString(hash[:]) + "\"",
+					Size:         len(v),
+					StorageClass: "STANDARD",
+				}
+				bucket.Add(item)
+			}
 		}
 
 		return nil
