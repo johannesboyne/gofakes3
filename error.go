@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 const (
@@ -39,8 +40,12 @@ const (
 
 type Error interface {
 	error
-	Code() ErrorCode
-	Message() string
+	ErrorCode() ErrorCode
+}
+
+type errorResponse interface {
+	Error
+	Enrich(requestID string)
 }
 
 type ErrorResponse struct {
@@ -48,63 +53,49 @@ type ErrorResponse struct {
 
 	Code      ErrorCode
 	Message   string `xml:",omitempty"`
-	Resource  string `xml:",omitempty"`
 	RequestID string `xml:"RequestId,omitempty"`
 }
 
-func NewErrorResponse(err error, requestID string) ErrorResponse {
-	s3err, ok := err.(Error)
-	if !ok {
-		return ErrorResponse{
+func ensureErrorResponse(err error, requestID string) Error {
+	switch err := err.(type) {
+	case errorResponse:
+		err.Enrich(requestID)
+		return err
+
+	case ErrorCode:
+		return &ErrorResponse{
+			Code:      err,
+			RequestID: requestID,
+			Message:   string(err),
+		}
+
+	default:
+		return &ErrorResponse{
 			Code:      ErrInternal,
 			Message:   "Internal Error",
 			RequestID: requestID,
 		}
 	}
-
-	resp := ErrorResponse{
-		Code:      s3err.Code(),
-		Message:   s3err.Message(),
-		RequestID: requestID,
-	}
-	if resp.Message == "" {
-		resp.Message = s3err.Code().Message()
-	}
-	if rerr, ok := err.(interface{ Resource() string }); ok {
-		resp.Resource = rerr.Resource()
-	}
-
-	return resp
 }
 
-func ResourceError(code ErrorCode, resource string) error {
-	return &resourceError{
-		code:     code,
-		resource: resource,
-	}
+func (e *ErrorResponse) ErrorCode() ErrorCode { return e.Code }
+
+func (r *ErrorResponse) Enrich(requestID string) {
+	r.RequestID = requestID
+}
+
+func (e *ErrorResponse) Error() string {
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
 func ErrorMessage(code ErrorCode, message string) error {
-	return &messageError{
-		code:    code,
-		message: message,
-	}
-}
-
-func BucketNotFound(bucket string) error {
-	return &resourceError{code: ErrNoSuchBucket, resource: bucket}
-}
-
-func KeyNotFound(key string) error {
-	return &resourceError{code: ErrNoSuchKey, resource: key}
+	return &ErrorResponse{Code: code, Message: message}
 }
 
 type ErrorCode string
 
-var _ Error = ErrorCode("")
-
-func (e ErrorCode) Error() string   { return string(e) }
-func (e ErrorCode) Code() ErrorCode { return e }
+func (e ErrorCode) ErrorCode() ErrorCode { return e }
+func (e ErrorCode) Error() string        { return string(e) }
 
 func (e ErrorCode) Message() string {
 	switch e {
@@ -149,37 +140,54 @@ func (e ErrorCode) Status() int {
 	return http.StatusInternalServerError
 }
 
-type resourceError struct {
-	code     ErrorCode
-	resource string // The bucket or object that is involved in the error.
-}
-
-var _ Error = &resourceError{}
-
-func (re *resourceError) Code() ErrorCode  { return re.code }
-func (re *resourceError) Error() string    { return fmt.Sprintf("%s: %s", re.code, re.resource) }
-func (re *resourceError) Message() string  { return "" }
-func (re *resourceError) Resource() string { return re.resource }
-
-type messageError struct {
-	code    ErrorCode
-	message string
-}
-
-var _ Error = &messageError{}
-
-func (re *messageError) Code() ErrorCode { return re.code }
-func (re *messageError) Error() string   { return fmt.Sprintf("%s: %s", re.code, re.message) }
-func (re *messageError) Message() string { return re.message }
-
 func HasErrorCode(err error, code ErrorCode) bool {
-	s3err, ok := err.(Error)
+	s3err, ok := err.(interface{ ErrorCode() ErrorCode })
 	if !ok {
 		return false
 	}
-	return s3err.Code() == code
+	return s3err.ErrorCode() == code
 }
 
 func IsErrExist(err error) bool {
 	return HasErrorCode(err, ErrBucketAlreadyExists)
+}
+
+type resourceErrorResponse struct {
+	ErrorResponse
+	Resource string
+}
+
+var _ errorResponse = &resourceErrorResponse{}
+
+func ResourceError(code ErrorCode, resource string) error {
+	return &resourceErrorResponse{
+		ErrorResponse{Code: code, Message: code.Message()},
+		resource,
+	}
+}
+
+func BucketNotFound(bucket string) error { return ResourceError(ErrNoSuchBucket, bucket) }
+func KeyNotFound(key string) error       { return ResourceError(ErrNoSuchKey, key) }
+
+type requestTimeTooSkewedResponse struct {
+	ErrorResponse
+	ServerTime                 time.Time
+	MaxAllowedSkewMilliseconds durationAsMilliseconds
+}
+
+var _ errorResponse = &requestTimeTooSkewedResponse{}
+
+func requestTimeTooSkewed(at time.Time, max time.Duration) error {
+	code := ErrRequestTimeTooSkewed
+	return &requestTimeTooSkewedResponse{
+		ErrorResponse{Code: code, Message: code.Message()},
+		at, durationAsMilliseconds(max),
+	}
+}
+
+type durationAsMilliseconds time.Duration
+
+func (m durationAsMilliseconds) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	var s = fmt.Sprintf("%d", time.Duration(m)/time.Millisecond)
+	return e.EncodeElement(s, start)
 }

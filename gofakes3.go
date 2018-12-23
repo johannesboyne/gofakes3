@@ -144,15 +144,11 @@ func (g *GoFakeS3) Server() http.Handler {
 
 		if g.timeSkew > 0 && timeHdr != "" {
 			rqTime, _ := time.Parse("20060102T150405Z", timeHdr)
-			skew := g.timeSource.Since(rqTime)
+			at := g.timeSource.Now()
+			skew := at.Sub(rqTime)
 
 			if skew < -g.timeSkew || skew > g.timeSkew {
-				g.httpError(w, ErrRequestTimeTooSkewed)
-				// FIXME: AWS also returns the following properties:
-				//	<ServerTime>2015-04-07T11:51:03Z</ServerTime>
-				//	<MaxAllowedSkewMilliseconds>900000</MaxAllowedSkewMilliseconds>
-				// The way the errors are currenly structured doesn't easily support extended
-				// XML error responses yet.
+				g.httpError(w, rq, requestTimeTooSkewed(at, g.timeSkew))
 				return
 			}
 		}
@@ -192,31 +188,34 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.r.ServeHTTP(w, r)
 }
 
-func (g *GoFakeS3) httpError(w http.ResponseWriter, err error) {
-	resp := NewErrorResponse(err, "") // FIXME: request id
-	if resp.Code == ErrInternal {
+func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) {
+	resp := ensureErrorResponse(err, "") // FIXME: request id
+	if resp.ErrorCode() == ErrInternal {
 		log.Println(err)
 	}
 
-	w.WriteHeader(resp.Code.Status())
-	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(resp.ErrorCode().Status())
 
-	x, err := xml.MarshalIndent(resp, "", "  ")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		log.Println(err)
-		return
+	if r.Method != http.MethodHead {
+		w.Header().Set("Content-Type", "application/xml")
+
+		x, err := xml.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			log.Println(err)
+			return
+		}
+
+		w.Write([]byte(xml.Header))
+		w.Write(x)
 	}
-
-	w.Write([]byte(xml.Header))
-	w.Write(x)
 }
 
 // Get a list of all Buckets
 func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	buckets, err := g.storage.ListBuckets()
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -228,7 +227,7 @@ func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 	x, err := xml.MarshalIndent(s, "", "  ")
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -249,7 +248,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	bucket, err := g.storage.GetBucket(bucketName)
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -266,7 +265,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	x, err := xml.MarshalIndent(bucket, "", "  ")
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -282,12 +281,12 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	log.Println("CREATE BUCKET:", bucketName)
 
 	if err := ValidateBucketName(bucketName); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
 	if err := g.storage.CreateBucket(bucketName); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -303,7 +302,7 @@ func (g *GoFakeS3) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 	log.Println("DELETE BUCKET:", bucketName)
 
 	if err := g.storage.DeleteBucket(bucketName); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 }
@@ -317,7 +316,7 @@ func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
 
 	exists, err := g.storage.BucketExists(bucketName)
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	if !exists {
@@ -344,7 +343,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	obj, err := g.storage.GetObject(bucketName, objectName)
 
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	defer obj.Contents.Close()
@@ -360,7 +359,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 }
@@ -370,7 +369,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
 	const _24MB = (1 << 20) * 24
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -384,7 +383,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 
 	infile, err := fileHeader.Open()
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	defer infile.Close()
@@ -398,17 +397,17 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
 	if err := ValidateMetadata(meta); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
 	if len(key) > KeySizeLimit {
-		g.httpError(w, ResourceError(ErrKeyTooLong, key))
+		g.httpError(w, r, ResourceError(ErrKeyTooLong, key))
 		return
 	}
 
 	if err := g.storage.PutObject(bucketName, key, meta, infile); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -437,12 +436,12 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
 	if len(objectName) > KeySizeLimit {
-		g.httpError(w, ResourceError(ErrKeyTooLong, objectName))
+		g.httpError(w, r, ResourceError(ErrKeyTooLong, objectName))
 		return
 	}
 
 	if err := g.storage.PutObject(bucketName, objectName, meta, r.Body); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -463,7 +462,7 @@ func (g *GoFakeS3) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	log.Println("DELETE:", bucketName, objectName)
 
 	if err := g.storage.DeleteObject(bucketName, objectName); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -483,7 +482,7 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 
 	obj, err := g.storage.HeadObject(bucketName, objectName)
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	defer obj.Contents.Close()
