@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/johannesboyne/gofakes3.svg?style=svg)](https://circleci.com/gh/johannesboyne/gofakes3)
+
 ![Logo](/GoFakeS3.png)
 # AWS (GOFAKE)S3 
 
