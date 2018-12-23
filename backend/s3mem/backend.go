@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"sync"
@@ -60,7 +59,7 @@ func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
 
 	storedBucket := db.buckets[name]
 	if storedBucket == nil {
-		return nil, gofakes3.NotFound(name, "")
+		return nil, gofakes3.BucketNotFound(name)
 	}
 
 	response := gofakes3.NewBucket(name)
@@ -82,13 +81,30 @@ func (db *Backend) CreateBucket(name string) error {
 	defer db.lock.Unlock()
 
 	if db.buckets[name] != nil {
-		return fmt.Errorf("gofakes3: bucket %q exists", name)
+		return gofakes3.ResourceError(gofakes3.ErrBucketAlreadyExists, name)
 	}
 
 	db.buckets[name] = &bucket{
 		name: name,
 		data: map[string]*bucketItem{},
 	}
+	return nil
+}
+
+func (db *Backend) DeleteBucket(name string) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.buckets[name] == nil {
+		return gofakes3.ErrNoSuchBucket
+	}
+
+	if len(db.buckets[name].data) > 0 {
+		return gofakes3.ResourceError(gofakes3.ErrBucketNotEmpty, name)
+	}
+
+	delete(db.buckets, name)
+
 	return nil
 }
 
@@ -104,12 +120,12 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return nil, gofakes3.NotFound(bucketName, objectName)
+		return nil, gofakes3.BucketNotFound(bucketName)
 	}
 
 	obj := bucket.data[objectName]
 	if obj == nil {
-		return nil, gofakes3.NotFound(bucketName, objectName)
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	return &gofakes3.Object{
@@ -126,12 +142,12 @@ func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, e
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return nil, gofakes3.NotFound(bucketName, objectName)
+		return nil, gofakes3.BucketNotFound(bucketName)
 	}
 
 	obj := bucket.data[objectName]
 	if obj == nil {
-		return nil, gofakes3.NotFound(bucketName, objectName)
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	return &gofakes3.Object{
@@ -151,7 +167,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return gofakes3.NotFound(bucketName, objectName)
+		return gofakes3.BucketNotFound(bucketName)
 	}
 
 	bts, err := ioutil.ReadAll(input)
@@ -178,10 +194,10 @@ func (db *Backend) DeleteObject(bucketName, objectName string) error {
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return gofakes3.NotFound(bucketName, objectName)
+		return gofakes3.BucketNotFound(bucketName)
 	}
 
-	// TODO: should a non-existent object raise a "not found" error?
+	// S3 does not report an error when attemping to delete a key that does not exist:
 	delete(bucket.data, objectName)
 
 	return nil

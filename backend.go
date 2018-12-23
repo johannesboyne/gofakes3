@@ -7,14 +7,31 @@ import (
 type Backend interface {
 	ListBuckets() ([]BucketInfo, error)
 
-	// GetBucket should return a NotFound() error if the bucket does not exist.
+	// GetBucket must return a gofakes3.ErrNoSuchBucket error if the bucket
+	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
 	GetBucket(name string) (*Bucket, error)
 
+	// CreateBucket creates the bucket if it does not already exist. The name
+	// should be assumed to be a valid name.
+	//
+	// If the bucket already exists, a gofakes3.ResourceError with
+	// gofakes3.ErrBucketAlreadyExists MUST be returned.
 	CreateBucket(name string) error
 
 	BucketExists(name string) (exists bool, err error)
 
-	// GetObject should return a NotFound() error if the object does not exist.
+	// DeleteBucket deletes a bucket iff it is empty.
+	//
+	// If the bucket is not empty, gofakes3.ResourceError with
+	// gofakes3.ErrBucketNotEmpty MUST be returned.
+	//
+	// If the bucket does not exist, gofakes3.ErrNoSuchBucket MUST be returned.
+	//
+	// AWS does not validate the bucket's name for anything other than existence.
+	DeleteBucket(name string) error
+
+	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does not exist.
+	// See gofakes3.KeyNotFound() for a convenient way to create one.
 	GetObject(bucketName, objectName string) (*Object, error)
 
 	DeleteObject(bucketName, objectName string) error
@@ -26,5 +43,6 @@ type Backend interface {
 	// exist.
 	HeadObject(bucketName, objectName string) (*Object, error)
 
-	PutObject(bucketName, objectName string, meta map[string]string, input io.Reader) error
+	// PutObject should assume that the key is valid.
+	PutObject(bucketName, key string, meta map[string]string, input io.Reader) error
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -14,15 +15,39 @@ import (
 	"github.com/gorilla/mux"
 )
 
+const (
+	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
+	//	"The name for a key is a sequence of Unicode characters whose UTF-8
+	//	encoding is at most 1024 bytes long."
+	KeySizeLimit = 1024
+
+	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
+	//	Within the PUT request header, the user-defined metadata is limited to 2
+	// 	KB in size. The size of user-defined metadata is measured by taking the
+	// 	sum of the number of bytes in the UTF-8 encoding of each key and value.
+	//
+	// As this does not specify KB or KiB, KB is used; if gofakes3 is used for
+	// testing, and your tests show that 2KiB works, but Amazon uses 2KB...
+	// that's a much worse time to discover the disparity!
+	MetadataSizeLimit = 2000
+
+	DefaultSkewLimit = 15 * time.Minute
+)
+
 type GoFakeS3 struct {
 	storage    Backend
 	timeSource TimeSource
+	timeSkew   time.Duration
 }
 
 type Option func(g *GoFakeS3)
 
 func WithTimeSource(timeSource TimeSource) Option {
 	return func(g *GoFakeS3) { g.timeSource = timeSource }
+}
+
+func WithTimeSkewLimit(skew time.Duration) Option {
+	return func(g *GoFakeS3) { g.timeSkew = skew }
 }
 
 type Storage struct {
@@ -81,7 +106,10 @@ type Object struct {
 func New(backend Backend, options ...Option) *GoFakeS3 {
 	log.Println("locals3 db created or opened")
 
-	s3 := &GoFakeS3{storage: backend}
+	s3 := &GoFakeS3{
+		storage:  backend,
+		timeSkew: DefaultSkewLimit,
+	}
 	for _, opt := range options {
 		opt(s3)
 	}
@@ -110,7 +138,29 @@ func (g *GoFakeS3) Server() http.Handler {
 	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.HeadObject).Methods("HEAD")
 
-	return &WithCORS{r}
+	wc := &WithCORS{r}
+	hf := func(w http.ResponseWriter, rq *http.Request) {
+		timeHdr := rq.Header.Get("x-amz-date")
+
+		if g.timeSkew > 0 && timeHdr != "" {
+			rqTime, _ := time.Parse("20060102T150405Z", timeHdr)
+			skew := g.timeSource.Since(rqTime)
+
+			if skew < -g.timeSkew || skew > g.timeSkew {
+				g.httpError(w, ErrRequestTimeTooSkewed)
+				// FIXME: AWS also returns the following properties:
+				//	<ServerTime>2015-04-07T11:51:03Z</ServerTime>
+				//	<MaxAllowedSkewMilliseconds>900000</MaxAllowedSkewMilliseconds>
+				// The way the errors are currenly structured doesn't easily support extended
+				// XML error responses yet.
+				return
+			}
+		}
+
+		wc.ServeHTTP(w, rq)
+	}
+
+	return http.HandlerFunc(hf)
 }
 
 type WithCORS struct {
@@ -121,7 +171,6 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename, x-amz-meta-private")
-	w.Header().Set("Content-Type", "application/xml")
 
 	if r.Method == "OPTIONS" {
 		return
@@ -144,12 +193,23 @@ func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *GoFakeS3) httpError(w http.ResponseWriter, err error) {
-	if IsNotFound(err) {
-		http.Error(w, err.Error(), http.StatusNotFound)
-	} else {
+	resp := NewErrorResponse(err, "") // FIXME: request id
+	if resp.Code == ErrInternal {
 		log.Println(err)
-		http.Error(w, "Server Error", http.StatusInternalServerError)
 	}
+
+	w.WriteHeader(resp.Code.Status())
+	w.Header().Set("Content-Type", "application/xml")
+
+	x, err := xml.MarshalIndent(resp, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		log.Println(err)
+		return
+	}
+
+	w.Write([]byte(xml.Header))
+	w.Write(x)
 }
 
 // Get a list of all Buckets
@@ -160,7 +220,6 @@ func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
 	s := &Storage{
 		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
 		Id:          "fe7272ea58be830e56fe1663b10fafef",
@@ -172,6 +231,9 @@ func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 		g.httpError(w, err)
 		return
 	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.Write([]byte(xml.Header))
 	w.Write(x)
 }
 
@@ -208,6 +270,8 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/xml")
+	w.Write([]byte(xml.Header))
 	w.Write(x)
 }
 
@@ -217,12 +281,16 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	bucketName := vars["BucketName"]
 	log.Println("CREATE BUCKET:", bucketName)
 
+	if err := ValidateBucketName(bucketName); err != nil {
+		g.httpError(w, err)
+		return
+	}
+
 	if err := g.storage.CreateBucket(bucketName); err != nil {
 		g.httpError(w, err)
 		return
 	}
 
-	log.Println("bucket created")
 	w.Header().Set("Host", r.Header.Get("Host"))
 	w.Header().Set("Location", "/"+bucketName)
 	w.Write([]byte{})
@@ -230,7 +298,14 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBucket creates a new S3 bucket in the BoltDB storage.
 func (g *GoFakeS3) DeleteBucket(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "delete bucket")
+	vars := mux.Vars(r)
+	bucketName := vars["BucketName"]
+	log.Println("DELETE BUCKET:", bucketName)
+
+	if err := g.storage.DeleteBucket(bucketName); err != nil {
+		g.httpError(w, err)
+		return
+	}
 }
 
 // HeadBucket checks whether a bucket exists.
@@ -322,6 +397,16 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
+	if err := ValidateMetadata(meta); err != nil {
+		g.httpError(w, err)
+		return
+	}
+
+	if len(key) > KeySizeLimit {
+		g.httpError(w, ResourceError(ErrKeyTooLong, key))
+		return
+	}
+
 	if err := g.storage.PutObject(bucketName, key, meta, infile); err != nil {
 		g.httpError(w, err)
 		return
@@ -350,6 +435,11 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
+
+	if len(objectName) > KeySizeLimit {
+		g.httpError(w, ResourceError(ErrKeyTooLong, objectName))
+		return
+	}
 
 	if err := g.storage.PutObject(bucketName, objectName, meta, r.Body); err != nil {
 		g.httpError(w, err)
@@ -418,4 +508,58 @@ func formatHeaderTime(t time.Time) string {
 
 	tc := t.In(time.UTC)
 	return tc.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
+}
+
+// These rules come from the AWS docs:
+// https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html#bucketnamingrules
+//
+// 1. Bucket names must comply with DNS naming conventions.
+// 2. Bucket names must be at least 3 and no more than 63 characters long.
+// 3. Bucket names must not contain uppercase characters or underscores.
+// 4. Bucket names must start with a lowercase letter or number.
+//
+// The DNS RFC confirms that the valid range of characters in an LDH label is 'a-z0-9-':
+// https://tools.ietf.org/html/rfc5890#section-2.3.1
+//
+// This pattern can be used to match both the entire bucket name (including period-
+// separated labels) and the individual label components, presuming you have already
+// split the string by period.
+var bucketNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9\.-]+)[a-z0-9]$`)
+
+func ValidateBucketName(name string) error {
+	if len(name) < 3 || len(name) > 63 {
+		return ErrorMessage(ErrInvalidBucketName, "bucket name must be >= 3 characters and <= 63")
+	}
+	if !bucketNamePattern.MatchString(name) {
+		return ErrorMessage(ErrInvalidBucketName, "bucket must start and end with 'a-z, 0-9', and contain only 'a-z, 0-9, -' in between")
+	}
+
+	if net.ParseIP(name) != nil {
+		return ErrorMessage(ErrInvalidBucketName, "bucket names must not be formatted as an IP address")
+	}
+
+	// Bucket names must be a series of one or more labels. Adjacent labels are
+	// separated by a single period (.). Bucket names can contain lowercase
+	// letters, numbers, and hyphens. Each label must start and end with a
+	// lowercase letter or a number.
+	labels := strings.Split(name, ".")
+	for _, label := range labels {
+		if !bucketNamePattern.MatchString(label) {
+			return ErrorMessage(ErrInvalidBucketName, "label must start and end with 'a-z, 0-9', and contain only 'a-z, 0-9, -' in between")
+		}
+	}
+
+	return nil
+}
+
+func ValidateMetadata(meta map[string]string) error {
+	total := 0
+	for k, v := range meta {
+		total += len(k) + len(v)
+	}
+	if total > MetadataSizeLimit {
+		return ErrMetadataTooLarge
+	}
+
+	return nil
 }
