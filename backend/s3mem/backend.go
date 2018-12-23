@@ -53,7 +53,7 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
+func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -64,13 +64,21 @@ func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
 
 	response := gofakes3.NewBucket(name)
 	for _, item := range storedBucket.data {
-		response.Contents = append(response.Contents, &gofakes3.Content{
-			Key:          item.key,
-			LastModified: gofakes3.ContentTime(item.lastModified),
-			ETag:         "\"" + hex.EncodeToString(item.hash) + "\"",
-			Size:         len(item.data),
-			StorageClass: "STANDARD",
-		})
+		match := prefix.Match(item.key)
+		if match == nil {
+			continue
+
+		} else if match.CommonPrefix {
+			response.AddPrefix(match.MatchedPart)
+
+		} else {
+			response.Add(&gofakes3.Content{
+				Key:          item.key,
+				LastModified: gofakes3.ContentTime(item.lastModified),
+				ETag:         "\"" + hex.EncodeToString(item.hash) + "\"",
+				Size:         len(item.data),
+			})
+		}
 	}
 
 	return response, nil

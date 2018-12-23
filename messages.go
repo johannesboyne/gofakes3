@@ -36,12 +36,18 @@ func (c ContentTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 }
 
 type Bucket struct {
-	XMLName  xml.Name   `xml:"ListBucketResult"`
-	Xmlns    string     `xml:"xmlns,attr"`
-	Name     string     `xml:"Name"`
-	Prefix   string     `xml:"Prefix"`
-	Marker   string     `xml:"Marker"`
-	Contents []*Content `xml:"Contents"`
+	XMLName        xml.Name       `xml:"ListBucketResult"`
+	Xmlns          string         `xml:"xmlns,attr"`
+	Name           string         `xml:"Name"`
+	Prefix         string         `xml:"Prefix"`
+	Marker         string         `xml:"Marker"`
+	CommonPrefixes []BucketPrefix `xml:"CommonPrefixes,omitempty"`
+	Contents       []*Content     `xml:"Contents"`
+
+	// prefixes maintains an index of prefixes that have already been seen.
+	// This is a convenience for backend implementers like s3bolt and s3mem,
+	// which operate on a full, flat list of keys.
+	prefixes map[string]bool
 }
 
 func NewBucket(name string) *Bucket {
@@ -49,6 +55,27 @@ func NewBucket(name string) *Bucket {
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 		Name:  name,
 	}
+}
+
+func (b *Bucket) Add(item *Content) {
+	if item.StorageClass == "" {
+		item.StorageClass = "STANDARD"
+	}
+	b.Contents = append(b.Contents, item)
+}
+
+func (b *Bucket) AddPrefix(prefix string) {
+	if b.prefixes == nil {
+		b.prefixes = map[string]bool{}
+	} else if b.prefixes[prefix] {
+		return
+	}
+	b.prefixes[prefix] = true
+	b.CommonPrefixes = append(b.CommonPrefixes, BucketPrefix{Prefix: prefix})
+}
+
+type BucketPrefix struct {
+	Prefix string
 }
 
 type Object struct {

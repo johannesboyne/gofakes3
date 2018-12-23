@@ -150,26 +150,16 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 	log.Println("GET BUCKET")
 	vars := mux.Vars(r)
 	bucketName := vars["BucketName"]
-	prefix := r.URL.Query().Get("prefix")
+
+	prefix := prefixFromQuery(r.URL.Query())
 
 	log.Println("bucketname:", bucketName)
 	log.Println("prefix    :", prefix)
 
-	bucket, err := g.storage.GetBucket(bucketName)
+	bucket, err := g.storage.GetBucket(bucketName, prefix)
 	if err != nil {
 		g.httpError(w, r, err)
 		return
-	}
-
-	if prefix != "" {
-		idx := 0
-		for _, entry := range bucket.Contents {
-			if strings.Contains(entry.Key, prefix) {
-				bucket.Contents[idx] = entry
-				idx++
-			}
-		}
-		bucket.Contents = bucket.Contents[:idx]
 	}
 
 	x, err := xml.MarshalIndent(bucket, "", "  ")
