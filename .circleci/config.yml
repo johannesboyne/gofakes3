@@ -5,8 +5,9 @@ version: 2
 jobs:
   build:
     docker:
-    - image: circleci/golang:1.11-rc
-    working_directory: ~/github.com/tkeech1/gomodules
+    - image: circleci/golang:1.9
+    working_directory: ~/github.com/johannesboyne/gofakes3
     steps:
     - checkout
-    - run: go test -race
+    - run: go get -v -t -d ./...
+    - run: go test -v ./...
