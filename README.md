@@ -3,7 +3,7 @@
 
 AWS S3 fake server.
 
-A _poor man's_ object storage based on [BoltDB](https://github.com/boltdb/bolt).
+A _poor man's_ object storage based on an In-Memory KV db or [BoltDB](https://github.com/boltdb/bolt) (Pluggable).
 
 ```
   s3client -> [gofakes3:9000] -- Get    Bucket (List)
@@ -96,12 +96,11 @@ exports.handle = function (e, ctx) {
 </html>
 ```
 
-
-## Missing
-
-- [] Delete Buckets and Objects
-
 ## Similar notable projects
 
 - https://github.com/minio/minio **not similar but powerfull ;-)**
 - https://github.com/andrewgaul/s3proxy by @andrewgaul
+
+## Contributors
+
+- [Blake Williams @shabbyrobe](https://github.com/shabbyrobe)
