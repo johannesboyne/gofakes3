@@ -29,15 +29,16 @@ const (
 	// As this does not specify KB or KiB, KB is used; if gofakes3 is used for
 	// testing, and your tests show that 2KiB works, but Amazon uses 2KB...
 	// that's a much worse time to discover the disparity!
-	MetadataSizeLimit = 2000
+	DefaultMetadataSizeLimit = 2000
 
 	DefaultSkewLimit = 15 * time.Minute
 )
 
 type GoFakeS3 struct {
-	storage    Backend
-	timeSource TimeSource
-	timeSkew   time.Duration
+	storage           Backend
+	timeSource        TimeSource
+	timeSkew          time.Duration
+	metadataSizeLimit int
 }
 
 type Option func(g *GoFakeS3)
@@ -46,8 +47,23 @@ func WithTimeSource(timeSource TimeSource) Option {
 	return func(g *GoFakeS3) { g.timeSource = timeSource }
 }
 
+// WithTimeSkewLimit allows you to reconfigure the allowed skew between the
+// client's clock and the server's clock. The AWS client SDKs will send the
+// "x-amz-date" header containing the time at the client, which is used to
+// calculate the skew.
+//
+// See DefaultSkewLimit for the starting value, set to '0' to disable.
+//
 func WithTimeSkewLimit(skew time.Duration) Option {
 	return func(g *GoFakeS3) { g.timeSkew = skew }
+}
+
+// WithMetadataSizeLimit allows you to reconfigure the maximum allowed metadata
+// size.
+//
+// See DefaultMetadataSizeLimit for the starting value, set to '0' to disable.
+func WithMetadataSizeLimit(size int) Option {
+	return func(g *GoFakeS3) { g.metadataSizeLimit = size }
 }
 
 type Storage struct {
@@ -107,8 +123,9 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 	log.Println("locals3 db created or opened")
 
 	s3 := &GoFakeS3{
-		storage:  backend,
-		timeSkew: DefaultSkewLimit,
+		storage:           backend,
+		timeSkew:          DefaultSkewLimit,
+		metadataSizeLimit: DefaultMetadataSizeLimit,
 	}
 	for _, opt := range options {
 		opt(s3)
@@ -396,8 +413,8 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
-	if err := ValidateMetadata(meta); err != nil {
-		g.httpError(w, r, err)
+	if g.metadataSizeLimit > 0 && metadataSize(meta) > g.metadataSizeLimit {
+		g.httpError(w, r, ErrMetadataTooLarge)
 		return
 	}
 
@@ -509,7 +526,12 @@ func formatHeaderTime(t time.Time) string {
 	return tc.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
 }
 
-// These rules come from the AWS docs:
+// This pattern can be used to match both the entire bucket name (including period-
+// separated labels) and the individual label components, presuming you have already
+// split the string by period.
+var bucketNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9\.-]+)[a-z0-9]$`)
+
+// ValidateBucketName applies the rules from the AWS docs:
 // https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html#bucketnamingrules
 //
 // 1. Bucket names must comply with DNS naming conventions.
@@ -520,11 +542,6 @@ func formatHeaderTime(t time.Time) string {
 // The DNS RFC confirms that the valid range of characters in an LDH label is 'a-z0-9-':
 // https://tools.ietf.org/html/rfc5890#section-2.3.1
 //
-// This pattern can be used to match both the entire bucket name (including period-
-// separated labels) and the individual label components, presuming you have already
-// split the string by period.
-var bucketNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9\.-]+)[a-z0-9]$`)
-
 func ValidateBucketName(name string) error {
 	if len(name) < 3 || len(name) > 63 {
 		return ErrorMessage(ErrInvalidBucketName, "bucket name must be >= 3 characters and <= 63")
@@ -551,14 +568,10 @@ func ValidateBucketName(name string) error {
 	return nil
 }
 
-func ValidateMetadata(meta map[string]string) error {
+func metadataSize(meta map[string]string) int {
 	total := 0
 	for k, v := range meta {
 		total += len(k) + len(v)
 	}
-	if total > MetadataSizeLimit {
-		return ErrMetadataTooLarge
-	}
-
-	return nil
+	return total
 }
