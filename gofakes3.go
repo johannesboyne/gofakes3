@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -39,83 +37,6 @@ type GoFakeS3 struct {
 	timeSource        TimeSource
 	timeSkew          time.Duration
 	metadataSizeLimit int
-}
-
-type Option func(g *GoFakeS3)
-
-func WithTimeSource(timeSource TimeSource) Option {
-	return func(g *GoFakeS3) { g.timeSource = timeSource }
-}
-
-// WithTimeSkewLimit allows you to reconfigure the allowed skew between the
-// client's clock and the server's clock. The AWS client SDKs will send the
-// "x-amz-date" header containing the time at the client, which is used to
-// calculate the skew.
-//
-// See DefaultSkewLimit for the starting value, set to '0' to disable.
-//
-func WithTimeSkewLimit(skew time.Duration) Option {
-	return func(g *GoFakeS3) { g.timeSkew = skew }
-}
-
-// WithMetadataSizeLimit allows you to reconfigure the maximum allowed metadata
-// size.
-//
-// See DefaultMetadataSizeLimit for the starting value, set to '0' to disable.
-func WithMetadataSizeLimit(size int) Option {
-	return func(g *GoFakeS3) { g.metadataSizeLimit = size }
-}
-
-type Storage struct {
-	XMLName     xml.Name     `xml:"ListAllMyBucketsResult"`
-	Xmlns       string       `xml:"xmlns,attr"`
-	Id          string       `xml:"Owner>ID"`
-	DisplayName string       `xml:"Owner>DisplayName"`
-	Buckets     []BucketInfo `xml:"Buckets"`
-}
-
-type BucketInfo struct {
-	Name         string `xml:"Bucket>Name"`
-	CreationDate string `xml:"Bucket>CreationDate"`
-}
-
-type Content struct {
-	Key          string      `xml:"Key"`
-	LastModified ContentTime `xml:"LastModified"`
-	ETag         string      `xml:"ETag"`
-	Size         int         `xml:"Size"`
-	StorageClass string      `xml:"StorageClass"`
-}
-
-type ContentTime time.Time
-
-func (c ContentTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	// This is the format expected by the aws xml code, not the default.
-	var s = time.Time(c).Format("2006-01-02T15:04:05Z")
-	return e.EncodeElement(s, start)
-}
-
-type Bucket struct {
-	XMLName  xml.Name   `xml:"ListBucketResult"`
-	Xmlns    string     `xml:"xmlns,attr"`
-	Name     string     `xml:"Name"`
-	Prefix   string     `xml:"Prefix"`
-	Marker   string     `xml:"Marker"`
-	Contents []*Content `xml:"Contents"`
-}
-
-func NewBucket(name string) *Bucket {
-	return &Bucket{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:  name,
-	}
-}
-
-type Object struct {
-	Metadata map[string]string
-	Size     int64
-	Contents io.ReadCloser
-	Hash     []byte
 }
 
 // Setup a new fake object storage
@@ -174,35 +95,6 @@ func (g *GoFakeS3) Server() http.Handler {
 	}
 
 	return http.HandlerFunc(hf)
-}
-
-type WithCORS struct {
-	r *mux.Router
-}
-
-func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename, x-amz-meta-private")
-
-	if r.Method == "OPTIONS" {
-		return
-	}
-	// Bucket name rewriting
-	// this is due to some inconsistencies in the AWS SDKs
-	re := regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})|(localhost:\\d{1,7})")
-	bucket := re.ReplaceAllString(r.Host, "")
-	if len(bucket) > 0 {
-		log.Println("rewrite bucket ->", bucket)
-		p := r.URL.Path
-		r.URL.Path = "/" + bucket
-		if p != "/" {
-			r.URL.Path += p
-		}
-	}
-	log.Println("=>", r.URL)
-
-	s.r.ServeHTTP(w, r)
 }
 
 func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) {
@@ -524,48 +416,6 @@ func formatHeaderTime(t time.Time) string {
 
 	tc := t.In(time.UTC)
 	return tc.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
-}
-
-// This pattern can be used to match both the entire bucket name (including period-
-// separated labels) and the individual label components, presuming you have already
-// split the string by period.
-var bucketNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9\.-]+)[a-z0-9]$`)
-
-// ValidateBucketName applies the rules from the AWS docs:
-// https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html#bucketnamingrules
-//
-// 1. Bucket names must comply with DNS naming conventions.
-// 2. Bucket names must be at least 3 and no more than 63 characters long.
-// 3. Bucket names must not contain uppercase characters or underscores.
-// 4. Bucket names must start with a lowercase letter or number.
-//
-// The DNS RFC confirms that the valid range of characters in an LDH label is 'a-z0-9-':
-// https://tools.ietf.org/html/rfc5890#section-2.3.1
-//
-func ValidateBucketName(name string) error {
-	if len(name) < 3 || len(name) > 63 {
-		return ErrorMessage(ErrInvalidBucketName, "bucket name must be >= 3 characters and <= 63")
-	}
-	if !bucketNamePattern.MatchString(name) {
-		return ErrorMessage(ErrInvalidBucketName, "bucket must start and end with 'a-z, 0-9', and contain only 'a-z, 0-9, -' in between")
-	}
-
-	if net.ParseIP(name) != nil {
-		return ErrorMessage(ErrInvalidBucketName, "bucket names must not be formatted as an IP address")
-	}
-
-	// Bucket names must be a series of one or more labels. Adjacent labels are
-	// separated by a single period (.). Bucket names can contain lowercase
-	// letters, numbers, and hyphens. Each label must start and end with a
-	// lowercase letter or a number.
-	labels := strings.Split(name, ".")
-	for _, label := range labels {
-		if !bucketNamePattern.MatchString(label) {
-			return ErrorMessage(ErrInvalidBucketName, "label must start and end with 'a-z, 0-9', and contain only 'a-z, 0-9, -' in between")
-		}
-	}
-
-	return nil
 }
 
 func metadataSize(meta map[string]string) int {
