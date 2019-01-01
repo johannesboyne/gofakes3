@@ -7,81 +7,47 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
+const (
+	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
+	//	"The name for a key is a sequence of Unicode characters whose UTF-8
+	//	encoding is at most 1024 bytes long."
+	KeySizeLimit = 1024
+
+	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
+	//	Within the PUT request header, the user-defined metadata is limited to 2
+	// 	KB in size. The size of user-defined metadata is measured by taking the
+	// 	sum of the number of bytes in the UTF-8 encoding of each key and value.
+	//
+	// As this does not specify KB or KiB, KB is used; if gofakes3 is used for
+	// testing, and your tests show that 2KiB works, but Amazon uses 2KB...
+	// that's a much worse time to discover the disparity!
+	DefaultMetadataSizeLimit = 2000
+
+	DefaultSkewLimit = 15 * time.Minute
+)
+
 type GoFakeS3 struct {
-	storage    Backend
-	timeSource TimeSource
-}
-
-type Option func(g *GoFakeS3)
-
-func WithTimeSource(timeSource TimeSource) Option {
-	return func(g *GoFakeS3) { g.timeSource = timeSource }
-}
-
-type Storage struct {
-	XMLName     xml.Name     `xml:"ListAllMyBucketsResult"`
-	Xmlns       string       `xml:"xmlns,attr"`
-	Id          string       `xml:"Owner>ID"`
-	DisplayName string       `xml:"Owner>DisplayName"`
-	Buckets     []BucketInfo `xml:"Buckets"`
-}
-
-type BucketInfo struct {
-	Name         string `xml:"Bucket>Name"`
-	CreationDate string `xml:"Bucket>CreationDate"`
-}
-
-type Content struct {
-	Key          string      `xml:"Key"`
-	LastModified ContentTime `xml:"LastModified"`
-	ETag         string      `xml:"ETag"`
-	Size         int         `xml:"Size"`
-	StorageClass string      `xml:"StorageClass"`
-}
-
-type ContentTime time.Time
-
-func (c ContentTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	// This is the format expected by the aws xml code, not the default.
-	var s = time.Time(c).Format("2006-01-02T15:04:05Z")
-	return e.EncodeElement(s, start)
-}
-
-type Bucket struct {
-	XMLName  xml.Name   `xml:"ListBucketResult"`
-	Xmlns    string     `xml:"xmlns,attr"`
-	Name     string     `xml:"Name"`
-	Prefix   string     `xml:"Prefix"`
-	Marker   string     `xml:"Marker"`
-	Contents []*Content `xml:"Contents"`
-}
-
-func NewBucket(name string) *Bucket {
-	return &Bucket{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:  name,
-	}
-}
-
-type Object struct {
-	Metadata map[string]string
-	Size     int64
-	Contents io.ReadCloser
-	Hash     []byte
+	storage           Backend
+	timeSource        TimeSource
+	timeSkew          time.Duration
+	metadataSizeLimit int
 }
 
 // Setup a new fake object storage
 func New(backend Backend, options ...Option) *GoFakeS3 {
 	log.Println("locals3 db created or opened")
 
-	s3 := &GoFakeS3{storage: backend}
+	s3 := &GoFakeS3{
+		storage:           backend,
+		timeSkew:          DefaultSkewLimit,
+		metadataSizeLimit: DefaultMetadataSizeLimit,
+	}
 	for _, opt := range options {
 		opt(s3)
 	}
@@ -110,45 +76,47 @@ func (g *GoFakeS3) Server() http.Handler {
 	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
 	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.HeadObject).Methods("HEAD")
 
-	return &WithCORS{r}
-}
+	wc := &WithCORS{r}
+	hf := func(w http.ResponseWriter, rq *http.Request) {
+		timeHdr := rq.Header.Get("x-amz-date")
 
-type WithCORS struct {
-	r *mux.Router
-}
+		if g.timeSkew > 0 && timeHdr != "" {
+			rqTime, _ := time.Parse("20060102T150405Z", timeHdr)
+			at := g.timeSource.Now()
+			skew := at.Sub(rqTime)
 
-func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename, x-amz-meta-private")
-	w.Header().Set("Content-Type", "application/xml")
-
-	if r.Method == "OPTIONS" {
-		return
-	}
-	// Bucket name rewriting
-	// this is due to some inconsistencies in the AWS SDKs
-	re := regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})|(localhost:\\d{1,7})")
-	bucket := re.ReplaceAllString(r.Host, "")
-	if len(bucket) > 0 {
-		log.Println("rewrite bucket ->", bucket)
-		p := r.URL.Path
-		r.URL.Path = "/" + bucket
-		if p != "/" {
-			r.URL.Path += p
+			if skew < -g.timeSkew || skew > g.timeSkew {
+				g.httpError(w, rq, requestTimeTooSkewed(at, g.timeSkew))
+				return
+			}
 		}
-	}
-	log.Println("=>", r.URL)
 
-	s.r.ServeHTTP(w, r)
+		wc.ServeHTTP(w, rq)
+	}
+
+	return http.HandlerFunc(hf)
 }
 
-func (g *GoFakeS3) httpError(w http.ResponseWriter, err error) {
-	if IsNotFound(err) {
-		http.Error(w, err.Error(), http.StatusNotFound)
-	} else {
+func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) {
+	resp := ensureErrorResponse(err, "") // FIXME: request id
+	if resp.ErrorCode() == ErrInternal {
 		log.Println(err)
-		http.Error(w, "Server Error", http.StatusInternalServerError)
+	}
+
+	w.WriteHeader(resp.ErrorCode().Status())
+
+	if r.Method != http.MethodHead {
+		w.Header().Set("Content-Type", "application/xml")
+
+		x, err := xml.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			log.Println(err)
+			return
+		}
+
+		w.Write([]byte(xml.Header))
+		w.Write(x)
 	}
 }
 
@@ -156,11 +124,10 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, err error) {
 func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	buckets, err := g.storage.ListBuckets()
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
-	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
 	s := &Storage{
 		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
 		Id:          "fe7272ea58be830e56fe1663b10fafef",
@@ -169,9 +136,12 @@ func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 	x, err := xml.MarshalIndent(s, "", "  ")
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.Write([]byte(xml.Header))
 	w.Write(x)
 }
 
@@ -187,7 +157,7 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	bucket, err := g.storage.GetBucket(bucketName)
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -204,10 +174,12 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	x, err := xml.MarshalIndent(bucket, "", "  ")
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/xml")
+	w.Write([]byte(xml.Header))
 	w.Write(x)
 }
 
@@ -217,12 +189,16 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	bucketName := vars["BucketName"]
 	log.Println("CREATE BUCKET:", bucketName)
 
-	if err := g.storage.CreateBucket(bucketName); err != nil {
-		g.httpError(w, err)
+	if err := ValidateBucketName(bucketName); err != nil {
+		g.httpError(w, r, err)
 		return
 	}
 
-	log.Println("bucket created")
+	if err := g.storage.CreateBucket(bucketName); err != nil {
+		g.httpError(w, r, err)
+		return
+	}
+
 	w.Header().Set("Host", r.Header.Get("Host"))
 	w.Header().Set("Location", "/"+bucketName)
 	w.Write([]byte{})
@@ -230,7 +206,14 @@ func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBucket creates a new S3 bucket in the BoltDB storage.
 func (g *GoFakeS3) DeleteBucket(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "delete bucket")
+	vars := mux.Vars(r)
+	bucketName := vars["BucketName"]
+	log.Println("DELETE BUCKET:", bucketName)
+
+	if err := g.storage.DeleteBucket(bucketName); err != nil {
+		g.httpError(w, r, err)
+		return
+	}
 }
 
 // HeadBucket checks whether a bucket exists.
@@ -242,7 +225,7 @@ func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
 
 	exists, err := g.storage.BucketExists(bucketName)
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	if !exists {
@@ -269,7 +252,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	obj, err := g.storage.GetObject(bucketName, objectName)
 
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	defer obj.Contents.Close()
@@ -285,7 +268,7 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 }
@@ -295,7 +278,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
 	const _24MB = (1 << 20) * 24
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -309,7 +292,7 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 
 	infile, err := fileHeader.Open()
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	defer infile.Close()
@@ -322,8 +305,18 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
+	if g.metadataSizeLimit > 0 && metadataSize(meta) > g.metadataSizeLimit {
+		g.httpError(w, r, ErrMetadataTooLarge)
+		return
+	}
+
+	if len(key) > KeySizeLimit {
+		g.httpError(w, r, ResourceError(ErrKeyTooLong, key))
+		return
+	}
+
 	if err := g.storage.PutObject(bucketName, key, meta, infile); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -351,8 +344,13 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
+	if len(objectName) > KeySizeLimit {
+		g.httpError(w, r, ResourceError(ErrKeyTooLong, objectName))
+		return
+	}
+
 	if err := g.storage.PutObject(bucketName, objectName, meta, r.Body); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -373,7 +371,7 @@ func (g *GoFakeS3) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	log.Println("DELETE:", bucketName, objectName)
 
 	if err := g.storage.DeleteObject(bucketName, objectName); err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 
@@ -393,7 +391,7 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 
 	obj, err := g.storage.HeadObject(bucketName, objectName)
 	if err != nil {
-		g.httpError(w, err)
+		g.httpError(w, r, err)
 		return
 	}
 	defer obj.Contents.Close()
@@ -418,4 +416,12 @@ func formatHeaderTime(t time.Time) string {
 
 	tc := t.In(time.UTC)
 	return tc.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
+}
+
+func metadataSize(meta map[string]string) int {
+	total := 0
+	for k, v := range meta {
+		total += len(k) + len(v)
+	}
+	return total
 }

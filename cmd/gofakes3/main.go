@@ -59,8 +59,8 @@ func run() error {
 		return fmt.Errorf("unknown backend %q", backend)
 	}
 
-	if err := back.CreateBucket(bucket); err != nil {
-		return err
+	if err := back.CreateBucket(bucket); err != nil && !gofakes3.IsAlreadyExists(err) {
+		return fmt.Errorf("gofakes3: could not create initial bucket %q: %v", bucket, err)
 	}
 
 	log.Println("created bucket", bucket)

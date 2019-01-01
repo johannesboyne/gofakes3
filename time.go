@@ -4,6 +4,7 @@ import "time"
 
 type TimeSource interface {
 	Now() time.Time
+	Since(time.Time) time.Duration
 }
 
 func DefaultTimeSource() TimeSource {
@@ -22,4 +23,8 @@ type locatedTimeSource struct {
 
 func (l *locatedTimeSource) Now() time.Time {
 	return time.Now().In(l.timeLocation)
+}
+
+func (l *locatedTimeSource) Since(t time.Time) time.Duration {
+	return time.Since(t)
 }
