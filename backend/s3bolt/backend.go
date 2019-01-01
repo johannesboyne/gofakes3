@@ -91,9 +91,8 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 				item := &gofakes3.Content{
 					Key:          string(k),
 					LastModified: mod,
-					ETag:         "\"" + hex.EncodeToString(hash[:]) + "\"",
+					ETag:         `"` + hex.EncodeToString(hash[:]) + `"`,
 					Size:         len(v),
-					StorageClass: "STANDARD",
 				}
 				bucket.Add(item)
 			}
