@@ -13,6 +13,8 @@ import (
 // If you add a code to this list, please also add it to ErrorCode.Status().
 //
 const (
+	ErrNone ErrorCode = ""
+
 	ErrBucketAlreadyExists ErrorCode = "BucketAlreadyExists"
 
 	// Raised when attempting to delete a bucket that still contains items.
@@ -183,7 +185,12 @@ func (e ErrorCode) Status() int {
 //		// handle condition
 //	}
 //
+// If err is nil and code is ErrNone, HasErrorCode returns true.
+//
 func HasErrorCode(err error, code ErrorCode) bool {
+	if err == nil && code == "" {
+		return true
+	}
 	s3err, ok := err.(interface{ ErrorCode() ErrorCode })
 	if !ok {
 		return false
