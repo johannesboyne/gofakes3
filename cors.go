@@ -4,8 +4,29 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/gorilla/mux"
+)
+
+var (
+	corsHeaders = []string{
+		"Accept",
+		"Accept-Encoding",
+		"Authorization",
+		"Content-Length",
+		"Content-Type",
+		"X-Amz-Date",
+		"X-Amz-User-Agent",
+		"X-CSRF-Token",
+		"x-amz-meta-filename",
+		"x-amz-meta-from",
+		"x-amz-meta-private",
+		"x-amz-meta-to",
+	}
+	corsHeadersString = strings.Join(corsHeaders, ", ")
+
+	bucketRewritePattern = regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})|(localhost:\\d{1,7})")
 )
 
 type WithCORS struct {
@@ -15,15 +36,15 @@ type WithCORS struct {
 func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Amz-User-Agent, X-Amz-Date, x-amz-meta-from, x-amz-meta-to, x-amz-meta-filename, x-amz-meta-private")
+	w.Header().Set("Access-Control-Allow-Headers", corsHeadersString)
 
 	if r.Method == "OPTIONS" {
 		return
 	}
+
 	// Bucket name rewriting
 	// this is due to some inconsistencies in the AWS SDKs
-	re := regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})|(localhost:\\d{1,7})")
-	bucket := re.ReplaceAllString(r.Host, "")
+	bucket := bucketRewritePattern.ReplaceAllString(r.Host, "")
 	if len(bucket) > 0 {
 		log.Println("rewrite bucket ->", bucket)
 		p := r.URL.Path
