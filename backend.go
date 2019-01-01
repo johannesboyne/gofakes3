@@ -20,7 +20,7 @@ type Backend interface {
 
 	BucketExists(name string) (exists bool, err error)
 
-	// DeleteBucket deletes a bucket iff it is empty.
+	// DeleteBucket deletes a bucket if and only if it is empty.
 	//
 	// If the bucket is not empty, gofakes3.ResourceError with
 	// gofakes3.ErrBucketNotEmpty MUST be returned.
