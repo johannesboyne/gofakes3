@@ -45,15 +45,15 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	var buckets = make([]gofakes3.BucketInfo, 0, len(db.buckets))
 	for _, bucket := range db.buckets {
 		buckets = append(buckets, gofakes3.BucketInfo{
-			Name: bucket.name,
-			// CreationDate: bucket.creationDate,
+			Name:         bucket.name,
+			CreationDate: bucket.creationDate,
 		})
 	}
 
 	return buckets, nil
 }
 
-func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
+func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -64,13 +64,21 @@ func (db *Backend) GetBucket(name string) (*gofakes3.Bucket, error) {
 
 	response := gofakes3.NewBucket(name)
 	for _, item := range storedBucket.data {
-		response.Contents = append(response.Contents, &gofakes3.Content{
-			Key:          item.key,
-			LastModified: gofakes3.ContentTime(item.lastModified),
-			ETag:         "\"" + hex.EncodeToString(item.hash) + "\"",
-			Size:         len(item.data),
-			StorageClass: "STANDARD",
-		})
+		match := prefix.Match(item.key)
+		if match == nil {
+			continue
+
+		} else if match.CommonPrefix {
+			response.AddPrefix(match.MatchedPart)
+
+		} else {
+			response.Add(&gofakes3.Content{
+				Key:          item.key,
+				LastModified: gofakes3.NewContentTime(item.lastModified),
+				ETag:         `"` + hex.EncodeToString(item.hash) + `"`,
+				Size:         len(item.data),
+			})
+		}
 	}
 
 	return response, nil
@@ -85,8 +93,9 @@ func (db *Backend) CreateBucket(name string) error {
 	}
 
 	db.buckets[name] = &bucket{
-		name: name,
-		data: map[string]*bucketItem{},
+		name:         name,
+		creationDate: gofakes3.NewContentTime(db.timeSource.Now()),
+		data:         map[string]*bucketItem{},
 	}
 	return nil
 }

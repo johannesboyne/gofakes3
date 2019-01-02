@@ -40,16 +40,36 @@ We're using it for the local development of S3 dependent Lambda functions and to
 
 ## How to use it?
 
-Please feel free to check it out and to provide useful feedback (using github issues), but be aware, this software is used internally and for the local development only. Thus, it has no demand for correctness, performance or security.
+Please feel free to check it out and to provide useful feedback (using github
+issues), but be aware, this software is used internally and for the local
+development only. Thus, it has no demand for correctness, performance or
+security.
 
-**For setting it up locally, you'll have to do the following:**
+There are two ways to run locally: using DNS, or using S3 path mode.
 
-- add the following to your `/etc/hosts`: `127.0.0.1 <bucket-name>.localhost`
-- start the gofakes3 service, e.g.: `./s3f_darwin_amd64 -db tests3.db -port ":9000"`
+S3 path mode is the most flexible and least restrictive, but it does require that you
+are able to modify your client code.In Go, the modification would look like so:
+    
+	config := aws.Config{}
+	config.WithS3ForcePathStyle(true)
 
-### Exemplary usage
+S3 path mode works over the network by default for all bucket names.
 
-#### Lambda Example
+If you are unable to modify the code, DNS mode can be used, but it comes with further
+restrictions and requires you to be able to modify your local DNS resolution.
+
+If using `localhost` as your endpoint, you will need to add the following to
+`/etc/hosts` for *every bucket you want to fake*:
+
+    127.0.0.1 <bucket-name>.localhost
+
+It is trickier if you want other machines to be able to use your fake S3 server
+as you need to be able to modify their DNS resolution as well.
+
+
+## Exemplary usage
+
+### Lambda Example
 
 ```javascript
 var AWS   = require('aws-sdk')
@@ -67,7 +87,7 @@ exports.handle = function (e, ctx) {
 }
 ```
 
-#### Upload Example
+### Upload Example
 
 ```html
 <html>
