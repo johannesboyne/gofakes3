@@ -125,4 +125,5 @@ exports.handle = function (e, ctx) {
 
 ## Contributors
 
+- [Johannes Boyne @johannesboyne](https://github.com/johannesboyne)
 - [Blake Williams @shabbyrobe](https://github.com/shabbyrobe)

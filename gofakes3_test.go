@@ -2,6 +2,7 @@ package gofakes3_test
 
 import (
 	"bytes"
+	"fmt"
 	"net/http/httptest"
 	"reflect"
 	"sort"
@@ -69,6 +70,10 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 	}
 
 	return &ts
+}
+
+func (ts *testServer) url(url string) string {
+	return fmt.Sprintf("%s/%s", ts.server.URL, strings.TrimLeft(url, "/"))
 }
 
 func (ts *testServer) createBucket(bucket string) {
