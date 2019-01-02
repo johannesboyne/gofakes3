@@ -5,7 +5,7 @@
 set -o errexit
 set -o nounset
 
-GOFAKEs3_BIN="${PWD}/cmd/gofakes3"
+GOFAKEs3_BIN="go run ${PWD}/cmd/gofakes3/main.go -backend=memory"
 GOFAKEs3_PORT="9000"
 S3TEST_D="${PWD}/s3test/s3-tests"
 export S3TEST_CONF="${PWD}/s3test/s3-tests.conf"
