@@ -14,8 +14,9 @@ import (
 )
 
 type Backend struct {
-	bolt       *bolt.DB
-	timeSource gofakes3.TimeSource
+	bolt           *bolt.DB
+	timeSource     gofakes3.TimeSource
+	metaBucketName []byte
 }
 
 var _ gofakes3.Backend = &Backend{}
@@ -39,7 +40,8 @@ func NewFile(file string, opts ...Option) (*Backend, error) {
 
 func New(bolt *bolt.DB, opts ...Option) *Backend {
 	b := &Backend{
-		bolt: bolt,
+		bolt:           bolt,
+		metaBucketName: []byte("_meta"), // Underscore guarantees no overlap with legal S3 bucket names
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -50,12 +52,72 @@ func New(bolt *bolt.DB, opts ...Option) *Backend {
 	return b
 }
 
-func (b *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
+// metaBucket returns a utility that manages access to the metadata bucket.
+// The returned struct is valid only for the lifetime of the bolt.Tx.
+// The metadata bucket may not exist if this is an older database.
+func (db *Backend) metaBucket(tx *bolt.Tx) (*metaBucket, error) {
+	var bucket *bolt.Bucket
+	var err error
+
+	if tx.Writable() {
+		bucket, err = tx.CreateBucketIfNotExists(db.metaBucketName)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bucket = tx.Bucket(db.metaBucketName)
+		if bucket == nil {
+			// FIXME: support legacy databases; remove when versioning is supported.
+			return nil, nil
+		}
+	}
+
+	return &metaBucket{
+		Tx:       tx,
+		bucket:   bucket,
+		metaName: db.metaBucketName,
+	}, nil
+}
+
+func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	var buckets []gofakes3.BucketInfo
 
-	err := b.bolt.View(func(tx *bolt.Tx) error {
+	err := db.bolt.View(func(tx *bolt.Tx) error {
+		metaBucket, err := db.metaBucket(tx)
+		if err != nil {
+			return err
+		}
+
 		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
-			buckets = append(buckets, gofakes3.BucketInfo{string(name), ""})
+			if bytes.Equal(name, db.metaBucketName) {
+				return nil
+			}
+
+			nameStr := string(name)
+			info := gofakes3.BucketInfo{Name: nameStr}
+
+			// Attempt to assign metadata. If it isn't found, we will just
+			// pretend that's fine for now. This is to support existing
+			// databases that have buckets created without associated metadata.
+			//
+			// FIXME: clean this up when there is an upgrade script to expect
+			// that it exists
+			if metaBucket != nil {
+				bucketInfo, err := metaBucket.s3Bucket(nameStr)
+				if err != nil {
+					return err
+				}
+				if bucketInfo != nil {
+					info.CreationDate = gofakes3.NewContentTime(bucketInfo.CreationDate)
+				}
+			}
+
+			// The AWS CLI will fail if there is no creation date:
+			if info.CreationDate.IsZero() {
+				info.CreationDate = gofakes3.NewContentTime(db.timeSource.Now())
+			}
+
+			buckets = append(buckets, info)
 			return nil
 		})
 	})
@@ -66,7 +128,7 @@ func (b *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
 	var bucket *gofakes3.Bucket
 
-	mod := gofakes3.ContentTime(db.timeSource.Now())
+	mod := gofakes3.NewContentTime(db.timeSource.Now())
 
 	err := db.bolt.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(name))
@@ -106,12 +168,24 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 
 func (db *Backend) CreateBucket(name string) error {
 	return db.bolt.Update(func(tx *bolt.Tx) error {
-		nameBts := []byte(name)
-		if tx.Bucket(nameBts) != nil {
-			return gofakes3.ResourceError(gofakes3.ErrBucketAlreadyExists, name)
+		{ // create bucket metadata
+			metaBucket, err := db.metaBucket(tx)
+			if err != nil {
+				return err
+			}
+			if err := metaBucket.createS3Bucket(name, db.timeSource.Now()); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.CreateBucket(nameBts); err != nil {
-			return err
+
+		{ // create bucket
+			nameBts := []byte(name)
+			if tx.Bucket(nameBts) != nil {
+				return gofakes3.ResourceError(gofakes3.ErrBucketAlreadyExists, name)
+			}
+			if _, err := tx.CreateBucket(nameBts); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -120,14 +194,36 @@ func (db *Backend) CreateBucket(name string) error {
 func (db *Backend) DeleteBucket(name string) error {
 	return db.bolt.Update(func(tx *bolt.Tx) error {
 		nameBts := []byte(name)
-		b := tx.Bucket(nameBts)
-		if b == nil {
-			return gofakes3.ErrNoSuchBucket
+
+		if bytes.Equal(nameBts, db.metaBucketName) {
+			panic("gofakes3: attempted to delete metadata bucket")
 		}
-		c := b.Cursor()
-		k, _ := c.First()
-		if k != nil {
-			return gofakes3.ResourceError(gofakes3.ErrBucketNotEmpty, name)
+
+		{ // delete bucket
+			b := tx.Bucket(nameBts)
+			if b == nil {
+				return gofakes3.ErrNoSuchBucket
+			}
+			c := b.Cursor()
+			k, _ := c.First()
+			if k != nil {
+				return gofakes3.ResourceError(gofakes3.ErrBucketNotEmpty, name)
+			}
+		}
+
+		{ // delete bucket metadata
+			metaBucket, err := db.metaBucket(tx)
+			if err != nil {
+				return err
+			}
+
+			// FIXME: assumes a legacy database, where the bucket may not exist. Clean
+			// this up when there is a DB upgrade script.
+			if metaBucket != nil {
+				if err := metaBucket.deleteS3Bucket(name); err != nil {
+					return err
+				}
+			}
 		}
 
 		return tx.DeleteBucket(nameBts)
@@ -221,22 +317,6 @@ func (db *Backend) DeleteObject(bucketName, objectName string) error {
 		}
 		return nil
 	})
-}
-
-type boltObject struct {
-	Metadata map[string]string
-	Size     int64
-	Contents []byte
-	Hash     []byte
-}
-
-func (b *boltObject) Object() *gofakes3.Object {
-	return &gofakes3.Object{
-		Metadata: b.Metadata,
-		Size:     b.Size,
-		Contents: readerWithDummyCloser{bytes.NewReader(b.Contents)},
-		Hash:     b.Hash,
-	}
 }
 
 type readerWithDummyCloser struct{ io.Reader }

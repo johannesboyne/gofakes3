@@ -45,8 +45,8 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	var buckets = make([]gofakes3.BucketInfo, 0, len(db.buckets))
 	for _, bucket := range db.buckets {
 		buckets = append(buckets, gofakes3.BucketInfo{
-			Name: bucket.name,
-			// CreationDate: bucket.creationDate,
+			Name:         bucket.name,
+			CreationDate: bucket.creationDate,
 		})
 	}
 
@@ -74,7 +74,7 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 		} else {
 			response.Add(&gofakes3.Content{
 				Key:          item.key,
-				LastModified: gofakes3.ContentTime(item.lastModified),
+				LastModified: gofakes3.NewContentTime(item.lastModified),
 				ETag:         `"` + hex.EncodeToString(item.hash) + `"`,
 				Size:         len(item.data),
 			})
@@ -93,8 +93,9 @@ func (db *Backend) CreateBucket(name string) error {
 	}
 
 	db.buckets[name] = &bucket{
-		name: name,
-		data: map[string]*bucketItem{},
+		name:         name,
+		creationDate: gofakes3.NewContentTime(db.timeSource.Now()),
+		data:         map[string]*bucketItem{},
 	}
 	return nil
 }

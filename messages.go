@@ -11,12 +11,15 @@ type Storage struct {
 	Xmlns       string       `xml:"xmlns,attr"`
 	Id          string       `xml:"Owner>ID"`
 	DisplayName string       `xml:"Owner>DisplayName"`
-	Buckets     []BucketInfo `xml:"Buckets"`
+	Buckets     []BucketInfo `xml:"Buckets>Bucket"`
 }
 
 type BucketInfo struct {
-	Name         string `xml:"Bucket>Name"`
-	CreationDate string `xml:"Bucket>CreationDate"`
+	Name string `xml:"Name"`
+
+	// CreationDate is required; without it, boto returns the error "('String
+	// does not contain a date:', '')"
+	CreationDate ContentTime `xml:"CreationDate"`
 }
 
 type Content struct {
@@ -27,12 +30,21 @@ type Content struct {
 	StorageClass string      `xml:"StorageClass"`
 }
 
-type ContentTime time.Time
+type ContentTime struct {
+	time.Time
+}
+
+func NewContentTime(t time.Time) ContentTime {
+	return ContentTime{t}
+}
 
 func (c ContentTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// This is the format expected by the aws xml code, not the default.
-	var s = time.Time(c).Format("2006-01-02T15:04:05Z")
-	return e.EncodeElement(s, start)
+	if !c.IsZero() {
+		var s = c.Format("2006-01-02T15:04:05.999Z")
+		return e.EncodeElement(s, start)
+	}
+	return nil
 }
 
 type Bucket struct {
