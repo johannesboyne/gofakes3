@@ -11,6 +11,9 @@ import (
 // is likely until this notice is removed.
 //
 type Backend interface {
+	// ListBuckets returns a list of all buckets owned by the authenticated
+	// sender of the request.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTServiceGET.html
 	ListBuckets() ([]BucketInfo, error)
 
 	// GetBucket returns the contents of a bucket. Backends should use the

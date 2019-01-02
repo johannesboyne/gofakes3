@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
-	"github.com/johannesboyne/gofakes3/backend/s3bolt"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
 type TT struct {
@@ -37,9 +38,7 @@ func TestCreateBucket(t *testing.T) {
 
 	tt := TT{t}
 
-	backend, err := s3bolt.NewFile("tests3.db")
-	tt.OK(err)
-
+	backend := s3mem.New()
 	faker := gofakes3.New(backend)
 	ts := httptest.NewServer(faker.Server())
 	defer ts.Close()
@@ -47,25 +46,27 @@ func TestCreateBucket(t *testing.T) {
 	config := aws.NewConfig()
 	config.WithEndpoint(ts.URL)
 	config.WithRegion("mine")
+	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
+	config.WithS3ForcePathStyle(true) // Removes need for subdomain
 
 	svc := s3.New(session.New(), config)
 
 	tt.OKAll(svc.CreateBucket(&s3.CreateBucketInput{
-		Bucket: aws.String("BucketName"),
+		Bucket: aws.String("testbucket"),
 	}))
 	tt.OKAll(svc.HeadBucket(&s3.HeadBucketInput{
-		Bucket: aws.String("BucketName"),
+		Bucket: aws.String("testbucket"),
 	}))
 	tt.OKAll(svc.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String("BucketName"),
+		Bucket: aws.String("testbucket"),
 		Key:    aws.String("ObjectKey"),
-		Body:   bytes.NewReader([]byte("{\"test\": \"foo\"}")),
+		Body:   bytes.NewReader([]byte(`{"test": "foo"}`)),
 		Metadata: map[string]*string{
 			"Key": aws.String("MetadataValue"),
 		},
 	}))
 	tt.OKAll(svc.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String("BucketName"),
+		Bucket: aws.String("testbucket"),
 		Key:    aws.String("ObjectKey"),
 	}))
 }

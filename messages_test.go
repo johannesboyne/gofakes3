@@ -38,8 +38,28 @@ func TestContentTime(t *testing.T) {
 
 	var v = testMsg{
 		Foo:  "bar",
-		Time: ContentTime(time.Date(2019, 1, 1, 12, 0, 0, 0, time.UTC)),
+		Time: NewContentTime(time.Date(2019, 1, 1, 12, 0, 0, 0, time.UTC)),
 	}
+	out, err := xml.Marshal(&v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != expected {
+		t.Fatalf("unexpected XML output: %s", string(out))
+	}
+}
+
+func TestContentTimeOmitEmpty(t *testing.T) {
+	type testMsg struct {
+		Foo  string
+		Time ContentTime `xml:",omitempty"`
+	}
+	const expected = "" +
+		"<testMsg>" +
+		"<Foo>bar</Foo>" +
+		"</testMsg>"
+
+	var v = testMsg{Foo: "bar"}
 	out, err := xml.Marshal(&v)
 	if err != nil {
 		t.Fatal(err)
