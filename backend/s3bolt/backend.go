@@ -192,13 +192,13 @@ func (db *Backend) CreateBucket(name string) error {
 }
 
 func (db *Backend) DeleteBucket(name string) error {
+	nameBts := []byte(name)
+
+	if bytes.Equal(nameBts, db.metaBucketName) {
+		return gofakes3.ResourceError(gofakes3.ErrInvalidBucketName, name)
+	}
+
 	return db.bolt.Update(func(tx *bolt.Tx) error {
-		nameBts := []byte(name)
-
-		if bytes.Equal(nameBts, db.metaBucketName) {
-			panic("gofakes3: attempted to delete metadata bucket")
-		}
-
 		{ // delete bucket
 			b := tx.Bucket(nameBts)
 			if b == nil {
