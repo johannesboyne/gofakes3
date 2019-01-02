@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-
-	"github.com/gorilla/mux"
 )
 
 var (
@@ -30,7 +28,7 @@ var (
 )
 
 type WithCORS struct {
-	r *mux.Router
+	r http.Handler
 }
 
 func (s *WithCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
