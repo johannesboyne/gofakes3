@@ -69,5 +69,6 @@ type Backend interface {
 	HeadObject(bucketName, objectName string) (*Object, error)
 
 	// PutObject should assume that the key is valid.
+	// meta may be nil.
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader) error
 }
