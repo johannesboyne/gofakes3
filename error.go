@@ -27,6 +27,9 @@ const (
 	// HTTP header:
 	ErrIncompleteBody ErrorCode = "IncompleteBody"
 
+	// POST requires exactly one file upload per request.
+	ErrIncorrectNumberOfFilesInPostRequest ErrorCode = "IncorrectNumberOfFilesInPostRequest"
+
 	// InlineDataTooLarge occurs when using the PutObjectInline method of the
 	// SOAP interface
 	// (https://docs.aws.amazon.com/AmazonS3/latest/API/SOAPPutObjectInline.html).
@@ -171,6 +174,7 @@ func (e ErrorCode) Status() int {
 
 	case ErrBadDigest,
 		ErrIncompleteBody,
+		ErrIncorrectNumberOfFilesInPostRequest,
 		ErrInlineDataTooLarge,
 		ErrInvalidBucketName,
 		ErrInvalidDigest,

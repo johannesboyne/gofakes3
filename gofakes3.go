@@ -238,7 +238,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 
 	keyValues := r.MultipartForm.Value["key"]
 	if len(keyValues) != 1 {
-		return ErrMalformedPOSTRequest
+		return ErrIncorrectNumberOfFilesInPostRequest
 	}
 	key := keyValues[0]
 
@@ -247,7 +247,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 
 	fileValues := r.MultipartForm.File["file"]
 	if len(fileValues) != 1 {
-		return ErrMalformedPOSTRequest
+		return ErrIncorrectNumberOfFilesInPostRequest
 	}
 	fileHeader := fileValues[0]
 
