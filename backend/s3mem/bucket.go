@@ -1,6 +1,10 @@
 package s3mem
 
-import "time"
+import (
+	"time"
+
+	"github.com/johannesboyne/gofakes3"
+)
 
 type bucketItem struct {
 	key          string
@@ -11,6 +15,7 @@ type bucketItem struct {
 }
 
 type bucket struct {
-	name string
-	data map[string]*bucketItem
+	name         string
+	creationDate gofakes3.ContentTime
+	data         map[string]*bucketItem
 }

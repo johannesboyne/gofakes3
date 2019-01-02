@@ -4,12 +4,25 @@ import (
 	"io"
 )
 
+// Backend provides a set of operations to be implemented in order to support
+// gofakes3.
+//
+// The Backend API is not yet stable; if you create your own Backend, breakage
+// is likely until this notice is removed.
+//
 type Backend interface {
+	// ListBuckets returns a list of all buckets owned by the authenticated
+	// sender of the request.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTServiceGET.html
 	ListBuckets() ([]BucketInfo, error)
 
+	// GetBucket returns the contents of a bucket. Backends should use the
+	// supplied prefix to limit the contents of the bucket and to sort the
+	// matched items into the Contents and CommonPrefixes fields.
+	//
 	// GetBucket must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
-	GetBucket(name string) (*Bucket, error)
+	GetBucket(name string, prefix Prefix) (*Bucket, error)
 
 	// CreateBucket creates the bucket if it does not already exist. The name
 	// should be assumed to be a valid name.
@@ -56,5 +69,6 @@ type Backend interface {
 	HeadObject(bucketName, objectName string) (*Object, error)
 
 	// PutObject should assume that the key is valid.
+	// meta may be nil.
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader) error
 }
