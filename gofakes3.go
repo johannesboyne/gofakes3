@@ -35,6 +35,7 @@ type GoFakeS3 struct {
 	timeSource        TimeSource
 	timeSkew          time.Duration
 	metadataSizeLimit int
+	integrityCheck    bool
 }
 
 // Setup a new fake object storage
@@ -45,6 +46,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		storage:           backend,
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
+		integrityCheck:    true,
 	}
 	for _, opt := range options {
 		opt(s3)
@@ -230,14 +232,24 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
 	const _24MB = (1 << 20) * 24
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		return err
+		// Could also use MaxMessageLengthExceeded:
+		return ErrMalformedPOSTRequest
 	}
 
-	key := r.MultipartForm.Value["key"][0]
+	keyValues := r.MultipartForm.Value["key"]
+	if len(keyValues) != 1 {
+		return ErrMalformedPOSTRequest
+	}
+	key := keyValues[0]
 
 	log.Println("(BUC)", bucket)
 	log.Println("(KEY)", key)
-	fileHeader := r.MultipartForm.File["file"][0]
+
+	fileValues := r.MultipartForm.File["file"]
+	if len(fileValues) != 1 {
+		return ErrMalformedPOSTRequest
+	}
+	fileHeader := fileValues[0]
 
 	infile, err := fileHeader.Open()
 	if err != nil {
@@ -247,7 +259,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 
 	meta := make(map[string]string)
 	for hk, hv := range r.MultipartForm.Value {
-		if strings.Contains(hk, "X-Amz-") {
+		if strings.HasPrefix(hk, "X-Amz-") {
 			meta[hk] = hv[0]
 		}
 	}
@@ -276,12 +288,12 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 }
 
 // CreateObject creates a new S3 object.
-func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r *http.Request) (err error) {
 	log.Println("CREATE OBJECT:", bucket, object)
 
 	meta := make(map[string]string)
 	for hk, hv := range r.Header {
-		if strings.Contains(hk, "X-Amz-") {
+		if strings.HasPrefix(hk, "X-Amz-") {
 			meta[hk] = hv[0]
 		}
 	}
@@ -291,7 +303,20 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return ResourceError(ErrKeyTooLong, object)
 	}
 
-	if err := g.storage.PutObject(bucket, object, meta, r.Body); err != nil {
+	defer r.Body.Close()
+	var rdr io.Reader = r.Body
+
+	if g.integrityCheck {
+		md5Base64 := r.Header.Get("Content-MD5")
+		if md5Base64 != "" {
+			rdr, err = newHashingReader(rdr, md5Base64)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := g.storage.PutObject(bucket, object, meta, rdr); err != nil {
 		return err
 	}
 

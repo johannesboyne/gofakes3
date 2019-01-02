@@ -3,6 +3,7 @@ package gofakes3_test
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"net/http/httptest"
 	"reflect"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -88,7 +90,32 @@ func (ts *testServer) putString(bucket, key string, meta map[string]string, in s
 	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in)))
 }
 
-func (ts *testServer) client() *s3.S3 {
+func (ts *testServer) objectExists(bucket, key string) bool {
+	ts.Helper()
+	obj, err := ts.backend.HeadObject(bucket, key)
+	if err != nil {
+		if gofakes3.HasErrorCode(err, gofakes3.ErrNoSuchKey) {
+			return false
+		} else {
+			ts.Fatal(err)
+		}
+	}
+	return obj != nil
+}
+
+func (ts *testServer) objectAsString(bucket, key string) string {
+	ts.Helper()
+	obj, err := ts.backend.GetObject(bucket, key)
+	ts.OK(err)
+
+	defer obj.Contents.Close()
+	data, err := ioutil.ReadAll(obj.Contents)
+	ts.OK(err)
+
+	return string(data)
+}
+
+func (ts *testServer) s3Client() *s3.S3 {
 	config := aws.NewConfig()
 	config.WithEndpoint(ts.server.URL)
 	config.WithRegion("region")
@@ -108,7 +135,7 @@ func TestCreateBucket(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
-	svc := ts.client()
+	svc := ts.s3Client()
 
 	ts.OKAll(svc.CreateBucket(&s3.CreateBucketInput{
 		Bucket: aws.String("testbucket"),
@@ -133,7 +160,7 @@ func TestCreateBucket(t *testing.T) {
 func TestListBuckets(t *testing.T) {
 	ts := newTestServer(t, withoutInitialBuckets())
 	defer ts.Close()
-	svc := ts.client()
+	svc := ts.s3Client()
 
 	assertBuckets := func(expected ...string) {
 		t.Helper()
@@ -186,4 +213,62 @@ func TestListBuckets(t *testing.T) {
 	assertBucketTime("test", defaultDate)
 	assertBucketTime("test2", defaultDate)
 	assertBucketTime("test3", defaultDate.Add(1*time.Minute))
+}
+
+func TestCreateObject(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	ts.OKAll(svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+		Body:   bytes.NewReader([]byte("hello")),
+	}))
+
+	obj := ts.objectAsString(defaultBucket, "object")
+	if obj != "hello" {
+		t.Fatal("object creation failed")
+	}
+}
+
+func TestCreateObjectMD5(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	{ // md5 is valid base64 but does not match content:
+		_, err := svc.PutObject(&s3.PutObjectInput{
+			Bucket:     aws.String(defaultBucket),
+			Key:        aws.String("invalid"),
+			Body:       bytes.NewReader([]byte("hello")),
+			ContentMD5: aws.String("bnVwCg=="),
+		})
+		if !s3HasErrorCode(err, gofakes3.ErrBadDigest) {
+			t.Fatal("expected BadDigest error, found", err)
+		}
+	}
+
+	{ // md5 is invalid base64:
+		_, err := svc.PutObject(&s3.PutObjectInput{
+			Bucket:     aws.String(defaultBucket),
+			Key:        aws.String("invalid"),
+			Body:       bytes.NewReader([]byte("hello")),
+			ContentMD5: aws.String("!*@&(*$&"),
+		})
+		if !s3HasErrorCode(err, gofakes3.ErrInvalidDigest) {
+			t.Fatal("expected InvalidDigest error, found", err)
+		}
+	}
+
+	if ts.objectExists(defaultBucket, "invalid") {
+		t.Fatal("unexpected object")
+	}
+}
+
+func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
+	if err, ok := err.(awserr.Error); ok {
+		return code == gofakes3.ErrorCode(err.Code())
+	}
+	return false
 }
