@@ -3,15 +3,28 @@ package gofakes3
 import (
 	"encoding/xml"
 	"io"
+	"sort"
 	"time"
 )
 
 type Storage struct {
-	XMLName     xml.Name     `xml:"ListAllMyBucketsResult"`
-	Xmlns       string       `xml:"xmlns,attr"`
-	Id          string       `xml:"Owner>ID"`
-	DisplayName string       `xml:"Owner>DisplayName"`
-	Buckets     []BucketInfo `xml:"Buckets>Bucket"`
+	XMLName     xml.Name `xml:"ListAllMyBucketsResult"`
+	Xmlns       string   `xml:"xmlns,attr"`
+	Id          string   `xml:"Owner>ID"`
+	DisplayName string   `xml:"Owner>DisplayName"`
+	Buckets     Buckets  `xml:"Buckets>Bucket"`
+}
+
+type Buckets []BucketInfo
+
+// Names is a deterministic convenience function returning a sorted list of bucket names.
+func (b Buckets) Names() []string {
+	out := make([]string, len(b))
+	for i, v := range b {
+		out[i] = v.Name
+	}
+	sort.Strings(out)
+	return out
 }
 
 type BucketInfo struct {
