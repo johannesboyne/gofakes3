@@ -6,7 +6,7 @@ jobs:
   build:
     docker:
     - image: circleci/golang:1.9
-    working_directory: ~/go/src/github.com/johannesboyne/gofakes3
+    working_directory: /go/src/github.com/johannesboyne/gofakes3
     steps:
     - checkout
     - run: go get -v -t -d ./...
