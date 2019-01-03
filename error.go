@@ -15,6 +15,9 @@ import (
 const (
 	ErrNone ErrorCode = ""
 
+	// The Content-MD5 you specified did not match what we received.
+	ErrBadDigest ErrorCode = "BadDigest"
+
 	ErrBucketAlreadyExists ErrorCode = "BucketAlreadyExists"
 
 	// Raised when attempting to delete a bucket that still contains items.
@@ -24,13 +27,27 @@ const (
 	// HTTP header:
 	ErrIncompleteBody ErrorCode = "IncompleteBody"
 
+	// POST requires exactly one file upload per request.
+	ErrIncorrectNumberOfFilesInPostRequest ErrorCode = "IncorrectNumberOfFilesInPostRequest"
+
+	// InlineDataTooLarge occurs when using the PutObjectInline method of the
+	// SOAP interface
+	// (https://docs.aws.amazon.com/AmazonS3/latest/API/SOAPPutObjectInline.html).
+	// This is not documented on the errors page; the error is included here
+	// only for reference.
+	ErrInlineDataTooLarge ErrorCode = "InlineDataTooLarge"
+
+	// The Content-MD5 you specified is not valid.
+	ErrInvalidDigest ErrorCode = "InvalidDigest"
+
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html#bucketnamingrules
 	ErrInvalidBucketName ErrorCode = "InvalidBucketName"
 
-	ErrKeyTooLong       ErrorCode = "KeyTooLongError"
-	ErrMetadataTooLarge ErrorCode = "MetadataTooLarge"
-	ErrMethodNotAllowed ErrorCode = "MethodNotAllowed"
-	ErrMalformedXML     ErrorCode = "MalformedXML"
+	ErrKeyTooLong           ErrorCode = "KeyTooLongError" // This is not a typo: Error is part of the string, but redundant in the constant name
+	ErrMalformedPOSTRequest ErrorCode = "MalformedPOSTRequest"
+	ErrMetadataTooLarge     ErrorCode = "MetadataTooLarge"
+	ErrMethodNotAllowed     ErrorCode = "MethodNotAllowed"
+	ErrMalformedXML         ErrorCode = "MalformedXML"
 
 	// See BucketNotFound() for a helper function for this error:
 	ErrNoSuchBucket ErrorCode = "NoSuchBucket"
@@ -142,6 +159,8 @@ func (e ErrorCode) Message() string {
 		return "The specified bucket does not exist"
 	case ErrRequestTimeTooSkewed:
 		return "The difference between the request time and the current time is too large"
+	case ErrMalformedXML:
+		return "The XML you provided was not well-formed or did not validate against our published schema"
 	default:
 		return ""
 	}
@@ -153,11 +172,16 @@ func (e ErrorCode) Status() int {
 		ErrBucketNotEmpty:
 		return http.StatusConflict
 
-	case ErrIncompleteBody,
+	case ErrBadDigest,
+		ErrIncompleteBody,
+		ErrIncorrectNumberOfFilesInPostRequest,
+		ErrInlineDataTooLarge,
 		ErrInvalidBucketName,
+		ErrInvalidDigest,
 		ErrKeyTooLong,
 		ErrMetadataTooLarge,
 		ErrMethodNotAllowed,
+		ErrMalformedPOSTRequest,
 		ErrMalformedXML,
 		ErrTooManyBuckets:
 		return http.StatusBadRequest

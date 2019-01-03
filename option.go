@@ -31,3 +31,9 @@ func WithTimeSkewLimit(skew time.Duration) Option {
 func WithMetadataSizeLimit(size int) Option {
 	return func(g *GoFakeS3) { g.metadataSizeLimit = size }
 }
+
+// WithIntegrityCheck enables or disables Content-MD5 validation when
+// putting an Object.
+func WithIntegrityCheck(check bool) Option {
+	return func(g *GoFakeS3) { g.integrityCheck = check }
+}
