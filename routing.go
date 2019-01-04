@@ -21,6 +21,7 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 		path   = strings.Trim(r.URL.Path, "/")
 		parts  = strings.SplitN(path, "/", 2)
 		bucket = parts[0]
+		query  = r.URL.Query()
 		object = ""
 		err    error
 	)
@@ -29,7 +30,13 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 		object = parts[1]
 	}
 
-	if bucket != "" && object != "" {
+	if uploadID := query.Get("uploadId"); uploadID != "" {
+		err = g.routeMultipartUpload(bucket, object, uploadID, w, r)
+
+	} else if _, ok := query["uploads"]; ok {
+		err = g.routeMultipartUploadBase(bucket, object, w, r)
+
+	} else if bucket != "" && object != "" {
 		err = g.routeObject(bucket, object, w, r)
 
 	} else if bucket != "" {
@@ -83,6 +90,37 @@ func (g *GoFakeS3) routeBucket(bucket string, w http.ResponseWriter, r *http.Req
 		} else {
 			return g.createObjectBrowserUpload(bucket, w, r)
 		}
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
+// routeMultipartUploadBase operates on routes that contain '?uploads' in the
+// query string. These routes may or may not have a value for bucket or object;
+// this is validated and handled in the target handler functions.
+func (g *GoFakeS3) routeMultipartUploadBase(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case "GET":
+		return g.listMultipartUploads(bucket, w, r)
+	case "POST":
+		return g.initiateMultipartUpload(bucket, object, w, r)
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
+// routeMultipartUpload operates on routes that contain '?uploadId=<id>' in the
+// query string.
+func (g *GoFakeS3) routeMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case "GET":
+		return g.listMultipartUploadParts(bucket, object, uploadID, w, r)
+	case "PUT":
+		return g.putMultipartUploadPart(bucket, object, uploadID, w, r)
+	case "DELETE":
+		return g.abortMultipartUpload(bucket, object, uploadID, w, r)
+	case "POST":
+		return g.completeMultipartUpload(bucket, object, uploadID, w, r)
 	default:
 		return ErrMethodNotAllowed
 	}

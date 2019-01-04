@@ -1,12 +1,17 @@
 package gofakes3
 
 import (
+	"bytes"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,6 +33,9 @@ const (
 	DefaultMetadataSizeLimit = 2000
 
 	DefaultSkewLimit = 15 * time.Minute
+
+	MaxUploadsLimit   = 1000
+	DefaultMaxUploads = 1000
 )
 
 type GoFakeS3 struct {
@@ -36,6 +44,7 @@ type GoFakeS3 struct {
 	timeSkew          time.Duration
 	metadataSizeLimit int
 	integrityCheck    bool
+	uploader          *uploader
 }
 
 // Setup a new fake object storage
@@ -47,6 +56,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
+		uploader:          newUploader(),
 	}
 	for _, opt := range options {
 		opt(s3)
@@ -93,15 +103,12 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 	if r.Method != http.MethodHead {
 		w.Header().Set("Content-Type", "application/xml")
 
-		x, err := xml.MarshalIndent(resp, "", "  ")
-		if err != nil {
+		w.Write([]byte(xml.Header))
+		if err := g.xmlEncoder(w).Encode(resp); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			log.Println(err)
 			return
 		}
-
-		w.Write([]byte(xml.Header))
-		w.Write(x)
 	}
 }
 
@@ -113,10 +120,12 @@ func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	s := &Storage{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Id:          "fe7272ea58be830e56fe1663b10fafef",
-		DisplayName: "GoFakeS3",
-		Buckets:     buckets,
+		Xmlns:   "http://s3.amazonaws.com/doc/2006-03-01/",
+		Buckets: buckets,
+		Owner: &UserInfo{
+			ID:          "fe7272ea58be830e56fe1663b10fafef",
+			DisplayName: "GoFakeS3",
+		},
 	}
 	x, err := xml.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -257,16 +266,9 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 	}
 	defer infile.Close()
 
-	meta := make(map[string]string)
-	for hk, hv := range r.MultipartForm.Value {
-		if strings.HasPrefix(hk, "X-Amz-") {
-			meta[hk] = hv[0]
-		}
-	}
-	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
-
-	if g.metadataSizeLimit > 0 && metadataSize(meta) > g.metadataSizeLimit {
-		return ErrMetadataTooLarge
+	meta, err := metadataHeaders(r.MultipartForm.Value, g.timeSource.Now(), g.metadataSizeLimit)
+	if err != nil {
+		return err
 	}
 
 	if len(key) > KeySizeLimit {
@@ -291,13 +293,10 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r *http.Request) (err error) {
 	log.Println("CREATE OBJECT:", bucket, object)
 
-	meta := make(map[string]string)
-	for hk, hv := range r.Header {
-		if strings.HasPrefix(hk, "X-Amz-") {
-			meta[hk] = hv[0]
-		}
+	meta, err := metadataHeaders(r.MultipartForm.Value, g.timeSource.Now(), g.metadataSizeLimit)
+	if err != nil {
+		return err
 	}
-	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
 	if len(object) > KeySizeLimit {
 		return ResourceError(ErrKeyTooLong, object)
@@ -406,6 +405,153 @@ func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *h
 	return nil
 }
 
+func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("initiate multipart upload", bucket, object)
+
+	meta, err := metadataHeaders(r.Header, g.timeSource.Now(), g.metadataSizeLimit)
+	if err != nil {
+		return err
+	}
+
+	upload := g.uploader.Begin(bucket, object, meta)
+	out := InitiateMultipartUpload{UploadID: upload.ID}
+	return g.xmlEncoder(w).Encode(out)
+}
+
+func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("put multipart upload", bucket, object, uploadID)
+
+	etag := r.Header.Get("ETag")
+	if !validETag(etag) {
+		return ErrInvalidPart
+	}
+
+	partNumber := r.URL.Query().Get("partNumber")
+	if !validNumericString(partNumber) {
+		return ErrInvalidPart
+	}
+
+	// FIXME: this could be a global check.
+	if r.Header.Get("Content-Length") == "" {
+		return ErrMissingContentLength
+	}
+
+	upload, err := g.uploader.Get(bucket, object, uploadID)
+	if err != nil {
+		// FIXME: What happens with S3 when you abort a multipart upload while
+		// part uploads are still in progress? In this case, we will retain the
+		// reference to the part even though another request goroutine may
+		// delete it; it will be available for GC when this function finishes.
+		return err
+	}
+
+	defer r.Body.Close()
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+
+	if int64(len(body)) != r.ContentLength {
+		return ErrIncompleteBody
+	}
+
+	// FIXME: update to use hashingReader from other PR.
+	contentMD5 := r.Header.Get("Content-MD5")
+	hash := md5.Sum(body)
+	hashEnc := base64.StdEncoding.EncodeToString(hash[:])
+	if contentMD5 != hashEnc {
+		return fmt.Errorf("body hash mismatch in multipart upload")
+	}
+
+	w.Header().Add("ETag", etag)
+
+	return upload.AddPart(partNumber, etag, body)
+}
+
+func (g *GoFakeS3) abortMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("abort multipart upload", bucket, object, uploadID)
+	_, err := g.uploader.Complete(bucket, object, uploadID)
+	return err
+}
+
+func (g *GoFakeS3) completeMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("complete multipart upload", bucket, object, uploadID)
+
+	body, err := ioutil.ReadAll(r.Body)
+	defer r.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	var in CompleteMultipartUploadRequest
+	if err := xml.Unmarshal(body, &in); err != nil {
+		return ErrorMessage(ErrMalformedXML, err.Error())
+	}
+
+	upload, err := g.uploader.Complete(bucket, object, uploadID)
+	if err != nil {
+		return err
+	}
+
+	fileBody, etag, err := upload.Reassemble(&in)
+	if err != nil {
+		return err
+	}
+
+	if err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody)); err != nil {
+		return err
+	}
+
+	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
+		ETag:   etag,
+		Bucket: bucket,
+		Key:    object,
+	})
+}
+
+func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r *http.Request) error {
+	query := r.URL.Query()
+	prefix := prefixFromQuery(query)
+
+	// Together with upload-id-marker, this parameter specifies the multipart
+	// upload after which listing should begin.
+	//
+	// If upload-id-marker is not specified, only the keys lexicographically
+	// greater than the specified key-marker will be included in the list.
+	//
+	// If upload-id-marker is specified, any multipart uploads for a key equal
+	// to the key-marker might also be included, provided those multipart
+	// uploads have upload IDs lexicographically greater than the specified
+	// upload-id-marker.
+	keyMarker := query.Get("key-marker")
+
+	// Together with key-marker, specifies the multipart upload after which
+	// listing should begin. If key-marker is not specified, the
+	// upload-id-marker parameter is ignored.
+	uploadIDMarker := query.Get("upload-id-marker")
+
+	var maxUploads = DefaultMaxUploads
+	if maxUploadString := query.Get("max-uploads"); maxUploadString != "" {
+		maxUploadsInt, err := strconv.ParseInt(maxUploadString, 10, 0)
+		if err != nil {
+			return ErrInvalidURI
+		}
+
+		maxUploads = int(maxUploadsInt)
+		if maxUploads <= 0 || maxUploads > MaxUploadsLimit {
+			maxUploads = MaxUploadsLimit
+		}
+	}
+
+	return nil
+}
+
+func (g *GoFakeS3) xmlEncoder(w io.Writer) *xml.Encoder {
+	xe := xml.NewEncoder(w)
+	xe.Indent("", "  ")
+	return xe
+}
+
 func formatHeaderTime(t time.Time) string {
 	// https://github.com/aws/aws-sdk-go/issues/1937 - FIXED
 	// https://github.com/aws/aws-sdk-go-v2/issues/178 - Still open
@@ -421,4 +567,20 @@ func metadataSize(meta map[string]string) int {
 		total += len(k) + len(v)
 	}
 	return total
+}
+
+func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (map[string]string, error) {
+	meta := make(map[string]string)
+	for hk, hv := range headers {
+		if strings.HasPrefix(hk, "X-Amz-") {
+			meta[hk] = hv[0]
+		}
+	}
+	meta["Last-Modified"] = formatHeaderTime(at)
+
+	if sizeLimit > 0 && metadataSize(meta) > sizeLimit {
+		return meta, ErrMetadataTooLarge
+	}
+
+	return meta, nil
 }
