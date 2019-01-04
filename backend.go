@@ -43,8 +43,12 @@ type Backend interface {
 	// AWS does not validate the bucket's name for anything other than existence.
 	DeleteBucket(name string) error
 
-	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does not exist.
-	// See gofakes3.KeyNotFound() for a convenient way to create one.
+	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does
+	// not exist.  See gofakes3.KeyNotFound() for a convenient way to create
+	// one.
+	//
+	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
+	// otherwise you will leak resources.
 	GetObject(bucketName, objectName string) (*Object, error)
 
 	// DeleteObject deletes an object from the bucket.
@@ -71,4 +75,6 @@ type Backend interface {
 	// PutObject should assume that the key is valid.
 	// meta may be nil.
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader) error
+
+	DeleteMulti(bucketName string, objects ...string) (DeleteResult, error)
 }

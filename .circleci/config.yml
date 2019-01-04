@@ -3,7 +3,7 @@
 # Check https://circleci.com/docs/2.0/language-go/ for more details
 version: 2
 jobs:
-  build:
+  functest:
     docker:
     - image: circleci/golang:1.9
     working_directory: /go/src/github.com/johannesboyne/gofakes3
@@ -11,6 +11,14 @@ jobs:
     - checkout
     - run: go get -v -t -d ./...
     - run: go test -v ./...
+    - run: go test -race -coverprofile=coverage.txt -covermode=atomic
+    - run: bash <(curl -s https://codecov.io/bash)
+  inttest:
+    docker:
+    - image: circleci/golang:1.9
+    steps:
+    - checkout
+    - run: <command>
     - run:
         name: "Pull Submodules"
         command: |
@@ -19,3 +27,9 @@ jobs:
     - run: sudo apt-get update
     - run: sudo apt-get install python-virtualenv
     - run: ./s3test/test.sh
+workflows:
+  version: 2
+  test:
+    jobs:
+      - functest
+      - inttest

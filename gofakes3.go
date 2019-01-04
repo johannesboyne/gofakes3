@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/gorilla/mux"
 )
 
 const (
@@ -37,6 +35,7 @@ type GoFakeS3 struct {
 	timeSource        TimeSource
 	timeSkew          time.Duration
 	metadataSizeLimit int
+	integrityCheck    bool
 }
 
 // Setup a new fake object storage
@@ -47,6 +46,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		storage:           backend,
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
+		integrityCheck:    true,
 	}
 	for _, opt := range options {
 		opt(s3)
@@ -60,23 +60,8 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 
 // Create the AWS S3 API
 func (g *GoFakeS3) Server() http.Handler {
-	r := mux.NewRouter()
-	r.Queries("marker", "prefix")
-	// BUCKET
-	r.HandleFunc("/", g.GetBuckets).Methods("GET")
-	r.HandleFunc("/{BucketName}", g.GetBucket).Methods("GET")
-	r.HandleFunc("/{BucketName}", g.CreateBucket).Methods("PUT")
-	r.HandleFunc("/{BucketName}", g.DeleteBucket).Methods("DELETE")
-	r.HandleFunc("/{BucketName}", g.HeadBucket).Methods("HEAD")
-	// OBJECT
-	r.HandleFunc("/{BucketName}/", g.CreateObjectBrowserUpload).Methods("POST")
-	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.GetObject).Methods("GET")
-	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.CreateObject).Methods("PUT")
-	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.CreateObject).Methods("POST")
-	r.HandleFunc("/{BucketName}/{ObjectName:.{1,}}", g.DeleteObject).Methods("DELETE")
-	r.HandleFunc("/{BucketName}/{ObjectName:.{0,}}", g.HeadObject).Methods("HEAD")
+	wc := &WithCORS{http.HandlerFunc(g.routeBase)}
 
-	wc := &WithCORS{r}
 	hf := func(w http.ResponseWriter, rq *http.Request) {
 		timeHdr := rq.Header.Get("x-amz-date")
 
@@ -121,11 +106,10 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 }
 
 // Get a list of all Buckets
-func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
+func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
 	buckets, err := g.storage.ListBuckets()
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 
 	s := &Storage{
@@ -136,20 +120,18 @@ func (g *GoFakeS3) GetBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 	x, err := xml.MarshalIndent(s, "", "  ")
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.Write([]byte(xml.Header))
 	w.Write(x)
+	return nil
 }
 
 // GetBucket lists the contents of a bucket.
-func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
+func (g *GoFakeS3) getBucket(bucketName string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("GET BUCKET")
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
 
 	prefix := prefixFromQuery(r.URL.Query())
 
@@ -158,92 +140,73 @@ func (g *GoFakeS3) GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	bucket, err := g.storage.GetBucket(bucketName, prefix)
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 
 	x, err := xml.MarshalIndent(bucket, "", "  ")
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.Write([]byte(xml.Header))
 	w.Write(x)
+	return nil
 }
 
 // CreateBucket creates a new S3 bucket in the BoltDB storage.
-func (g *GoFakeS3) CreateBucket(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	log.Println("CREATE BUCKET:", bucketName)
+func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("CREATE BUCKET:", bucket)
 
-	if err := ValidateBucketName(bucketName); err != nil {
-		g.httpError(w, r, err)
-		return
+	if err := ValidateBucketName(bucket); err != nil {
+		return err
 	}
-
-	if err := g.storage.CreateBucket(bucketName); err != nil {
-		g.httpError(w, r, err)
-		return
+	if err := g.storage.CreateBucket(bucket); err != nil {
+		return err
 	}
 
 	w.Header().Set("Host", r.Header.Get("Host"))
-	w.Header().Set("Location", "/"+bucketName)
+	w.Header().Set("Location", "/"+bucket)
 	w.Write([]byte{})
+	return nil
 }
 
 // DeleteBucket creates a new S3 bucket in the BoltDB storage.
-func (g *GoFakeS3) DeleteBucket(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	log.Println("DELETE BUCKET:", bucketName)
-
-	if err := g.storage.DeleteBucket(bucketName); err != nil {
-		g.httpError(w, r, err)
-		return
-	}
+func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("DELETE BUCKET:", bucket)
+	return g.storage.DeleteBucket(bucket)
 }
 
 // HeadBucket checks whether a bucket exists.
-func (g *GoFakeS3) HeadBucket(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	log.Println("HEAD BUCKET", bucketName)
-	log.Println("bucketname:", bucketName)
+func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("HEAD BUCKET", bucket)
+	log.Println("bucketname:", bucket)
 
-	exists, err := g.storage.BucketExists(bucketName)
+	exists, err := g.storage.BucketExists(bucket)
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 	if !exists {
-		http.NotFound(w, r)
-		return
+		return ResourceError(ErrNoSuchBucket, bucket)
 	}
 
 	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 	w.Header().Set("Server", "AmazonS3")
 	w.Write([]byte{})
+	return nil
 }
 
 // GetObject retrievs a bucket object.
-func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
+func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("GET OBJECT")
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	objectName := vars["ObjectName"]
 
-	log.Println("Bucket:", bucketName)
-	log.Println("└── Object:", vars["ObjectName"])
+	log.Println("Bucket:", bucket)
+	log.Println("└── Object:", object)
 
-	obj, err := g.storage.GetObject(bucketName, objectName)
-
+	obj, err := g.storage.GetObject(bucket, object)
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 	defer obj.Contents.Close()
 
@@ -258,56 +221,60 @@ func (g *GoFakeS3) GetObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
+
+	return nil
 }
 
 // CreateObject (Browser Upload) creates a new S3 object.
-func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Request) {
+func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
 	const _24MB = (1 << 20) * 24
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		g.httpError(w, r, err)
-		return
+		// Could also use MaxMessageLengthExceeded:
+		return ErrMalformedPOSTRequest
 	}
 
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	key := r.MultipartForm.Value["key"][0]
+	keyValues := r.MultipartForm.Value["key"]
+	if len(keyValues) != 1 {
+		return ErrIncorrectNumberOfFilesInPostRequest
+	}
+	key := keyValues[0]
 
-	log.Println("(BUC)", bucketName)
+	log.Println("(BUC)", bucket)
 	log.Println("(KEY)", key)
-	fileHeader := r.MultipartForm.File["file"][0]
+
+	fileValues := r.MultipartForm.File["file"]
+	if len(fileValues) != 1 {
+		return ErrIncorrectNumberOfFilesInPostRequest
+	}
+	fileHeader := fileValues[0]
 
 	infile, err := fileHeader.Open()
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 	defer infile.Close()
 
 	meta := make(map[string]string)
 	for hk, hv := range r.MultipartForm.Value {
-		if strings.Contains(hk, "X-Amz-") {
+		if strings.HasPrefix(hk, "X-Amz-") {
 			meta[hk] = hv[0]
 		}
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
 	if g.metadataSizeLimit > 0 && metadataSize(meta) > g.metadataSizeLimit {
-		g.httpError(w, r, ErrMetadataTooLarge)
-		return
+		return ErrMetadataTooLarge
 	}
 
 	if len(key) > KeySizeLimit {
-		g.httpError(w, r, ResourceError(ErrKeyTooLong, key))
-		return
+		return ResourceError(ErrKeyTooLong, key)
 	}
 
-	if err := g.storage.PutObject(bucketName, key, meta, infile); err != nil {
-		g.httpError(w, r, err)
-		return
+	if err := g.storage.PutObject(bucket, key, meta, infile); err != nil {
+		return err
 	}
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -316,32 +283,41 @@ func (g *GoFakeS3) CreateObjectBrowserUpload(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
 	w.Header().Set("Server", "AmazonS3")
 	w.Write([]byte{})
+
+	return nil
 }
 
 // CreateObject creates a new S3 object.
-func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	objectName := vars["ObjectName"]
-
-	log.Println("CREATE OBJECT:", bucketName, objectName)
+func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r *http.Request) (err error) {
+	log.Println("CREATE OBJECT:", bucket, object)
 
 	meta := make(map[string]string)
 	for hk, hv := range r.Header {
-		if strings.Contains(hk, "X-Amz-") {
+		if strings.HasPrefix(hk, "X-Amz-") {
 			meta[hk] = hv[0]
 		}
 	}
 	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
 
-	if len(objectName) > KeySizeLimit {
-		g.httpError(w, r, ResourceError(ErrKeyTooLong, objectName))
-		return
+	if len(object) > KeySizeLimit {
+		return ResourceError(ErrKeyTooLong, object)
 	}
 
-	if err := g.storage.PutObject(bucketName, objectName, meta, r.Body); err != nil {
-		g.httpError(w, r, err)
-		return
+	defer r.Body.Close()
+	var rdr io.Reader = r.Body
+
+	if g.integrityCheck {
+		md5Base64 := r.Header.Get("Content-MD5")
+		if md5Base64 != "" {
+			rdr, err = newHashingReader(rdr, md5Base64)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := g.storage.PutObject(bucket, object, meta, rdr); err != nil {
+		return err
 	}
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -350,39 +326,68 @@ func (g *GoFakeS3) CreateObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
 	w.Header().Set("Server", "AmazonS3")
 	w.Write([]byte{})
+
+	return nil
 }
 
-// DeleteObject deletes a S3 object from the bucket.
-func (g *GoFakeS3) DeleteObject(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	objectName := vars["ObjectName"]
-
-	log.Println("DELETE:", bucketName, objectName)
-
-	if err := g.storage.DeleteObject(bucketName, objectName); err != nil {
-		g.httpError(w, r, err)
-		return
+// deleteObject deletes a S3 object from the bucket.
+func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("DELETE:", bucket, object)
+	if err := g.storage.DeleteObject(bucket, object); err != nil {
+		return err
 	}
-
 	w.Header().Set("x-amz-delete-marker", "false")
 	w.Write([]byte{})
+	return nil
+}
+
+// deleteMulti deletes multiple S3 objects from the bucket.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/multiobjectdeleteapi.html
+func (g *GoFakeS3) deleteMulti(bucket string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("delete multi", bucket)
+
+	var in DeleteRequest
+
+	defer r.Body.Close()
+	dc := xml.NewDecoder(r.Body)
+	if err := dc.Decode(&in); err != nil {
+		return ErrorMessage(ErrMalformedXML, err.Error())
+	}
+
+	keys := make([]string, len(in.Objects))
+	for i, o := range in.Objects {
+		keys[i] = o.Key
+	}
+
+	out, err := g.storage.DeleteMulti(bucket, keys...)
+	if err != nil {
+		return err
+	}
+
+	if in.Quiet {
+		out.Deleted = nil
+	}
+
+	x, err := xml.MarshalIndent(&out, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	w.Write([]byte(xml.Header))
+	w.Write(x)
+	return nil
 }
 
 // HeadObject retrieves only meta information of an object and not the whole.
-func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
+func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("HEAD OBJECT")
-	vars := mux.Vars(r)
-	bucketName := vars["BucketName"]
-	objectName := vars["ObjectName"]
 
-	log.Println("Bucket:", bucketName)
-	log.Println("└── Object:", objectName)
+	log.Println("Bucket:", bucket)
+	log.Println("└── Object:", object)
 
-	obj, err := g.storage.HeadObject(bucketName, objectName)
+	obj, err := g.storage.HeadObject(bucket, object)
 	if err != nil {
-		g.httpError(w, r, err)
-		return
+		return err
 	}
 	defer obj.Contents.Close()
 
@@ -397,6 +402,8 @@ func (g *GoFakeS3) HeadObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 	w.Header().Set("Connection", "close")
 	w.Write([]byte{})
+
+	return nil
 }
 
 func formatHeaderTime(t time.Time) string {
