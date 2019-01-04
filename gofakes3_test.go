@@ -151,6 +151,45 @@ func TestCreateObjectMD5(t *testing.T) {
 }
 
 func TestDeleteMulti(t *testing.T) {
+	deletedKeys := func(rs *s3.DeleteObjectsOutput) []string {
+		deleted := make([]string, len(rs.Deleted))
+		for idx, del := range rs.Deleted {
+			deleted[idx] = *del.Key
+		}
+		sort.Strings(deleted)
+		return deleted
+	}
+
+	assertDeletedKeys := func(t *testing.T, rs *s3.DeleteObjectsOutput, expected ...string) {
+		t.Helper()
+		found := deletedKeys(rs)
+		if !reflect.DeepEqual(found, expected) {
+			t.Fatal("multi deletion failed", found, "!=", expected)
+		}
+	}
+
+	t.Run("one-file", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.putString(defaultBucket, "foo", nil, "one")
+		ts.putString(defaultBucket, "bar", nil, "two")
+		ts.putString(defaultBucket, "baz", nil, "three")
+
+		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
+			Bucket: aws.String(defaultBucket),
+			Delete: &s3.Delete{
+				Objects: []*s3.ObjectIdentifier{
+					{Key: aws.String("foo")},
+				},
+			},
+		})
+		ts.OK(err)
+		assertDeletedKeys(t, rs, "foo")
+		ts.assertLs(defaultBucket, "", nil, []string{"bar", "baz"})
+	})
+
 	t.Run("multiple-files", func(t *testing.T) {
 		ts := newTestServer(t)
 		defer ts.Close()
@@ -170,17 +209,7 @@ func TestDeleteMulti(t *testing.T) {
 			},
 		})
 		ts.OK(err)
-
-		deleted := make([]string, len(rs.Deleted))
-		for idx, del := range rs.Deleted {
-			deleted[idx] = *del.Key
-		}
-		sort.Strings(deleted)
-
-		if !reflect.DeepEqual(deleted, []string{"bar", "foo"}) {
-			t.Fatal("multi deletion failed")
-		}
-
+		assertDeletedKeys(t, rs, "bar", "foo")
 		ts.assertLs(defaultBucket, "", nil, []string{"baz"})
 	})
 }
