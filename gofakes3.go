@@ -330,7 +330,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	return nil
 }
 
-// DeleteObject deletes a S3 object from the bucket.
+// deleteObject deletes a S3 object from the bucket.
 func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("DELETE:", bucket, object)
 	if err := g.storage.DeleteObject(bucket, object); err != nil {
@@ -338,6 +338,43 @@ func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r 
 	}
 	w.Header().Set("x-amz-delete-marker", "false")
 	w.Write([]byte{})
+	return nil
+}
+
+// deleteMulti deletes multiple S3 objects from the bucket.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/multiobjectdeleteapi.html
+func (g *GoFakeS3) deleteMulti(bucket string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("delete multi", bucket)
+
+	var in DeleteRequest
+
+	defer r.Body.Close()
+	dc := xml.NewDecoder(r.Body)
+	if err := dc.Decode(&in); err != nil {
+		return ErrorMessage(ErrMalformedXML, err.Error())
+	}
+
+	keys := make([]string, len(in.Objects))
+	for i, o := range in.Objects {
+		keys[i] = o.Key
+	}
+
+	out, err := g.storage.DeleteMulti(bucket, keys...)
+	if err != nil {
+		return err
+	}
+
+	if in.Quiet {
+		out.Deleted = nil
+	}
+
+	x, err := xml.MarshalIndent(&out, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	w.Write([]byte(xml.Header))
+	w.Write(x)
 	return nil
 }
 
