@@ -5,6 +5,11 @@ package gofakes3_test
 // '_test' suffix without causing an import cycle.
 
 import (
+	"bytes"
+	"crypto/md5"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -176,11 +181,6 @@ func (ts *testServer) createBucket(bucket string) {
 	}
 }
 
-func (ts *testServer) putString(bucket, key string, meta map[string]string, in string) {
-	ts.Helper()
-	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in)))
-}
-
 func (ts *testServer) objectExists(bucket, key string) bool {
 	ts.Helper()
 	obj, err := ts.backend.HeadObject(bucket, key)
@@ -192,6 +192,11 @@ func (ts *testServer) objectExists(bucket, key string) bool {
 		}
 	}
 	return obj != nil
+}
+
+func (ts *testServer) putString(bucket, key string, meta map[string]string, in string) {
+	ts.Helper()
+	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in)))
 }
 
 func (ts *testServer) objectAsString(bucket, key string) string {
@@ -238,6 +243,60 @@ func (ts *testServer) assertLs(bucket string, prefix string, expectedPrefixes []
 	ls.assertContents(ts.TT, expectedPrefixes, expectedObjects)
 }
 
+// If meta is nil, the metadata is not checked.
+// If meta is map[string]string{}, it is checked against the empty map.
+//
+// If contents is a string or a []byte, it is compared against the object's contents,
+// otherwise a panic occurs.
+func (ts *testServer) assertObject(bucket string, object string, meta map[string]string, contents interface{}) {
+	ts.Helper()
+
+	obj, err := ts.backend.GetObject(bucket, object)
+	ts.OK(err)
+	defer obj.Contents.Close()
+
+	data, err := ioutil.ReadAll(obj.Contents)
+	ts.OK(err)
+
+	if meta != nil {
+		if !reflect.DeepEqual(meta, obj.Metadata) {
+			ts.Fatal("metadata mismatch:", meta, "!=", obj.Metadata)
+		}
+	}
+
+	var checkContents []byte
+	switch contents := contents.(type) {
+	case nil:
+	case string:
+		checkContents = []byte(contents)
+	case []byte:
+		checkContents = contents
+	default:
+		panic("unexpected contents")
+	}
+
+	if !bytes.Equal(checkContents, data) {
+		ts.Fatal("data mismatch") // FIXME: more detail
+	}
+
+	if int64(len(checkContents)) != obj.Size {
+		ts.Fatal("size mismatch:", len(checkContents), "!=", obj.Size)
+	}
+}
+
 func (ts *testServer) Close() {
 	ts.server.Close()
+}
+
+type hashValue []byte
+
+func (h hashValue) Base64() string { return base64.StdEncoding.EncodeToString(h) }
+func (h hashValue) Hex() string    { return hex.EncodeToString(h) }
+
+func randomFileBody(size int) ([]byte, hashValue) {
+	b := make([]byte, size)
+	rand.Read(b)
+	h := md5.New()
+	h.Write(b)
+	return b, hashValue(h.Sum(nil))
 }

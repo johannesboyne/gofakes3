@@ -432,11 +432,6 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	log.Println("put multipart upload", bucket, object, uploadID)
 
-	etag := r.Header.Get("ETag")
-	if !validETag(etag) {
-		return ErrInvalidPart
-	}
-
 	partNumber, err := strconv.ParseInt(r.URL.Query().Get("partNumber"), 10, 0)
 	if err != nil || partNumber <= 0 || partNumber > MaxUploadPartNumber {
 		return ErrInvalidPart
@@ -479,9 +474,13 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrIncompleteBody
 	}
 
-	w.Header().Add("ETag", etag)
+	etag, err := upload.AddPart(int(partNumber), g.timeSource.Now(), body)
+	if err != nil {
+		return err
+	}
 
-	return upload.AddPart(int(partNumber), etag, g.timeSource.Now(), body)
+	w.Header().Add("ETag", etag)
+	return nil
 }
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {

@@ -2,6 +2,7 @@ package gofakes3
 
 import (
 	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -436,17 +437,20 @@ type multipartUpload struct {
 	mu sync.Mutex
 }
 
-func (mpu *multipartUpload) AddPart(partNumber int, etag string, at time.Time, body []byte) error {
+func (mpu *multipartUpload) AddPart(partNumber int, at time.Time, body []byte) (etag string, err error) {
 	if partNumber > MaxUploadPartNumber {
-		return ErrInvalidPart
+		return "", ErrInvalidPart
 	}
 
 	mpu.mu.Lock()
 	defer mpu.mu.Unlock()
 
-	if etag == "" {
-		return ErrInvalidPart
-	}
+	// What the ETag actually is is not specified, so let's just invent any old thing
+	// from guaranteed unique input:
+	key := fmt.Sprintf("%s/%s/%s/%d", mpu.Bucket, mpu.Object, mpu.ID, partNumber)
+	hash := md5.New()
+	hash.Write([]byte(key))
+	etag = fmt.Sprintf(`"%s"`, hex.EncodeToString(hash.Sum(nil)))
 
 	part := multipartUploadPart{
 		PartNumber:   partNumber,
@@ -455,10 +459,10 @@ func (mpu *multipartUpload) AddPart(partNumber int, etag string, at time.Time, b
 		LastModified: NewContentTime(at),
 	}
 	if partNumber >= len(mpu.parts) {
-		mpu.parts = append(mpu.parts, make([]*multipartUploadPart, partNumber-len(mpu.parts))...)
+		mpu.parts = append(mpu.parts, make([]*multipartUploadPart, partNumber-len(mpu.parts)+1)...)
 	}
 	mpu.parts[partNumber] = &part
-	return nil
+	return etag, nil
 }
 
 func (mpu *multipartUpload) Reassemble(input *CompleteMultipartUploadRequest) (body []byte, etag string, err error) {
