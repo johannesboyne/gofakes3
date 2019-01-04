@@ -131,3 +131,7 @@ type PrefixMatch struct {
 	// The longest matched part of the key.
 	MatchedPart string
 }
+
+func (match *PrefixMatch) AsCommonPrefix() CommonPrefix {
+	return CommonPrefix{Prefix: match.MatchedPart}
+}

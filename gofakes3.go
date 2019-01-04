@@ -11,7 +11,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -293,7 +292,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r *http.Request) (err error) {
 	log.Println("CREATE OBJECT:", bucket, object)
 
-	meta, err := metadataHeaders(r.MultipartForm.Value, g.timeSource.Now(), g.metadataSizeLimit)
+	meta, err := metadataHeaders(r.Header, g.timeSource.Now(), g.metadataSizeLimit)
 	if err != nil {
 		return err
 	}
@@ -413,7 +412,7 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 		return err
 	}
 
-	upload := g.uploader.Begin(bucket, object, meta)
+	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
 	out := InitiateMultipartUpload{UploadID: upload.ID}
 	return g.xmlEncoder(w).Encode(out)
 }
@@ -512,38 +511,19 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object, uploadID string, w ht
 func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r *http.Request) error {
 	query := r.URL.Query()
 	prefix := prefixFromQuery(query)
+	marker := uploadListMarkerFromQuery(query)
 
-	// Together with upload-id-marker, this parameter specifies the multipart
-	// upload after which listing should begin.
-	//
-	// If upload-id-marker is not specified, only the keys lexicographically
-	// greater than the specified key-marker will be included in the list.
-	//
-	// If upload-id-marker is specified, any multipart uploads for a key equal
-	// to the key-marker might also be included, provided those multipart
-	// uploads have upload IDs lexicographically greater than the specified
-	// upload-id-marker.
-	keyMarker := query.Get("key-marker")
-
-	// Together with key-marker, specifies the multipart upload after which
-	// listing should begin. If key-marker is not specified, the
-	// upload-id-marker parameter is ignored.
-	uploadIDMarker := query.Get("upload-id-marker")
-
-	var maxUploads = DefaultMaxUploads
-	if maxUploadString := query.Get("max-uploads"); maxUploadString != "" {
-		maxUploadsInt, err := strconv.ParseInt(maxUploadString, 10, 0)
-		if err != nil {
-			return ErrInvalidURI
-		}
-
-		maxUploads = int(maxUploadsInt)
-		if maxUploads <= 0 || maxUploads > MaxUploadsLimit {
-			maxUploads = MaxUploadsLimit
-		}
+	maxUploads, err := parseClampedInt(query.Get("max-uploads"), DefaultMaxUploads, 0, MaxUploadsLimit)
+	if err != nil {
+		return ErrInvalidURI
 	}
 
-	return nil
+	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
+	if err != nil {
+		return err
+	}
+
+	return g.xmlEncoder(w).Encode(out)
 }
 
 func (g *GoFakeS3) xmlEncoder(w io.Writer) *xml.Encoder {

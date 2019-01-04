@@ -170,8 +170,8 @@ type ListMultipartUploadsResult struct {
 	// prefix.
 	Prefix string `xml:"Prefix,omitempty"`
 
-	CommonPrefixes string `xml:"CommonPrefixes,omitempty"`
-	IsTruncated    bool   `xml:"IsTruncated,omitempty"`
+	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
+	IsTruncated    bool           `xml:"IsTruncated,omitempty"`
 
 	Uploads []ListMultipartUploadItem `xml:"Upload"`
 }

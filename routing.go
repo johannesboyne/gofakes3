@@ -113,8 +113,8 @@ func (g *GoFakeS3) routeMultipartUploadBase(bucket, object string, w http.Respon
 // query string.
 func (g *GoFakeS3) routeMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
 	switch r.Method {
-	case "GET":
-		return g.listMultipartUploadParts(bucket, object, uploadID, w, r)
+	// case "GET":
+	//     return g.listMultipartUploadParts(bucket, object, uploadID, w, r)
 	case "PUT":
 		return g.putMultipartUploadPart(bucket, object, uploadID, w, r)
 	case "DELETE":
