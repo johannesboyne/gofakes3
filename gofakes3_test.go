@@ -2,132 +2,16 @@ package gofakes3_test
 
 import (
 	"bytes"
-	"fmt"
-	"io/ioutil"
-	"net/http/httptest"
 	"reflect"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
-	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
-
-const defaultBucket = "mybucket"
-
-var defaultDate = time.Date(2018, 1, 1, 12, 0, 0, 0, time.UTC)
-
-type testServer struct {
-	gofakes3.TT
-	gofakes3.TimeSourceAdvancer
-	*gofakes3.GoFakeS3
-
-	backend gofakes3.Backend
-	server  *httptest.Server
-
-	// if this is nil, no buckets are created. by default, a starting bucket is
-	// created using the value of the 'defaultBucket' constant.
-	initialBuckets []string
-}
-
-type testServerOption func(ts *testServer)
-
-func withoutInitialBuckets() testServerOption { return func(ts *testServer) { ts.initialBuckets = nil } }
-func withInitialBuckets(buckets ...string) testServerOption {
-	return func(ts *testServer) { ts.initialBuckets = buckets }
-}
-
-func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
-	t.Helper()
-	var ts = testServer{
-		TT:             gofakes3.TT{t},
-		initialBuckets: []string{defaultBucket},
-	}
-	for _, o := range opts {
-		o(&ts)
-	}
-
-	if ts.backend == nil {
-		if ts.TimeSourceAdvancer == nil {
-			ts.TimeSourceAdvancer = gofakes3.FixedTimeSource(defaultDate)
-		}
-		ts.backend = s3mem.New(s3mem.WithTimeSource(ts.TimeSourceAdvancer))
-	}
-
-	ts.GoFakeS3 = gofakes3.New(ts.backend,
-		gofakes3.WithTimeSource(ts.TimeSourceAdvancer),
-		gofakes3.WithTimeSkewLimit(0),
-	)
-	ts.server = httptest.NewServer(ts.GoFakeS3.Server())
-
-	for _, bucket := range ts.initialBuckets {
-		ts.TT.OK(ts.backend.CreateBucket(bucket))
-	}
-
-	return &ts
-}
-
-func (ts *testServer) url(url string) string {
-	return fmt.Sprintf("%s/%s", ts.server.URL, strings.TrimLeft(url, "/"))
-}
-
-func (ts *testServer) createBucket(bucket string) {
-	ts.Helper()
-	if err := ts.backend.CreateBucket(bucket); err != nil {
-		ts.Fatal("create bucket failed", err)
-	}
-}
-
-func (ts *testServer) putString(bucket, key string, meta map[string]string, in string) {
-	ts.Helper()
-	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in)))
-}
-
-func (ts *testServer) objectExists(bucket, key string) bool {
-	ts.Helper()
-	obj, err := ts.backend.HeadObject(bucket, key)
-	if err != nil {
-		if gofakes3.HasErrorCode(err, gofakes3.ErrNoSuchKey) {
-			return false
-		} else {
-			ts.Fatal(err)
-		}
-	}
-	return obj != nil
-}
-
-func (ts *testServer) objectAsString(bucket, key string) string {
-	ts.Helper()
-	obj, err := ts.backend.GetObject(bucket, key)
-	ts.OK(err)
-
-	defer obj.Contents.Close()
-	data, err := ioutil.ReadAll(obj.Contents)
-	ts.OK(err)
-
-	return string(data)
-}
-
-func (ts *testServer) s3Client() *s3.S3 {
-	config := aws.NewConfig()
-	config.WithEndpoint(ts.server.URL)
-	config.WithRegion("region")
-	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(true) // Removes need for subdomain
-	svc := s3.New(session.New(), config)
-	return svc
-}
-
-func (ts *testServer) Close() {
-	ts.server.Close()
-}
 
 func TestCreateBucket(t *testing.T) {
 	//@TODO(jb): implement them for sanity reasons
@@ -264,6 +148,41 @@ func TestCreateObjectMD5(t *testing.T) {
 	if ts.objectExists(defaultBucket, "invalid") {
 		t.Fatal("unexpected object")
 	}
+}
+
+func TestDeleteMulti(t *testing.T) {
+	t.Run("multiple-files", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.putString(defaultBucket, "foo", nil, "one")
+		ts.putString(defaultBucket, "bar", nil, "two")
+		ts.putString(defaultBucket, "baz", nil, "three")
+
+		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
+			Bucket: aws.String(defaultBucket),
+			Delete: &s3.Delete{
+				Objects: []*s3.ObjectIdentifier{
+					{Key: aws.String("bar")},
+					{Key: aws.String("foo")},
+				},
+			},
+		})
+		ts.OK(err)
+
+		deleted := make([]string, len(rs.Deleted))
+		for idx, del := range rs.Deleted {
+			deleted[idx] = *del.Key
+		}
+		sort.Strings(deleted)
+
+		if !reflect.DeepEqual(deleted, []string{"bar", "foo"}) {
+			t.Fatal("multi deletion failed")
+		}
+
+		ts.assertLs(defaultBucket, "", nil, []string{"baz"})
+	})
 }
 
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {

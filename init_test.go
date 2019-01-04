@@ -9,12 +9,28 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http/httptest"
 	"os"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
+
+const defaultBucket = "mybucket"
 
 var (
 	logFile string
+
+	defaultDate = time.Date(2018, 1, 1, 12, 0, 0, 0, time.UTC)
 )
 
 func TestMain(m *testing.M) {
@@ -58,3 +74,170 @@ func runTestMain(m *testing.M) error {
 type errCode int
 
 func (e errCode) Error() string { return fmt.Sprintf("exit code %d", e) }
+
+type lsItems []lsItem
+
+func (cl lsItems) assertContents(tt gofakes3.TT, dirs []string, files []string) {
+	tt.Helper()
+	cl.assertFiles(tt, files...)
+	cl.assertDirs(tt, dirs...)
+}
+
+func (cl lsItems) assertDirs(tt gofakes3.TT, names ...string) {
+	tt.Helper()
+	cl.assertItems(tt, true, names...)
+}
+
+func (cl lsItems) assertFiles(tt gofakes3.TT, names ...string) {
+	tt.Helper()
+	cl.assertItems(tt, false, names...)
+}
+
+func (cl lsItems) assertItems(tt gofakes3.TT, isDir bool, names ...string) {
+	tt.Helper()
+	var found []string
+	for _, item := range cl {
+		if item.isDir == isDir {
+			found = append(found, item.name)
+		}
+	}
+	sort.Strings(found)
+	sort.Strings(names)
+	if !reflect.DeepEqual(found, names) {
+		tt.Fatalf("items:\nexp: %v\ngot: %v", names, found)
+	}
+}
+
+type lsItem struct {
+	name  string
+	date  time.Time
+	size  int64
+	isDir bool
+}
+
+type testServer struct {
+	gofakes3.TT
+	gofakes3.TimeSourceAdvancer
+	*gofakes3.GoFakeS3
+
+	backend gofakes3.Backend
+	server  *httptest.Server
+
+	// if this is nil, no buckets are created. by default, a starting bucket is
+	// created using the value of the 'defaultBucket' constant.
+	initialBuckets []string
+}
+
+type testServerOption func(ts *testServer)
+
+func withoutInitialBuckets() testServerOption { return func(ts *testServer) { ts.initialBuckets = nil } }
+func withInitialBuckets(buckets ...string) testServerOption {
+	return func(ts *testServer) { ts.initialBuckets = buckets }
+}
+
+func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
+	t.Helper()
+	var ts = testServer{
+		TT:             gofakes3.TT{t},
+		initialBuckets: []string{defaultBucket},
+	}
+	for _, o := range opts {
+		o(&ts)
+	}
+
+	if ts.backend == nil {
+		if ts.TimeSourceAdvancer == nil {
+			ts.TimeSourceAdvancer = gofakes3.FixedTimeSource(defaultDate)
+		}
+		ts.backend = s3mem.New(s3mem.WithTimeSource(ts.TimeSourceAdvancer))
+	}
+
+	ts.GoFakeS3 = gofakes3.New(ts.backend,
+		gofakes3.WithTimeSource(ts.TimeSourceAdvancer),
+		gofakes3.WithTimeSkewLimit(0),
+	)
+	ts.server = httptest.NewServer(ts.GoFakeS3.Server())
+
+	for _, bucket := range ts.initialBuckets {
+		ts.TT.OK(ts.backend.CreateBucket(bucket))
+	}
+
+	return &ts
+}
+
+func (ts *testServer) url(url string) string {
+	return fmt.Sprintf("%s/%s", ts.server.URL, strings.TrimLeft(url, "/"))
+}
+
+func (ts *testServer) createBucket(bucket string) {
+	ts.Helper()
+	if err := ts.backend.CreateBucket(bucket); err != nil {
+		ts.Fatal("create bucket failed", err)
+	}
+}
+
+func (ts *testServer) putString(bucket, key string, meta map[string]string, in string) {
+	ts.Helper()
+	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in)))
+}
+
+func (ts *testServer) objectExists(bucket, key string) bool {
+	ts.Helper()
+	obj, err := ts.backend.HeadObject(bucket, key)
+	if err != nil {
+		if gofakes3.HasErrorCode(err, gofakes3.ErrNoSuchKey) {
+			return false
+		} else {
+			ts.Fatal(err)
+		}
+	}
+	return obj != nil
+}
+
+func (ts *testServer) objectAsString(bucket, key string) string {
+	ts.Helper()
+	obj, err := ts.backend.GetObject(bucket, key)
+	ts.OK(err)
+
+	defer obj.Contents.Close()
+	data, err := ioutil.ReadAll(obj.Contents)
+	ts.OK(err)
+
+	return string(data)
+}
+
+func (ts *testServer) s3Client() *s3.S3 {
+	ts.Helper()
+	config := aws.NewConfig()
+	config.WithEndpoint(ts.server.URL)
+	config.WithRegion("region")
+	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
+	config.WithS3ForcePathStyle(true) // Removes need for subdomain
+	svc := s3.New(session.New(), config)
+	return svc
+}
+
+func (ts *testServer) assertLs(bucket string, prefix string, expectedPrefixes []string, expectedObjects []string) {
+	ts.Helper()
+	client := ts.s3Client()
+	rs, err := client.ListObjects(&s3.ListObjectsInput{
+		Bucket:    aws.String(bucket),
+		Delimiter: aws.String("/"),
+		Prefix:    aws.String(prefix),
+	})
+	ts.OK(err)
+
+	var ls lsItems
+	for _, item := range rs.CommonPrefixes {
+		ls = append(ls, lsItem{name: *item.Prefix, isDir: true})
+	}
+	for _, item := range rs.Contents {
+		ls = append(ls, lsItem{name: *item.Key, date: *item.LastModified, size: *item.Size})
+	}
+
+	ls.assertContents(ts.TT, expectedPrefixes, expectedObjects)
+}
+
+func (ts *testServer) Close() {
+	ts.server.Close()
+}

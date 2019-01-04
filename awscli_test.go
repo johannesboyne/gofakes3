@@ -10,7 +10,6 @@ import (
 	"path"
 	"reflect"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -151,14 +150,14 @@ func (tc *testCLI) combinedOutput(method string, subcommand string, args ...stri
 
 var cliLsDirMatcher = regexp.MustCompile(`^\s*PRE (.*)$`)
 
-func (tc *testCLI) assertLsFiles(bucket string, prefix string, dirs []string, files []string) (items cliLsItems) {
+func (tc *testCLI) assertLsFiles(bucket string, prefix string, dirs []string, files []string) (items lsItems) {
 	tc.Helper()
 	items = tc.lsFiles(bucket, prefix)
 	items.assertContents(tc.TT, dirs, files)
 	return items
 }
 
-func (tc *testCLI) lsFiles(bucket string, prefix string) (items cliLsItems) {
+func (tc *testCLI) lsFiles(bucket string, prefix string) (items lsItems) {
 	tc.Helper()
 
 	prefix = strings.TrimLeft(prefix, "/")
@@ -169,14 +168,14 @@ func (tc *testCLI) lsFiles(bucket string, prefix string) (items cliLsItems) {
 		cur := scn.Text()
 		dir := cliLsDirMatcher.FindStringSubmatch(cur)
 		if dir != nil {
-			items = append(items, cliLsItem{
+			items = append(items, lsItem{
 				isDir: true,
 				name:  dir[1], // first submatch
 			})
 
 		} else { // file matching
 			var ct cliTime
-			var item cliLsItem
+			var item lsItem
 			tc.OKAll(fmt.Sscan(scn.Text(), &ct, &item.size, &item.name))
 			item.date = time.Time(ct)
 			items = append(items, item)
@@ -239,46 +238,6 @@ func (tc *testCLI) fileArgs(bucket string, files ...string) []string {
 		out[i] = tc.fileArg(bucket, f)
 	}
 	return out
-}
-
-type cliLsItems []cliLsItem
-
-func (cl cliLsItems) assertContents(tt gofakes3.TT, dirs []string, files []string) {
-	tt.Helper()
-	cl.assertFiles(tt, files...)
-	cl.assertDirs(tt, dirs...)
-}
-
-func (cl cliLsItems) assertDirs(tt gofakes3.TT, names ...string) {
-	tt.Helper()
-	cl.assertItems(tt, true, names...)
-}
-
-func (cl cliLsItems) assertFiles(tt gofakes3.TT, names ...string) {
-	tt.Helper()
-	cl.assertItems(tt, false, names...)
-}
-
-func (cl cliLsItems) assertItems(tt gofakes3.TT, isDir bool, names ...string) {
-	tt.Helper()
-	var found []string
-	for _, item := range cl {
-		if item.isDir == isDir {
-			found = append(found, item.name)
-		}
-	}
-	sort.Strings(found)
-	sort.Strings(names)
-	if !reflect.DeepEqual(found, names) {
-		tt.Fatalf("items:\nexp: %v\ngot: %v", names, found)
-	}
-}
-
-type cliLsItem struct {
-	name  string
-	date  time.Time
-	size  int
-	isDir bool
 }
 
 type cliTime time.Time
