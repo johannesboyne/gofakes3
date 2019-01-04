@@ -75,4 +75,6 @@ type Backend interface {
 	// PutObject should assume that the key is valid.
 	// meta may be nil.
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader) error
+
+	DeleteMulti(bucketName string, objects ...string) (DeleteResult, error)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 
 	"github.com/boltdb/bolt"
 	"github.com/johannesboyne/gofakes3"
@@ -317,6 +318,35 @@ func (db *Backend) DeleteObject(bucketName, objectName string) error {
 		}
 		return nil
 	})
+}
+
+func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, err error) {
+	err = db.bolt.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			return gofakes3.BucketNotFound(bucketName)
+		}
+
+		for _, object := range objects {
+			if err := b.Delete([]byte(object)); err != nil {
+				log.Println("delete object failed:", err)
+				result.Error = append(result.Error, gofakes3.ErrorResult{
+					Code:    gofakes3.ErrInternal,
+					Message: gofakes3.ErrInternal.Message(),
+					Key:     object,
+				})
+
+			} else {
+				result.Deleted = append(result.Deleted, gofakes3.ObjectID{
+					Key: object,
+				})
+			}
+		}
+
+		return nil
+	})
+
+	return result, err
 }
 
 type readerWithDummyCloser struct{ io.Reader }

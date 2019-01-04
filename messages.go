@@ -103,6 +103,42 @@ type BucketPrefix struct {
 	Prefix string
 }
 
+type ObjectID struct {
+	Key string `xml:"Key"`
+
+	// Versions not supported in GoFakeS3 yet.
+	VersionID string `xml:"VersionId,omitempty" json:"VersionId,omitempty"`
+}
+
+type DeleteRequest struct {
+	Objects []ObjectID `xml:"Object"`
+
+	// Element to enable quiet mode for the request. When you add this element,
+	// you must set its value to true.
+	//
+	// By default, the operation uses verbose mode in which the response
+	// includes the result of deletion of each key in your request. In quiet
+	// mode the response includes only keys where the delete operation
+	// encountered an error. For a successful deletion, the operation does not
+	// return any information about the delete in the response body.
+	Quiet bool `xml:"Quiet"`
+}
+
+// DeleteResult contains the response from a multi delete operation.
+type DeleteResult struct {
+	Deleted []ObjectID    `xml:"Deleted"`
+	Error   []ErrorResult `xml:",omitempty"`
+}
+
+type ErrorResult struct {
+	XMLName   xml.Name  `xml:"Error"`
+	Key       string    `xml:"Key,omitempty"`
+	Code      ErrorCode `xml:"Code,omitempty"`
+	Message   string    `xml:"Message,omitempty"`
+	Resource  string    `xml:"Resource,omitempty"`
+	RequestID string    `xml:"RequestId,omitempty"`
+}
+
 type Object struct {
 	Metadata map[string]string
 	Size     int64

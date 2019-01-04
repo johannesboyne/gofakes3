@@ -212,6 +212,25 @@ func (db *Backend) DeleteObject(bucketName, objectName string) error {
 	return nil
 }
 
+func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, err error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return result, gofakes3.BucketNotFound(bucketName)
+	}
+
+	for _, object := range objects {
+		delete(bucket.data, object)
+		result.Deleted = append(result.Deleted, gofakes3.ObjectID{
+			Key: object,
+		})
+	}
+
+	return result, nil
+}
+
 type readerWithDummyCloser struct{ io.Reader }
 
 func (d readerWithDummyCloser) Close() error { return nil }

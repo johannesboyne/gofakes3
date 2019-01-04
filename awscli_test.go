@@ -3,11 +3,13 @@ package gofakes3_test
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
+	"path"
 	"reflect"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -16,48 +18,46 @@ import (
 )
 
 func TestCLILsBuckets(t *testing.T) {
-	ts := newTestServer(t, withoutInitialBuckets())
-	defer ts.Close()
-	cli := testCLI{ts}
+	cli := newTestCLI(t, withoutInitialBuckets())
+	defer cli.Close()
 
 	if len(cli.lsBuckets()) != 0 {
 		t.Fatal()
 	}
 
-	ts.createBucket("foo")
+	cli.createBucket("foo")
 	if !reflect.DeepEqual(cli.lsBuckets().Names(), []string{"foo"}) {
 		t.Fatal()
 	}
 
-	ts.createBucket("bar")
+	cli.createBucket("bar")
 	if !reflect.DeepEqual(cli.lsBuckets().Names(), []string{"bar", "foo"}) {
 		t.Fatal()
 	}
 }
 
 func TestCLILsFiles(t *testing.T) {
-	ts := newTestServer(t)
-	defer ts.Close()
-	cli := testCLI{ts}
+	cli := newTestCLI(t)
+	defer cli.Close()
 
 	if len(cli.lsFiles(defaultBucket, "")) != 0 {
 		t.Fatal()
 	}
 
-	ts.putString(defaultBucket, "test-one", nil, "hello")
+	cli.putString(defaultBucket, "test-one", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		nil, []string{"test-one"})
 
-	ts.putString(defaultBucket, "test-two", nil, "hello")
+	cli.putString(defaultBucket, "test-two", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		nil, []string{"test-one", "test-two"})
 
 	// only "test-one" and "test-two" should pass the prefix match
-	ts.putString(defaultBucket, "no-match", nil, "hello")
+	cli.putString(defaultBucket, "no-match", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "test-",
 		nil, []string{"test-one", "test-two"})
 
-	ts.putString(defaultBucket, "test/yep", nil, "hello")
+	cli.putString(defaultBucket, "test/yep", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		[]string{"test/"}, []string{"no-match", "test-one", "test-two"})
 
@@ -70,11 +70,40 @@ func TestCLILsFiles(t *testing.T) {
 		nil, []string{"yep"})
 }
 
+func TestCLIRmOne(t *testing.T) {
+	cli := newTestCLI(t)
+	defer cli.Close()
+
+	cli.putString(defaultBucket, "foo", nil, "hello")
+	cli.putString(defaultBucket, "bar", nil, "hello")
+	cli.assertLsFiles(defaultBucket, "", nil, []string{"foo", "bar"})
+
+	cli.rm(cli.fileArg(defaultBucket, "foo"))
+	cli.assertLsFiles(defaultBucket, "", nil, []string{"bar"})
+}
+
+func TestCLIRmMulti(t *testing.T) {
+	cli := newTestCLI(t)
+	defer cli.Close()
+
+	cli.putString(defaultBucket, "foo", nil, "hello")
+	cli.putString(defaultBucket, "bar", nil, "hello")
+	cli.putString(defaultBucket, "baz", nil, "hello")
+	cli.assertLsFiles(defaultBucket, "", nil, []string{"foo", "bar", "baz"})
+
+	cli.rmMulti(defaultBucket, "foo", "bar", "baz")
+	cli.assertLsFiles(defaultBucket, "", nil, nil)
+}
+
 type testCLI struct {
 	*testServer
 }
 
-func (tc *testCLI) command(method string, args ...string) *exec.Cmd {
+func newTestCLI(t *testing.T, options ...testServerOption) *testCLI {
+	return &testCLI{newTestServer(t, options...)}
+}
+
+func (tc *testCLI) command(method string, subcommand string, args ...string) *exec.Cmd {
 	tc.Helper()
 
 	if method != "s3" && method != "s3api" {
@@ -85,9 +114,13 @@ func (tc *testCLI) command(method string, args ...string) *exec.Cmd {
 		"--output", "json",
 		method,
 		"--endpoint", tc.server.URL,
+		subcommand,
 	}, args...)
 
 	cmd := exec.Command("aws", cmdArgs...)
+
+	log.Println("cli args:", cmdArgs)
+
 	cmd.Env = []string{
 		"AWS_ACCESS_KEY_ID=key",
 		"AWS_SECRET_ACCESS_KEY=secret",
@@ -95,9 +128,19 @@ func (tc *testCLI) command(method string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-func (tc *testCLI) combinedOutput(method string, args ...string) (out []byte) {
+func (tc *testCLI) run(method string, subcommand string, args ...string) (out []byte) {
 	tc.Helper()
-	out, err := tc.command(method, args...).CombinedOutput()
+	err := tc.command(method, subcommand, args...).Run()
+	if _, ok := err.(*exec.Error); ok {
+		tc.Skip("aws cli not found on $PATH")
+	}
+	tc.OK(err)
+	return out
+}
+
+func (tc *testCLI) combinedOutput(method string, subcommand string, args ...string) (out []byte) {
+	tc.Helper()
+	out, err := tc.command(method, subcommand, args...).CombinedOutput()
 	if _, ok := err.(*exec.Error); ok {
 		tc.Skip("aws cli not found on $PATH")
 	}
@@ -107,14 +150,14 @@ func (tc *testCLI) combinedOutput(method string, args ...string) (out []byte) {
 
 var cliLsDirMatcher = regexp.MustCompile(`^\s*PRE (.*)$`)
 
-func (tc *testCLI) assertLsFiles(bucket string, prefix string, dirs []string, files []string) (items cliLsItems) {
-	tc.TT.Helper()
+func (tc *testCLI) assertLsFiles(bucket string, prefix string, dirs []string, files []string) (items lsItems) {
+	tc.Helper()
 	items = tc.lsFiles(bucket, prefix)
 	items.assertContents(tc.TT, dirs, files)
 	return items
 }
 
-func (tc *testCLI) lsFiles(bucket string, prefix string) (items cliLsItems) {
+func (tc *testCLI) lsFiles(bucket string, prefix string) (items lsItems) {
 	tc.Helper()
 
 	prefix = strings.TrimLeft(prefix, "/")
@@ -125,14 +168,14 @@ func (tc *testCLI) lsFiles(bucket string, prefix string) (items cliLsItems) {
 		cur := scn.Text()
 		dir := cliLsDirMatcher.FindStringSubmatch(cur)
 		if dir != nil {
-			items = append(items, cliLsItem{
+			items = append(items, lsItem{
 				isDir: true,
 				name:  dir[1], // first submatch
 			})
 
 		} else { // file matching
 			var ct cliTime
-			var item cliLsItem
+			var item lsItem
 			tc.OKAll(fmt.Sscan(scn.Text(), &ct, &item.size, &item.name))
 			item.date = time.Time(ct)
 			items = append(items, item)
@@ -159,44 +202,42 @@ func (tc *testCLI) lsBuckets() (buckets gofakes3.Buckets) {
 	return buckets
 }
 
-type cliLsItems []cliLsItem
+func (tc *testCLI) rmMulti(bucket string, objects ...string) {
+	tc.Helper()
 
-func (cl cliLsItems) assertContents(tt gofakes3.TT, dirs []string, files []string) {
-	tt.Helper()
-	cl.assertFiles(tt, files...)
-	cl.assertDirs(tt, dirs...)
-}
+	// delete-objects --bucket fakes3 --delete 'Objects=[{Key=test},{Key=test2}]'
 
-func (cl cliLsItems) assertDirs(tt gofakes3.TT, names ...string) {
-	tt.Helper()
-	cl.assertItems(tt, true, names...)
-}
-
-func (cl cliLsItems) assertFiles(tt gofakes3.TT, names ...string) {
-	tt.Helper()
-	cl.assertItems(tt, false, names...)
-}
-
-func (cl cliLsItems) assertItems(tt gofakes3.TT, isDir bool, names ...string) {
-	tt.Helper()
-	var found []string
-	for _, item := range cl {
-		if item.isDir == isDir {
-			found = append(found, item.name)
-		}
+	var delArg struct{ Objects []gofakes3.ObjectID }
+	for _, obj := range objects {
+		delArg.Objects = append(delArg.Objects, gofakes3.ObjectID{Key: obj})
 	}
-	sort.Strings(found)
-	sort.Strings(names)
-	if !reflect.DeepEqual(found, names) {
-		tt.Fatalf("items:\nexp: %v\ngot: %v", names, found)
+	bts, err := json.Marshal(delArg)
+	if err != nil {
+		panic(err)
 	}
+
+	args := []string{
+		"--bucket", bucket,
+		"--delete", string(bts),
+	}
+	tc.run("s3api", "delete-objects", args...)
 }
 
-type cliLsItem struct {
-	name  string
-	date  time.Time
-	size  int
-	isDir bool
+func (tc *testCLI) rm(fileURL string) {
+	tc.Helper()
+	tc.run("s3", "rm", fileURL)
+}
+
+func (tc *testCLI) fileArg(bucket string, file string) string {
+	return fmt.Sprintf("s3://%s", path.Join(bucket, file))
+}
+
+func (tc *testCLI) fileArgs(bucket string, files ...string) []string {
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = tc.fileArg(bucket, f)
+	}
+	return out
 }
 
 type cliTime time.Time

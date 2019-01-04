@@ -78,7 +78,11 @@ func (g *GoFakeS3) routeBucket(bucket string, w http.ResponseWriter, r *http.Req
 	case "HEAD":
 		return g.headBucket(bucket, w, r)
 	case "POST":
-		return g.createObjectBrowserUpload(bucket, w, r)
+		if _, ok := r.URL.Query()["delete"]; ok {
+			return g.deleteMulti(bucket, w, r)
+		} else {
+			return g.createObjectBrowserUpload(bucket, w, r)
+		}
 	default:
 		return ErrMethodNotAllowed
 	}
