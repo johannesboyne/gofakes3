@@ -18,7 +18,6 @@ jobs:
     - image: circleci/golang:1.9
     steps:
     - checkout
-    - run: <command>
     - run:
         name: "Pull Submodules"
         command: |
