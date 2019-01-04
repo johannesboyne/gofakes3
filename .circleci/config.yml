@@ -19,6 +19,7 @@ jobs:
     working_directory: /go/src/github.com/johannesboyne/gofakes3
     steps:
     - checkout
+    - run: go get -v -t -d ./...
     - run:
         name: "Pull Submodules"
         command: |
