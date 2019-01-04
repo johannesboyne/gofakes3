@@ -2,15 +2,15 @@ package gofakes3
 
 import (
 	"bytes"
-	"crypto/md5"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -33,8 +33,13 @@ const (
 
 	DefaultSkewLimit = 15 * time.Minute
 
-	MaxUploadsLimit   = 1000
-	DefaultMaxUploads = 1000
+	MaxUploadsLimit       = 1000
+	DefaultMaxUploads     = 1000
+	MaxUploadPartsLimit   = 1000
+	DefaultMaxUploadParts = 1000
+
+	// From the docs: "Part numbers can be any number from 1 to 10,000, inclusive."
+	MaxUploadPartNumber = 10000
 )
 
 type GoFakeS3 struct {
@@ -417,7 +422,14 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 	return g.xmlEncoder(w).Encode(out)
 }
 
-func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID string, w http.ResponseWriter, r *http.Request) error {
+// From the docs:
+//	A part number uniquely identifies a part and also defines its position
+// 	within the object being created. If you upload a new part using the same
+// 	part number that was used with a previous part, the previously uploaded part
+// 	is overwritten. Each part must be at least 5 MB in size, except the last
+// 	part. There is no size limit on the last part of your multipart upload.
+//
+func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	log.Println("put multipart upload", bucket, object, uploadID)
 
 	etag := r.Header.Get("ETag")
@@ -425,8 +437,8 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID string
 		return ErrInvalidPart
 	}
 
-	partNumber := r.URL.Query().Get("partNumber")
-	if !validNumericString(partNumber) {
+	partNumber, err := strconv.ParseInt(r.URL.Query().Get("partNumber"), 10, 0)
+	if err != nil || partNumber <= 0 || partNumber > MaxUploadPartNumber {
 		return ErrInvalidPart
 	}
 
@@ -445,7 +457,20 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID string
 	}
 
 	defer r.Body.Close()
-	body, err := ioutil.ReadAll(r.Body)
+	var rdr io.Reader = r.Body
+
+	if g.integrityCheck {
+		md5Base64 := r.Header.Get("Content-MD5")
+		if md5Base64 != "" {
+			var err error
+			rdr, err = newHashingReader(rdr, md5Base64)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	body, err := ioutil.ReadAll(rdr)
 	if err != nil {
 		return err
 	}
@@ -454,26 +479,18 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID string
 		return ErrIncompleteBody
 	}
 
-	// FIXME: update to use hashingReader from other PR.
-	contentMD5 := r.Header.Get("Content-MD5")
-	hash := md5.Sum(body)
-	hashEnc := base64.StdEncoding.EncodeToString(hash[:])
-	if contentMD5 != hashEnc {
-		return fmt.Errorf("body hash mismatch in multipart upload")
-	}
-
 	w.Header().Add("ETag", etag)
 
-	return upload.AddPart(partNumber, etag, body)
+	return upload.AddPart(int(partNumber), etag, g.timeSource.Now(), body)
 }
 
-func (g *GoFakeS3) abortMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	log.Println("abort multipart upload", bucket, object, uploadID)
 	_, err := g.uploader.Complete(bucket, object, uploadID)
 	return err
 }
 
-func (g *GoFakeS3) completeMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	log.Println("complete multipart upload", bucket, object, uploadID)
 
 	body, err := ioutil.ReadAll(r.Body)
@@ -519,6 +536,27 @@ func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r 
 	}
 
 	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
+	if err != nil {
+		return err
+	}
+
+	return g.xmlEncoder(w).Encode(out)
+}
+
+func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
+	query := r.URL.Query()
+
+	marker, err := parseClampedInt(query.Get("part-number-marker"), 0, 0, math.MaxInt64)
+	if err != nil {
+		return ErrInvalidURI
+	}
+
+	maxParts, err := parseClampedInt(query.Get("max-parts"), DefaultMaxUploadParts, 0, MaxUploadPartsLimit)
+	if err != nil {
+		return ErrInvalidURI
+	}
+
+	out, err := g.uploader.ListParts(bucket, object, uploadID, int(marker), maxParts)
 	if err != nil {
 		return err
 	}

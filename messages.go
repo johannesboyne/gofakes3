@@ -5,8 +5,6 @@ import (
 	"io"
 	"sort"
 	"time"
-
-	"github.com/johannesboyne/gofakes3/internal/sortorder"
 )
 
 type Storage struct {
@@ -88,7 +86,7 @@ type CommonPrefix struct {
 }
 
 type CompleteMultipartUploadPart struct {
-	PartNumber string `xml:"PartNumber"`
+	PartNumber int    `xml:"PartNumber"`
 	ETag       string `xml:"ETag"`
 }
 
@@ -97,14 +95,15 @@ type CompleteMultipartUploadRequest struct {
 }
 
 func (c CompleteMultipartUploadRequest) partsAreSorted() bool {
-	return sort.IsSorted(c.partIDs())
+	return sort.IntsAreSorted(c.partIDs())
 }
 
-func (c CompleteMultipartUploadRequest) partIDs() sortorder.Natural {
-	inParts := make(sortorder.Natural, 0, len(c.Parts))
+func (c CompleteMultipartUploadRequest) partIDs() []int {
+	inParts := make([]int, 0, len(c.Parts))
 	for _, inputPart := range c.Parts {
 		inParts = append(inParts, inputPart.PartNumber)
 	}
+	sort.Ints(inParts)
 	return inParts
 }
 
@@ -140,58 +139,6 @@ func (c ContentTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	return nil
 }
 
-type InitiateMultipartUpload struct {
-	UploadID string `xml:"UploadId"`
-}
-
-type ListMultipartUploadsResult struct {
-	Bucket string `xml:"Bucket"`
-
-	// Together with upload-id-marker, this parameter specifies the multipart upload
-	// after which listing should begin.
-	KeyMarker string `xml:"KeyMarker,omitempty"`
-
-	// Together with key-marker, specifies the multipart upload after which listing
-	// should begin. If key-marker is not specified, the upload-id-marker parameter
-	// is ignored.
-	UploadIDMarker string `xml:"UploadIdMarker,omitempty"`
-
-	NextKeyMarker      string `xml:"NextKeyMarker,omitempty"`
-	NextUploadIDMarker string `xml:"NextUploadIdMarker,omitempty"`
-
-	// Sets the maximum number of multipart uploads, from 1 to 1,000, to return
-	// in the response body. 1,000 is the maximum number of uploads that can be
-	// returned in a response.
-	MaxUploads string `xml:"MaxUploads,omitempty"`
-
-	Delimiter string `xml:"Delimiter,omitempty"`
-
-	// Lists in-progress uploads only for those keys that begin with the specified
-	// prefix.
-	Prefix string `xml:"Prefix,omitempty"`
-
-	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
-	IsTruncated    bool           `xml:"IsTruncated,omitempty"`
-
-	Uploads []ListMultipartUploadItem `xml:"Upload"`
-}
-
-type ListMultipartUploadItem struct {
-	Key          string      `xml:"Key"`
-	UploadID     string      `xml:"UploadId"`
-	Initiator    *UserInfo   `xml:"Initiator,omitempty"`
-	Owner        *UserInfo   `xml:"Owner,omitempty"`
-	StorageClass string      `xml:"StorageClass,omitempty"`
-	Initiated    ContentTime `xml:"Initiated,omitempty"`
-}
-
-type ObjectID struct {
-	Key string `xml:"Key"`
-
-	// Versions not supported in GoFakeS3 yet.
-	VersionID string `xml:"VersionId,omitempty" json:"VersionId,omitempty"`
-}
-
 type DeleteRequest struct {
 	Objects []ObjectID `xml:"Object"`
 
@@ -221,6 +168,82 @@ type ErrorResult struct {
 	RequestID string    `xml:"RequestId,omitempty"`
 }
 
+type InitiateMultipartUpload struct {
+	UploadID UploadID `xml:"UploadId"`
+}
+
+type ListMultipartUploadsResult struct {
+	Bucket string `xml:"Bucket"`
+
+	// Together with upload-id-marker, this parameter specifies the multipart upload
+	// after which listing should begin.
+	KeyMarker string `xml:"KeyMarker,omitempty"`
+
+	// Together with key-marker, specifies the multipart upload after which listing
+	// should begin. If key-marker is not specified, the upload-id-marker parameter
+	// is ignored.
+	UploadIDMarker UploadID `xml:"UploadIdMarker,omitempty"`
+
+	NextKeyMarker      string   `xml:"NextKeyMarker,omitempty"`
+	NextUploadIDMarker UploadID `xml:"NextUploadIdMarker,omitempty"`
+
+	// Sets the maximum number of multipart uploads, from 1 to 1,000, to return
+	// in the response body. 1,000 is the maximum number of uploads that can be
+	// returned in a response.
+	MaxUploads string `xml:"MaxUploads,omitempty"`
+
+	Delimiter string `xml:"Delimiter,omitempty"`
+
+	// Lists in-progress uploads only for those keys that begin with the specified
+	// prefix.
+	Prefix string `xml:"Prefix,omitempty"`
+
+	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
+	IsTruncated    bool           `xml:"IsTruncated,omitempty"`
+
+	Uploads []ListMultipartUploadItem `xml:"Upload"`
+}
+
+type ListMultipartUploadItem struct {
+	Key          string      `xml:"Key"`
+	UploadID     UploadID    `xml:"UploadId"`
+	Initiator    *UserInfo   `xml:"Initiator,omitempty"`
+	Owner        *UserInfo   `xml:"Owner,omitempty"`
+	StorageClass string      `xml:"StorageClass,omitempty"`
+	Initiated    ContentTime `xml:"Initiated,omitempty"`
+}
+
+type ListMultipartUploadPartsResult struct {
+	XMLName xml.Name `xml:"ListPartsResult"`
+
+	Bucket               string    `xml:"Bucket"`
+	Key                  string    `xml:"Key"`
+	UploadID             UploadID  `xml:"UploadId"`
+	StorageClass         string    `xml:"StorageClass,omitempty"`
+	Initiator            *UserInfo `xml:"Initiator,omitempty"`
+	Owner                *UserInfo `xml:"Owner,omitempty"`
+	PartNumberMarker     int       `xml:"PartNumberMarker"`
+	NextPartNumberMarker int       `xml:"NextPartNumberMarker"`
+	MaxParts             int64     `xml:"MaxParts"`
+	IsTruncated          bool      `xml:"IsTruncated,omitempty"`
+
+	Parts []ListMultipartUploadPartItem `xml:"Part"`
+}
+
+type ListMultipartUploadPartItem struct {
+	PartNumber   int         `xml:"PartNumberMarker"`
+	LastModified ContentTime `xml:"LastModified,omitempty"`
+	ETag         string      `xml:"ETag,omitempty"`
+	Size         int         `xml:"Size"`
+}
+
+type ObjectID struct {
+	Key string `xml:"Key"`
+
+	// Versions not supported in GoFakeS3 yet.
+	VersionID string `xml:"VersionId,omitempty" json:"VersionId,omitempty"`
+}
+
 // Object contains the data retrieved from a bucket for the specified key.
 //
 // You MUST always call Contents.Close() otherwise you may leak resources.
@@ -230,3 +253,7 @@ type Object struct {
 	Contents io.ReadCloser
 	Hash     []byte
 }
+
+// UploadID uses a string as the underlying type, but the string should only
+// represent a decimal integer. See uploader.uploadID for details.
+type UploadID string

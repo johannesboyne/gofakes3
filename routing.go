@@ -30,7 +30,7 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 		object = parts[1]
 	}
 
-	if uploadID := query.Get("uploadId"); uploadID != "" {
+	if uploadID := UploadID(query.Get("uploadId")); uploadID != "" {
 		err = g.routeMultipartUpload(bucket, object, uploadID, w, r)
 
 	} else if _, ok := query["uploads"]; ok {
@@ -111,10 +111,10 @@ func (g *GoFakeS3) routeMultipartUploadBase(bucket, object string, w http.Respon
 
 // routeMultipartUpload operates on routes that contain '?uploadId=<id>' in the
 // query string.
-func (g *GoFakeS3) routeMultipartUpload(bucket, object, uploadID string, w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) routeMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	switch r.Method {
-	// case "GET":
-	//     return g.listMultipartUploadParts(bucket, object, uploadID, w, r)
+	case "GET":
+		return g.listMultipartUploadParts(bucket, object, uploadID, w, r)
 	case "PUT":
 		return g.putMultipartUploadPart(bucket, object, uploadID, w, r)
 	case "DELETE":

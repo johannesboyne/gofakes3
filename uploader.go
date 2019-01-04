@@ -59,7 +59,7 @@ in a 100,000 element array of 80-ish byte strings takes barely 1ms.
 */
 type bucketUploads struct {
 	// uploads should be protected by the coarse lock in uploader:
-	uploads map[string]*multipartUpload
+	uploads map[UploadID]*multipartUpload
 
 	// objectIndex provides sorted traversal of the bucket uploads.
 	//
@@ -72,7 +72,7 @@ type bucketUploads struct {
 
 func newBucketUploads() *bucketUploads {
 	return &bucketUploads{
-		uploads:     map[string]*multipartUpload{},
+		uploads:     map[UploadID]*multipartUpload{},
 		objectIndex: skiplist.NewStringMap(),
 	}
 }
@@ -91,7 +91,7 @@ func (bu *bucketUploads) add(mpu *multipartUpload) {
 }
 
 // remove assumes uploader.mu is acquired
-func (bu *bucketUploads) remove(uploadID string) {
+func (bu *bucketUploads) remove(uploadID UploadID) {
 	upload := bu.uploads[uploadID]
 	delete(bu.uploads, uploadID)
 
@@ -144,9 +144,12 @@ func (bu *bucketUploads) remove(uploadID string) {
 // persistent multipart upload handling.
 //
 type uploader struct {
-	buckets  map[string]*bucketUploads
+	// uploadIDs use a big.Int to allow unbounded IDs (not that you'd be
+	// expected to ever generate 4.2 billion of these but who are we to judge?)
 	uploadID *big.Int
-	mu       sync.Mutex
+
+	buckets map[string]*bucketUploads
+	mu      sync.Mutex
 }
 
 func newUploader() *uploader {
@@ -163,12 +166,11 @@ func (u *uploader) Begin(bucket, object string, meta map[string]string, initiate
 	u.uploadID.Add(u.uploadID, add1)
 
 	mpu := &multipartUpload{
-		ID:        u.uploadID.String(),
+		ID:        UploadID(u.uploadID.String()),
 		Bucket:    bucket,
 		Object:    object,
 		Meta:      meta,
 		Initiated: initiated,
-		parts:     make(map[string]multipartUploadPart),
 	}
 
 	// FIXME: make sure the uploader responds to DeleteBucket
@@ -183,13 +185,56 @@ func (u *uploader) Begin(bucket, object string, meta map[string]string, initiate
 	return mpu
 }
 
+func (u *uploader) ListParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	mpu, err := u.Get(bucket, object, uploadID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result = ListMultipartUploadPartsResult{
+		Bucket:           bucket,
+		Key:              object,
+		UploadID:         uploadID,
+		MaxParts:         limit,
+		PartNumberMarker: marker,
+		StorageClass:     "STANDARD", // FIXME
+	}
+
+	var cnt int64
+	for partNumber, part := range mpu.parts[marker:] {
+		if part == nil {
+			continue
+		}
+
+		if cnt >= limit {
+			result.IsTruncated = true
+			result.NextPartNumberMarker = partNumber
+			break
+		}
+
+		result.Parts = append(result.Parts, ListMultipartUploadPartItem{
+			ETag:         part.ETag,
+			Size:         len(part.Body),
+			PartNumber:   partNumber,
+			LastModified: part.LastModified,
+		})
+
+		cnt++
+	}
+
+	return &result, nil
+}
+
 func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
 	bucketUploads, ok := u.buckets[bucket]
 	if !ok {
-		return nil, ErrNoSuchBucket
+		return nil, ErrNoSuchUpload
 	}
 
 	var iter skiplist.Iterator
@@ -247,7 +292,7 @@ func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, 
 			} else {
 				for idx, upload := range uploads {
 					result.Uploads = append(result.Uploads, ListMultipartUploadItem{
-						StorageClass: "STANDARD",
+						StorageClass: "STANDARD", // FIXME
 						Key:          object,
 						UploadID:     upload.ID,
 						Initiated:    ContentTime{Time: upload.Initiated},
@@ -289,7 +334,7 @@ func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, 
 	return &result, nil
 }
 
-func (u *uploader) Complete(bucket, object, id string) (*multipartUpload, error) {
+func (u *uploader) Complete(bucket, object string, id UploadID) (*multipartUpload, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	up, err := u.getUnlocked(bucket, object, id)
@@ -303,13 +348,13 @@ func (u *uploader) Complete(bucket, object, id string) (*multipartUpload, error)
 	return up, nil
 }
 
-func (u *uploader) Get(bucket, object, id string) (mu *multipartUpload, err error) {
+func (u *uploader) Get(bucket, object string, id UploadID) (mu *multipartUpload, err error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.getUnlocked(bucket, object, id)
 }
 
-func (u *uploader) getUnlocked(bucket, object, id string) (mu *multipartUpload, err error) {
+func (u *uploader) getUnlocked(bucket, object string, id UploadID) (mu *multipartUpload, err error) {
 	bucketUps, ok := u.buckets[bucket]
 	if !ok {
 		return nil, ErrNoSuchUpload
@@ -349,7 +394,7 @@ type uploadListMarker struct {
 	// ListMultipartUploads operation. Together with 'object', specifies the
 	// multipart upload after which listing should begin. If 'object' is not
 	// specified, the 'uploadID' parameter is ignored.
-	uploadID string
+	uploadID UploadID
 }
 
 func uploadListMarkerFromQuery(q url.Values) *uploadListMarker {
@@ -357,29 +402,45 @@ func uploadListMarkerFromQuery(q url.Values) *uploadListMarker {
 	if object == "" {
 		return nil
 	}
-	return &uploadListMarker{object: object, uploadID: q.Get("upload-id-marker")}
+	return &uploadListMarker{object: object, uploadID: UploadID(q.Get("upload-id-marker"))}
 }
 
 type multipartUploadPart struct {
-	PartNumber string
-	ETag       string
-	Body       []byte
+	PartNumber   int
+	ETag         string
+	Body         []byte
+	LastModified ContentTime
 }
 
 type multipartUpload struct {
-	ID        string
+	ID        UploadID
 	Bucket    string
 	Object    string
 	Meta      map[string]string
 	Initiated time.Time
 
-	// do not attempt to access parts without locking mu
-	parts map[string]multipartUploadPart
+	// Part numbers are limited in S3 to 10,000, so we can be a little wasteful.
+	// If a new part number is added, the slice is grown to that size. Depending
+	// on how bad the input is, this could mean you have a 10,000 element slice
+	// that is almost all nils. This shouldn't be a problem in practice.
+	//
+	// We need to use a slice here so we can get deterministic ordering in order
+	// to support pagination when listing the upload parts.
+	//
+	// The minimum part ID is 1, which means the first item in this slice will
+	// always be nil.
+	//
+	// Do not attempt to access parts without locking mu.
+	parts []*multipartUploadPart
 
 	mu sync.Mutex
 }
 
-func (mpu *multipartUpload) AddPart(partNumber string, etag string, body []byte) error {
+func (mpu *multipartUpload) AddPart(partNumber int, etag string, at time.Time, body []byte) error {
+	if partNumber > MaxUploadPartNumber {
+		return ErrInvalidPart
+	}
+
 	mpu.mu.Lock()
 	defer mpu.mu.Unlock()
 
@@ -388,11 +449,15 @@ func (mpu *multipartUpload) AddPart(partNumber string, etag string, body []byte)
 	}
 
 	part := multipartUploadPart{
-		PartNumber: partNumber,
-		Body:       body,
-		ETag:       etag,
+		PartNumber:   partNumber,
+		Body:         body,
+		ETag:         etag,
+		LastModified: NewContentTime(at),
 	}
-	mpu.parts[partNumber] = part
+	if partNumber >= len(mpu.parts) {
+		mpu.parts = append(mpu.parts, make([]*multipartUploadPart, partNumber-len(mpu.parts))...)
+	}
+	mpu.parts[partNumber] = &part
 	return nil
 }
 
@@ -400,10 +465,12 @@ func (mpu *multipartUpload) Reassemble(input *CompleteMultipartUploadRequest) (b
 	mpu.mu.Lock()
 	defer mpu.mu.Unlock()
 
+	mpuPartsLen := len(mpu.parts)
+
 	// FIXME: what does AWS do when mpu.Parts > input.Parts? Presumably you may
 	// end up uploading more parts than you need to assemble, so it should
 	// probably just ignore that?
-	if len(input.Parts) > len(mpu.parts) {
+	if len(input.Parts) > mpuPartsLen {
 		return nil, "", ErrInvalidPart
 	}
 
@@ -412,12 +479,13 @@ func (mpu *multipartUpload) Reassemble(input *CompleteMultipartUploadRequest) (b
 	}
 
 	for _, inPart := range input.Parts {
-		upPart, ok := mpu.parts[inPart.PartNumber]
-		if !ok {
-			return nil, "", ErrorMessagef(ErrInvalidPart, "unexpected part number %s in complete request", inPart.PartNumber)
+		if inPart.PartNumber >= mpuPartsLen || mpu.parts[inPart.PartNumber] == nil {
+			return nil, "", ErrorMessagef(ErrInvalidPart, "unexpected part number %d in complete request", inPart.PartNumber)
 		}
+
+		upPart := mpu.parts[inPart.PartNumber]
 		if inPart.ETag != upPart.ETag {
-			return nil, "", ErrorMessagef(ErrInvalidPart, "unexpected part etag for number %s in complete request", inPart.PartNumber)
+			return nil, "", ErrorMessagef(ErrInvalidPart, "unexpected part etag for number %d in complete request", inPart.PartNumber)
 		}
 	}
 
