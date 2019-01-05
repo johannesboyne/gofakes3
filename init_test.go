@@ -7,7 +7,6 @@ package gofakes3_test
 import (
 	"bytes"
 	"crypto/md5"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"flag"
@@ -19,6 +18,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,9 +293,33 @@ type hashValue []byte
 func (h hashValue) Base64() string { return base64.StdEncoding.EncodeToString(h) }
 func (h hashValue) Hex() string    { return hex.EncodeToString(h) }
 
-func randomFileBody(size int) ([]byte, hashValue) {
-	b := make([]byte, size)
-	rand.Read(b)
+var (
+	randState = uint64(time.Now().UnixNano()) // FIXME: global seedable testing rand
+	randMu    sync.Mutex
+)
+
+func randomFileBody(size int64) ([]byte, hashValue) {
+	randMu.Lock()
+	defer randMu.Unlock()
+
+	neat := size/8*8 + 8 // cheap and nasty way to ensure a multiple of 8 definitely greater than size
+
+	b := make([]byte, neat)
+
+	// Using the default source of randomness was extremely slow; this is a
+	// simple inline implementation of http://xoshiro.di.unimi.it/splitmix64.c
+	// as we *really* don't care about the quality of the randomness, just that
+	// it appears random enough to distribute byte values a bit.
+	for i := int64(0); i < neat; i += 8 {
+		randState += 0x9E3779B97F4A7C15
+		z := randState
+		z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+		z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+		b[i], b[i+1], b[i+2], b[i+3], b[i+4], b[i+5], b[i+6], b[i+7] =
+			byte(z), byte(z>>8), byte(z>>16), byte(z>>24), byte(z>>32), byte(z>>40), byte(z>>48), byte(z>>56)
+	}
+
+	b = b[:size]
 	h := md5.New()
 	h.Write(b)
 	return b, hashValue(h.Sum(nil))

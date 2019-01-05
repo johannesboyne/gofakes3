@@ -26,10 +26,18 @@ const (
 	// 	KB in size. The size of user-defined metadata is measured by taking the
 	// 	sum of the number of bytes in the UTF-8 encoding of each key and value.
 	//
-	// As this does not specify KB or KiB, KB is used; if gofakes3 is used for
-	// testing, and your tests show that 2KiB works, but Amazon uses 2KB...
-	// that's a much worse time to discover the disparity!
+	// As this does not specify KB or KiB, KB is used in gofakes3. The reason
+	// for this is if gofakes3 is used for testing, and your tests show that
+	// 2KiB works, but Amazon uses 2KB...  that's a much worse time to discover
+	// the disparity!
 	DefaultMetadataSizeLimit = 2000
+
+	// Like DefaultMetadataSizeLimit, the docs don't specify MB or MiB, so we
+	// will accept 5MB for now. The Go client SDK rejects 5MB with the error
+	// "part size must be at least 5242880 bytes", which is a hint that it
+	// has been interpreted as MiB at least _somewhere_, but we should remain
+	// liberal in what we accept in the face of ambiguity.
+	DefaultUploadPartSize = 5 * 1000 * 1000
 
 	DefaultSkewLimit = 15 * time.Minute
 

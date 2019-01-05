@@ -482,6 +482,8 @@ func (mpu *multipartUpload) Reassemble(input *CompleteMultipartUploadRequest) (b
 		return nil, "", ErrInvalidPartOrder
 	}
 
+	var size int64
+
 	for _, inPart := range input.Parts {
 		if inPart.PartNumber >= mpuPartsLen || mpu.parts[inPart.PartNumber] == nil {
 			return nil, "", ErrorMessagef(ErrInvalidPart, "unexpected part number %d in complete request", inPart.PartNumber)
@@ -491,8 +493,11 @@ func (mpu *multipartUpload) Reassemble(input *CompleteMultipartUploadRequest) (b
 		if inPart.ETag != upPart.ETag {
 			return nil, "", ErrorMessagef(ErrInvalidPart, "unexpected part etag for number %d in complete request", inPart.PartNumber)
 		}
+
+		size += int64(len(upPart.Body))
 	}
 
+	body = make([]byte, 0, size)
 	for _, part := range input.Parts {
 		body = append(body, mpu.parts[part.PartNumber].Body...)
 	}
