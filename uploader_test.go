@@ -1,15 +1,11 @@
 package gofakes3_test
 
 import (
-	"bytes"
 	"testing"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 func TestMultipartUpload(t *testing.T) {
-	const size = 5 * 1024 * 1024 // docs say MB, client SDK uses MiB
+	const size = defaultUploadPartSize
 
 	for _, tc := range []struct {
 		parts int64 // number of parts
@@ -28,9 +24,6 @@ func TestMultipartUpload(t *testing.T) {
 		t.Run("", func(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
-			svc := ts.s3Client()
-
-			uploader := s3manager.NewUploaderWithClient(svc)
 
 			var size int64
 			if tc.last == 0 {
@@ -39,23 +32,52 @@ func TestMultipartUpload(t *testing.T) {
 				size = (tc.parts-1)*tc.size + tc.last
 			}
 
-			body, hash := randomFileBody(size)
-
-			upParams := &s3manager.UploadInput{
-				Bucket:     aws.String(defaultBucket),
-				Key:        aws.String("uploadtest"),
-				Body:       bytes.NewReader(body),
-				ContentMD5: aws.String(hash.Base64()),
-			}
-
-			out, err := uploader.Upload(upParams, func(u *s3manager.Uploader) {
-				u.LeavePartsOnError = true
-				u.PartSize = tc.size
-			})
-			ts.OK(err)
-			_ = out
-
-			ts.assertObject(defaultBucket, "uploadtest", nil, body)
+			body := randomFileBody(size)
+			ts.assertMultipartUpload(defaultBucket, "uploadtest", body, nil)
 		})
 	}
+}
+
+func TestListMultipartUploadsWithTheSameObjectKey(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	ts.createMultipartUpload("testbucket", "obj", nil)
+	ts.createMultipartUpload("testbucket", "obj", nil)
+	ts.createMultipartUpload("testbucket", "obj", nil)
+
+	ts.assertListMultipartUploads("testbucket", "", nil, 0,
+		"obj/1", "obj/2", "obj/3")
+
+	ts.assertListMultipartUploads("testbucket", "", nil, 1,
+		"obj/1")
+	ts.assertListMultipartUploads("testbucket", "", nil, 2,
+		"obj/1", "obj/2")
+
+	ts.assertListMultipartUploads("testbucket", "obj/2", nil, 1,
+		"obj/2")
+	ts.assertListMultipartUploads("testbucket", "obj/2", nil, 2,
+		"obj/2", "obj/3")
+}
+
+func TestListMultipartUploadsWithDifferentObjectKeys(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	ts.createMultipartUpload("testbucket", "foo", nil)
+	ts.createMultipartUpload("testbucket", "bar", nil)
+	ts.createMultipartUpload("testbucket", "baz", nil)
+
+	ts.assertListMultipartUploads("testbucket", "", nil, 0,
+		"bar/2", "baz/3", "foo/1")
+
+	ts.assertListMultipartUploads("testbucket", "", nil, 1,
+		"bar/2")
+	ts.assertListMultipartUploads("testbucket", "", nil, 2,
+		"bar/2", "baz/3")
+
+	ts.assertListMultipartUploads("testbucket", "baz/3", nil, 1,
+		"baz/3")
+	ts.assertListMultipartUploads("testbucket", "baz/3", nil, 2,
+		"baz/3", "foo/1")
 }

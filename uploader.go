@@ -229,7 +229,7 @@ func (u *uploader) ListParts(bucket, object string, uploadID UploadID, marker in
 	return &result, nil
 }
 
-func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error) {
+func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
@@ -238,24 +238,30 @@ func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, 
 		return nil, ErrNoSuchUpload
 	}
 
-	var iter skiplist.Iterator
-	if marker == nil {
-		iter = bucketUploads.objectIndex.SeekToFirst()
-	} else {
-		iter = bucketUploads.objectIndex.Seek(marker.object)
-	}
-
 	var result = ListMultipartUploadsResult{
-		Bucket:         bucket,
-		Delimiter:      prefix.Delimiter,
-		Prefix:         prefix.Prefix,
-		UploadIDMarker: marker.uploadID,
-		KeyMarker:      marker.object,
+		Bucket:     bucket,
+		Delimiter:  prefix.Delimiter,
+		Prefix:     prefix.Prefix,
+		MaxUploads: limit,
 	}
 
 	// we only need to use the uploadID to start the page if one was actually
 	// supplied, otherwise assume we can start from the start of the iterator:
-	var firstFound = marker.uploadID != ""
+	var firstFound = true
+
+	// the goskiplist iterator is a bit janky; seeking doesn't play nice with the iteration
+	// idiom. If you seek, then iterate using the examples provided in the godoc, your iteration
+	// will always skip the first result. It would be less error prone and astonishing if Seek meant
+	// that the next call to Next() would give you what you expect.
+	var seek bool
+
+	var iter = bucketUploads.objectIndex.Iterator()
+	if marker != nil {
+		seek = iter.Seek(marker.Object)
+		firstFound = marker.UploadID == ""
+		result.UploadIDMarker = marker.UploadID
+		result.KeyMarker = marker.Object
+	}
 
 	// Indicates whether the returned list of multipart uploads is truncated.
 	// The list can be truncated if the number of multipart uploads exceeds
@@ -268,14 +274,20 @@ func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, 
 
 	var cnt int64
 
-	for iter.Next() {
+	for {
+		if seek {
+			seek = false
+		} else if !iter.Next() {
+			break
+		}
+
 		object := iter.Key().(string)
 		uploads := iter.Value().([]*multipartUpload)
 
 	retry:
 		if !firstFound {
 			for idx, mpu := range uploads {
-				if mpu.ID == marker.uploadID {
+				if mpu.ID == marker.UploadID {
 					firstFound = true
 					uploads = uploads[idx:]
 					goto retry
@@ -306,13 +318,14 @@ func (u *uploader) List(bucket string, marker *uploadListMarker, prefix Prefix, 
 							result.NextUploadIDMarker = uploads[idx+1].ID
 							result.NextKeyMarker = object
 						}
-						break
+						goto done
 					}
 				}
 			}
 		}
 	}
 
+done:
 	// If we did not truncate while in the middle of an object's upload ID list,
 	// we need to see if there are more objects in the outer iteration:
 	if !truncated {
@@ -376,9 +389,8 @@ func (u *uploader) getUnlocked(bucket, object string, id UploadID) (mu *multipar
 	return mu, nil
 }
 
-// uploadListMarker collects the upload-id-marker and key-marker query parameters
-// to the ListMultipartUploads operation.
-type uploadListMarker struct {
+// UploadListMarker is used to seek to the start of a page in a ListMultipartUploads operation.
+type UploadListMarker struct {
 	// Represents the key-marker query parameter. Together with 'uploadID',
 	// this parameter specifies the multipart upload after which listing should
 	// begin.
@@ -389,21 +401,23 @@ type uploadListMarker struct {
 	// If 'uploadID' is specified, any multipart uploads for a key equal to
 	// 'object'  might also be included, provided those multipart uploads have
 	// upload IDs lexicographically greater than the specified uploadID.
-	object string
+	Object string
 
 	// Represents the upload-id-marker query parameter to the
 	// ListMultipartUploads operation. Together with 'object', specifies the
 	// multipart upload after which listing should begin. If 'object' is not
 	// specified, the 'uploadID' parameter is ignored.
-	uploadID UploadID
+	UploadID UploadID
 }
 
-func uploadListMarkerFromQuery(q url.Values) *uploadListMarker {
+// uploadListMarkerFromQuery collects the upload-id-marker and key-marker query parameters
+// to the ListMultipartUploads operation.
+func uploadListMarkerFromQuery(q url.Values) *UploadListMarker {
 	object := q.Get("key-marker")
 	if object == "" {
 		return nil
 	}
-	return &uploadListMarker{object: object, uploadID: UploadID(q.Get("upload-id-marker"))}
+	return &UploadListMarker{Object: object, UploadID: UploadID(q.Get("upload-id-marker"))}
 }
 
 type multipartUploadPart struct {

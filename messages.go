@@ -190,7 +190,7 @@ type ListMultipartUploadsResult struct {
 	// Sets the maximum number of multipart uploads, from 1 to 1,000, to return
 	// in the response body. 1,000 is the maximum number of uploads that can be
 	// returned in a response.
-	MaxUploads string `xml:"MaxUploads,omitempty"`
+	MaxUploads int64 `xml:"MaxUploads,omitempty"`
 
 	Delimiter string `xml:"Delimiter,omitempty"`
 

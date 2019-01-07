@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"io"
-	"io/ioutil"
 	"sync"
 
 	"github.com/johannesboyne/gofakes3"
@@ -170,7 +169,7 @@ func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, e
 	}, nil
 }
 
-func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader) error {
+func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -179,7 +178,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		return gofakes3.BucketNotFound(bucketName)
 	}
 
-	bts, err := ioutil.ReadAll(input)
+	bts, err := gofakes3.ReadAll(input, size)
 	if err != nil {
 		return err
 	}

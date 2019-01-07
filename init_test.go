@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http/httptest"
@@ -26,11 +27,18 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
-const defaultBucket = "mybucket"
+const (
+	defaultBucket = "mybucket"
+
+	// docs say MB, client SDK uses MiB, gofakes3 assumes MB as the lowest common denominator
+	// to accept, but we need to satisfy the client SDK in the test suite so this is MiB:
+	defaultUploadPartSize = 5 * 1024 * 1024
+)
 
 var (
 	logFile string
@@ -196,7 +204,7 @@ func (ts *testServer) objectExists(bucket, key string) bool {
 
 func (ts *testServer) putString(bucket, key string, meta map[string]string, in string) {
 	ts.Helper()
-	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in)))
+	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in), int64(len(in))))
 }
 
 func (ts *testServer) objectAsString(bucket, key string) string {
@@ -243,11 +251,138 @@ func (ts *testServer) assertLs(bucket string, prefix string, expectedPrefixes []
 	ls.assertContents(ts.TT, expectedPrefixes, expectedObjects)
 }
 
+type multipartUploadOptions struct {
+	partSize int64
+}
+
+func (ts *testServer) assertMultipartUpload(bucket, object string, body interface{}, options *multipartUploadOptions) {
+	if options == nil {
+		options = &multipartUploadOptions{}
+	}
+	if options.partSize <= 0 {
+		options.partSize = defaultUploadPartSize
+	}
+
+	s3 := ts.s3Client()
+	uploader := s3manager.NewUploaderWithClient(s3)
+
+	contents := readBody(ts.TT, body)
+	upParams := &s3manager.UploadInput{
+		Bucket:     aws.String(defaultBucket),
+		Key:        aws.String("uploadtest"),
+		Body:       bytes.NewReader(contents),
+		ContentMD5: aws.String(hashMD5Bytes(contents).Base64()),
+	}
+
+	out, err := uploader.Upload(upParams, func(u *s3manager.Uploader) {
+		u.LeavePartsOnError = true
+		u.PartSize = options.partSize
+	})
+	ts.OK(err)
+	_ = out
+
+	ts.assertObject(defaultBucket, "uploadtest", nil, body)
+}
+
+func (ts *testServer) createMultipartUpload(bucket, object string, meta map[string]string) (uploadID string) {
+	svc := ts.s3Client()
+	mpu, err := svc.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(object),
+	})
+	ts.OK(err)
+	return *mpu.UploadId
+}
+
+// assertListMultipartUploads
+//
+// If marker is not an empty string, it should be in the format "[<object>][/<uploadID>]".
+// Each item in expectedUploads must be in the format "<object>/<uploadID>".
+func (ts *testServer) assertListMultipartUploads(
+	bucket string,
+	marker string,
+	prefix *gofakes3.Prefix,
+	limit int64,
+	expectedUploads ...string,
+) {
+	ts.Helper()
+	svc := ts.s3Client()
+	rq := &s3.ListMultipartUploadsInput{
+		Bucket:     aws.String(bucket),
+		MaxUploads: aws.Int64(limit),
+	}
+
+	var expectedKeyMarker, expectedUploadIDMarker string
+	if marker != "" {
+		parts := strings.SplitN(marker, "/", 2)
+		expectedKeyMarker = parts[0]
+		if len(parts) == 2 {
+			expectedUploadIDMarker = parts[1]
+		}
+		rq.KeyMarker = aws.String(expectedKeyMarker)
+		rq.UploadIdMarker = aws.String(expectedUploadIDMarker)
+	}
+
+	var expectedPrefix, expectedDelimiter string
+	if prefix != nil {
+		rq.Prefix = aws.String(prefix.Prefix)
+		rq.Delimiter = aws.String(prefix.Delimiter)
+		expectedPrefix, expectedDelimiter = prefix.Prefix, prefix.Delimiter
+	}
+
+	rs, err := svc.ListMultipartUploads(rq)
+	ts.OK(err)
+
+	{ // assert response fields match input
+		var foundPrefix, foundDelimiter, foundKeyMarker, foundUploadIDMarker string
+		if rs.Delimiter != nil {
+			foundDelimiter = *rs.Delimiter
+		}
+		if rs.Prefix != nil {
+			foundPrefix = *rs.Prefix
+		}
+		if rs.KeyMarker != nil {
+			foundKeyMarker = *rs.KeyMarker
+		}
+		if rs.UploadIdMarker != nil {
+			foundUploadIDMarker = *rs.UploadIdMarker
+		}
+		if foundPrefix != expectedPrefix {
+			ts.Fatal("unexpected prefix", foundPrefix, "!=", expectedPrefix)
+		}
+		if foundDelimiter != expectedDelimiter {
+			ts.Fatal("unexpected delimiter", foundDelimiter, "!=", expectedDelimiter)
+		}
+		if foundKeyMarker != expectedKeyMarker {
+			ts.Fatal("unexpected key marker", foundKeyMarker, "!=", expectedKeyMarker)
+		}
+		if foundUploadIDMarker != expectedUploadIDMarker {
+			ts.Fatal("unexpected upload ID marker", foundUploadIDMarker, "!=", expectedUploadIDMarker)
+		}
+		var foundUploads int64
+		if rs.MaxUploads != nil {
+			foundUploads = *rs.MaxUploads
+		}
+		if limit > 0 && foundUploads != limit {
+			ts.Fatal("unexpected max uploads", foundUploads, "!=", limit)
+		}
+	}
+
+	var foundUploads []string
+	for _, up := range rs.Uploads {
+		foundUploads = append(foundUploads, fmt.Sprintf("%s/%s", *up.Key, *up.UploadId))
+	}
+
+	if !reflect.DeepEqual(foundUploads, expectedUploads) {
+		ts.Fatal("upload list mismatch:", foundUploads, "!=", expectedUploads)
+	}
+}
+
 // If meta is nil, the metadata is not checked.
 // If meta is map[string]string{}, it is checked against the empty map.
 //
-// If contents is a string or a []byte, it is compared against the object's contents,
-// otherwise a panic occurs.
+// If contents is a string, a []byte or an io.Reader, it is compared against
+// the object's contents, otherwise a panic occurs.
 func (ts *testServer) assertObject(bucket string, object string, meta map[string]string, contents interface{}) {
 	ts.Helper()
 
@@ -255,7 +390,7 @@ func (ts *testServer) assertObject(bucket string, object string, meta map[string
 	ts.OK(err)
 	defer obj.Contents.Close()
 
-	data, err := ioutil.ReadAll(obj.Contents)
+	data, err := gofakes3.ReadAll(obj.Contents, obj.Size)
 	ts.OK(err)
 
 	if meta != nil {
@@ -264,17 +399,7 @@ func (ts *testServer) assertObject(bucket string, object string, meta map[string
 		}
 	}
 
-	var checkContents []byte
-	switch contents := contents.(type) {
-	case nil:
-	case string:
-		checkContents = []byte(contents)
-	case []byte:
-		checkContents = contents
-	default:
-		panic("unexpected contents")
-	}
-
+	checkContents := readBody(ts.TT, contents)
 	if !bytes.Equal(checkContents, data) {
 		ts.Fatal("data mismatch") // FIXME: more detail
 	}
@@ -288,6 +413,12 @@ func (ts *testServer) Close() {
 	ts.server.Close()
 }
 
+func hashMD5Bytes(body []byte) hashValue {
+	h := md5.New()
+	h.Write(body)
+	return hashValue(h.Sum(nil))
+}
+
 type hashValue []byte
 
 func (h hashValue) Base64() string { return base64.StdEncoding.EncodeToString(h) }
@@ -298,7 +429,7 @@ var (
 	randMu    sync.Mutex
 )
 
-func randomFileBody(size int64) ([]byte, hashValue) {
+func randomFileBody(size int64) []byte {
 	randMu.Lock()
 	defer randMu.Unlock()
 
@@ -320,7 +451,22 @@ func randomFileBody(size int64) ([]byte, hashValue) {
 	}
 
 	b = b[:size]
-	h := md5.New()
-	h.Write(b)
-	return b, hashValue(h.Sum(nil))
+	return b
+}
+
+func readBody(tt gofakes3.TT, body interface{}) []byte {
+	switch body := body.(type) {
+	case nil:
+		return []byte{}
+	case string:
+		return []byte(body)
+	case []byte:
+		return body
+	case io.Reader:
+		out, err := ioutil.ReadAll(body)
+		tt.OK(err)
+		return out
+	default:
+		panic("unexpected contents")
+	}
 }

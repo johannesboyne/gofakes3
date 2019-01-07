@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 
 	"github.com/boltdb/bolt"
@@ -277,8 +276,8 @@ func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, e
 	return t.Object(), nil
 }
 
-func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader) error {
-	bts, err := ioutil.ReadAll(input)
+func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
+	bts, err := gofakes3.ReadAll(input, size)
 	if err != nil {
 		return err
 	}

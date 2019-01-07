@@ -1,6 +1,7 @@
 package gofakes3
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -26,4 +27,38 @@ func TestParseClampedIntValid(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReadAll(t *testing.T) {
+	t.Run("simple-read", func(t *testing.T) {
+		tt := TT{t}
+		b, err := ReadAll(strings.NewReader("test"), 4)
+		tt.OK(err)
+		if string(b) != "test" {
+			t.Fatal(string(b), "!=", "test")
+		}
+	})
+
+	t.Run("empty-input", func(t *testing.T) {
+		tt := TT{t}
+		b, err := ReadAll(strings.NewReader(""), 0)
+		tt.OK(err)
+		if string(b) != "" {
+			t.Fatal(string(b), "!=", "")
+		}
+	})
+
+	t.Run("size-too-large", func(t *testing.T) {
+		_, err := ReadAll(strings.NewReader("test"), 5)
+		if !HasErrorCode(err, ErrIncompleteBody) {
+			t.Fatal("expected ErrIncompleteBody, found", err)
+		}
+	})
+
+	t.Run("size-too-small", func(t *testing.T) {
+		_, err := ReadAll(strings.NewReader("test"), 3)
+		if !HasErrorCode(err, ErrIncompleteBody) {
+			t.Fatal("expected ErrIncompleteBody, found", err)
+		}
+	})
 }

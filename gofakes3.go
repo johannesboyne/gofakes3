@@ -287,7 +287,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 		return ResourceError(ErrKeyTooLong, key)
 	}
 
-	if err := g.storage.PutObject(bucket, key, meta, infile); err != nil {
+	if err := g.storage.PutObject(bucket, key, meta, infile, fileHeader.Size); err != nil {
 		return err
 	}
 
@@ -310,6 +310,11 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
+	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+	if err != nil || size <= 0 {
+		return ErrMissingContentLength
+	}
+
 	if len(object) > KeySizeLimit {
 		return ResourceError(ErrKeyTooLong, object)
 	}
@@ -327,7 +332,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		}
 	}
 
-	if err := g.storage.PutObject(bucket, object, meta, rdr); err != nil {
+	if err := g.storage.PutObject(bucket, object, meta, rdr, size); err != nil {
 		return err
 	}
 
@@ -445,8 +450,8 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrInvalidPart
 	}
 
-	// FIXME: this could be a global check.
-	if r.Header.Get("Content-Length") == "" {
+	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+	if err != nil || size <= 0 {
 		return ErrMissingContentLength
 	}
 
@@ -473,7 +478,7 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 	}
 
-	body, err := ioutil.ReadAll(rdr)
+	body, err := ReadAll(rdr, size)
 	if err != nil {
 		return err
 	}
@@ -521,7 +526,7 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	if err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody)); err != nil {
+	if err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody))); err != nil {
 		return err
 	}
 
@@ -540,6 +545,9 @@ func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r 
 	maxUploads, err := parseClampedInt(query.Get("max-uploads"), DefaultMaxUploads, 0, MaxUploadsLimit)
 	if err != nil {
 		return ErrInvalidURI
+	}
+	if maxUploads == 0 {
+		maxUploads = DefaultMaxUploads
 	}
 
 	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
