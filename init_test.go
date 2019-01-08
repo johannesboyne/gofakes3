@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -294,27 +295,61 @@ func (ts *testServer) createMultipartUpload(bucket, object string, meta map[stri
 	return *mpu.UploadId
 }
 
+func (ts *testServer) assertAbortMultipartUpload(bucket, object string, uploadID gofakes3.UploadID) {
+	svc := ts.s3Client()
+	rs, err := svc.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(object),
+		UploadId: aws.String(string(uploadID)),
+	})
+	ts.OK(err)
+	_ = rs
+
+	{ // FIXME: Currently, the only way to sanity check this using the HTTP API
+		// is to try to list the parts, which should indicate if the upload was
+		// successfully removed. Once the upload API becomes a first class
+		// citizen, we should be able to call it directly.
+		rs, err := svc.ListParts(&s3.ListPartsInput{
+			Bucket:   aws.String(bucket),
+			Key:      aws.String(object),
+			UploadId: aws.String(string(uploadID)),
+		})
+		_ = rs
+		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() == string(gofakes3.ErrNoSuchUpload) {
+			return
+		}
+		ts.Fatal("expected NotFound error, found", err)
+	}
+}
+
+type listUploadsOpts struct {
+	Prefix *gofakes3.Prefix
+	Marker string
+	Limit  int64
+
+	Prefixes []string
+	Uploads  []string
+}
+
 // assertListMultipartUploads
 //
 // If marker is not an empty string, it should be in the format "[<object>][/<uploadID>]".
 // Each item in expectedUploads must be in the format "<object>/<uploadID>".
 func (ts *testServer) assertListMultipartUploads(
 	bucket string,
-	marker string,
-	prefix *gofakes3.Prefix,
-	limit int64,
-	expectedUploads ...string,
+	opts listUploadsOpts,
 ) {
 	ts.Helper()
+
 	svc := ts.s3Client()
 	rq := &s3.ListMultipartUploadsInput{
 		Bucket:     aws.String(bucket),
-		MaxUploads: aws.Int64(limit),
+		MaxUploads: aws.Int64(opts.Limit),
 	}
 
 	var expectedKeyMarker, expectedUploadIDMarker string
-	if marker != "" {
-		parts := strings.SplitN(marker, "/", 2)
+	if opts.Marker != "" {
+		parts := strings.SplitN(opts.Marker, "/", 2)
 		expectedKeyMarker = parts[0]
 		if len(parts) == 2 {
 			expectedUploadIDMarker = parts[1]
@@ -324,10 +359,10 @@ func (ts *testServer) assertListMultipartUploads(
 	}
 
 	var expectedPrefix, expectedDelimiter string
-	if prefix != nil {
-		rq.Prefix = aws.String(prefix.Prefix)
-		rq.Delimiter = aws.String(prefix.Delimiter)
-		expectedPrefix, expectedDelimiter = prefix.Prefix, prefix.Delimiter
+	if opts.Prefix != nil {
+		rq.Prefix = aws.String(opts.Prefix.Prefix)
+		rq.Delimiter = aws.String(opts.Prefix.Delimiter)
+		expectedPrefix, expectedDelimiter = opts.Prefix.Prefix, opts.Prefix.Delimiter
 	}
 
 	rs, err := svc.ListMultipartUploads(rq)
@@ -363,8 +398,8 @@ func (ts *testServer) assertListMultipartUploads(
 		if rs.MaxUploads != nil {
 			foundUploads = *rs.MaxUploads
 		}
-		if limit > 0 && foundUploads != limit {
-			ts.Fatal("unexpected max uploads", foundUploads, "!=", limit)
+		if opts.Limit > 0 && foundUploads != opts.Limit {
+			ts.Fatal("unexpected max uploads", foundUploads, "!=", opts.Limit)
 		}
 	}
 
@@ -373,8 +408,16 @@ func (ts *testServer) assertListMultipartUploads(
 		foundUploads = append(foundUploads, fmt.Sprintf("%s/%s", *up.Key, *up.UploadId))
 	}
 
-	if !reflect.DeepEqual(foundUploads, expectedUploads) {
-		ts.Fatal("upload list mismatch:", foundUploads, "!=", expectedUploads)
+	var foundPrefixes []string
+	for _, cp := range rs.CommonPrefixes {
+		foundPrefixes = append(foundPrefixes, *cp.Prefix)
+	}
+
+	if !reflect.DeepEqual(foundPrefixes, opts.Prefixes) {
+		ts.Fatal("common prefix list mismatch:", foundPrefixes, "!=", opts.Prefixes)
+	}
+	if !reflect.DeepEqual(foundUploads, opts.Uploads) {
+		ts.Fatal("upload list mismatch:", foundUploads, "!=", opts.Uploads)
 	}
 }
 
@@ -469,4 +512,20 @@ func readBody(tt gofakes3.TT, body interface{}) []byte {
 	default:
 		panic("unexpected contents")
 	}
+}
+
+func prefixFile(prefix string) *gofakes3.Prefix {
+	return &gofakes3.Prefix{Delimiter: "/", Prefix: prefix}
+}
+
+func prefix(prefix string) *gofakes3.Prefix {
+	return &gofakes3.Prefix{Prefix: prefix}
+}
+
+func prefixDelim(prefix string, delim string) *gofakes3.Prefix {
+	return &gofakes3.Prefix{Prefix: prefix, Delimiter: delim}
+}
+
+func strs(s ...string) []string {
+	return s
 }

@@ -190,7 +190,7 @@ func (u *uploader) ListParts(bucket, object string, uploadID UploadID, marker in
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	mpu, err := u.Get(bucket, object, uploadID)
+	mpu, err := u.getUnlocked(bucket, object, uploadID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +285,11 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 		uploads := iter.Value().([]*multipartUpload)
 
 	retry:
+		match := prefix.Match(object)
+		if match == nil {
+			continue
+		}
+
 		if !firstFound {
 			for idx, mpu := range uploads {
 				if mpu.ID == marker.UploadID {
@@ -295,11 +300,6 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 			}
 
 		} else {
-			match := prefix.Match(object)
-			if match == nil {
-				continue
-			}
-
 			if match.CommonPrefix {
 				result.CommonPrefixes = append(result.CommonPrefixes, match.AsCommonPrefix())
 			} else {
