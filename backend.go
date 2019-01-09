@@ -31,6 +31,8 @@ type Backend interface {
 	// gofakes3.ErrBucketAlreadyExists MUST be returned.
 	CreateBucket(name string) error
 
+	// BucketExists should return a boolean indicating the bucket existence, or
+	// an error if the backend was unable to determine existence.
 	BucketExists(name string) (exists bool, err error)
 
 	// DeleteBucket deletes a bucket if and only if it is empty.

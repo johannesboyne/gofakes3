@@ -85,13 +85,13 @@ type CommonPrefix struct {
 	Prefix string `xml:"Prefix"`
 }
 
-type CompleteMultipartUploadPart struct {
+type CompletedPart struct {
 	PartNumber int    `xml:"PartNumber"`
 	ETag       string `xml:"ETag"`
 }
 
 type CompleteMultipartUploadRequest struct {
-	Parts []CompleteMultipartUploadPart `xml:"Part"`
+	Parts []CompletedPart `xml:"Part"`
 }
 
 func (c CompleteMultipartUploadRequest) partsAreSorted() bool {
@@ -231,7 +231,7 @@ type ListMultipartUploadPartsResult struct {
 }
 
 type ListMultipartUploadPartItem struct {
-	PartNumber   int         `xml:"PartNumberMarker"`
+	PartNumber   int         `xml:"PartNumber"`
 	LastModified ContentTime `xml:"LastModified,omitempty"`
 	ETag         string      `xml:"ETag,omitempty"`
 	Size         int         `xml:"Size"`

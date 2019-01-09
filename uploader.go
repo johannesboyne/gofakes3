@@ -142,7 +142,8 @@ func (bu *bucketUploads) remove(uploadID UploadID) {
 // data, and if a Backend does not implement it, this limited in-memory
 // behaviour can be the fallback. If that can be made to work, it would provide
 // good convenience for Backend implementers if their use case did not require
-// persistent multipart upload handling.
+// persistent multipart upload handling, or it could be satisfied by this
+// naive implementation.
 //
 type uploader struct {
 	// uploadIDs use a big.Int to allow unbounded IDs (not that you'd be
@@ -249,10 +250,11 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 	// supplied, otherwise assume we can start from the start of the iterator:
 	var firstFound = true
 
-	// the goskiplist iterator is a bit janky; seeking doesn't play nice with the iteration
-	// idiom. If you seek, then iterate using the examples provided in the godoc, your iteration
-	// will always skip the first result. It would be less error prone and astonishing if Seek meant
-	// that the next call to Next() would give you what you expect.
+	// the goskiplist iterator is a bit janky; seeking doesn't play nice with
+	// the iteration idiom. If you seek, then iterate using the examples
+	// provided in the godoc, your iteration will always skip the first result.
+	// It would be less error prone and astonishing if Seek meant that the next
+	// call to Next() would give you what you expect.
 	var seek bool
 
 	var iter = bucketUploads.objectIndex.Iterator()
@@ -273,6 +275,7 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 	var truncated bool
 
 	var cnt int64
+	var seenPrefixes = map[string]bool{}
 
 	for {
 		if seek {
@@ -301,7 +304,11 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 
 		} else {
 			if match.CommonPrefix {
-				result.CommonPrefixes = append(result.CommonPrefixes, match.AsCommonPrefix())
+				if !seenPrefixes[match.MatchedPart] {
+					result.CommonPrefixes = append(result.CommonPrefixes, match.AsCommonPrefix())
+					seenPrefixes[match.MatchedPart] = true
+				}
+
 			} else {
 				for idx, upload := range uploads {
 					result.Uploads = append(result.Uploads, ListMultipartUploadItem{

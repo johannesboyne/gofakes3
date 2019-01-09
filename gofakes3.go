@@ -50,6 +50,10 @@ const (
 	MaxUploadPartNumber = 10000
 )
 
+// GoFakeS3 implements HTTP handlers for processing S3 requests and returning
+// S3 responses.
+//
+// Logic is delegated to other components, like Backend or uploader.
 type GoFakeS3 struct {
 	storage           Backend
 	timeSource        TimeSource
@@ -203,12 +207,8 @@ func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Requ
 	log.Println("HEAD BUCKET", bucket)
 	log.Println("bucketname:", bucket)
 
-	exists, err := g.storage.BucketExists(bucket)
-	if err != nil {
+	if err := g.ensureBucketExists(bucket); err != nil {
 		return err
-	}
-	if !exists {
-		return ResourceError(ErrNoSuchBucket, bucket)
 	}
 
 	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
@@ -429,6 +429,9 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 	if err != nil {
 		return err
 	}
+	if err := g.ensureBucketExists(bucket); err != nil {
+		return err
+	}
 
 	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
 	out := InitiateMultipartUpload{UploadID: upload.ID}
@@ -577,6 +580,17 @@ func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID Uplo
 	}
 
 	return g.xmlEncoder(w).Encode(out)
+}
+
+func (g *GoFakeS3) ensureBucketExists(bucket string) error {
+	exists, err := g.storage.BucketExists(bucket)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ResourceError(ErrNoSuchBucket, bucket)
+	}
+	return nil
 }
 
 func (g *GoFakeS3) xmlEncoder(w io.Writer) *xml.Encoder {
