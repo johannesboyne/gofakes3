@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
@@ -664,5 +665,11 @@ func hasErrorCode(err error, code gofakes3.ErrorCode) bool {
 		return awsErr.Code() == string(code)
 	} else {
 		return gofakes3.HasErrorCode(err, code)
+	}
+}
+
+func httpClient() *http.Client {
+	return &http.Client{
+		Timeout: 2 * time.Second,
 	}
 }

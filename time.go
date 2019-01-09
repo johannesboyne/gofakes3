@@ -49,7 +49,7 @@ func (l *fixedTimeSource) Now() time.Time {
 }
 
 func (l *fixedTimeSource) Since(t time.Time) time.Duration {
-	return t.Sub(l.time)
+	return l.time.Sub(t)
 }
 
 func (l *fixedTimeSource) Advance(by time.Duration) {

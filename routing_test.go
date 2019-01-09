@@ -1,9 +1,7 @@
 package gofakes3_test
 
 import (
-	"net/http"
 	"testing"
-	"time"
 )
 
 func TestRoutingSlashes(t *testing.T) {
@@ -12,9 +10,7 @@ func TestRoutingSlashes(t *testing.T) {
 	ts.createBucket("test")
 	ts.putString("test", "obj", nil, "yep")
 
-	client := &http.Client{
-		Timeout: 1 * time.Second,
-	}
+	client := httpClient()
 
 	assertStatus := func(url string, code int) {
 		t.Helper()

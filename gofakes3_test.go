@@ -2,8 +2,13 @@ package gofakes3_test
 
 import (
 	"bytes"
+	"encoding/xml"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,6 +216,82 @@ func TestDeleteMulti(t *testing.T) {
 		ts.OK(err)
 		assertDeletedKeys(t, rs, "bar", "foo")
 		ts.assertLs(defaultBucket, "", nil, []string{"baz"})
+	})
+}
+
+func TestCreateObjectBrowserUpload(t *testing.T) {
+	addFile := func(tt gofakes3.TT, w *multipart.Writer, object string, b []byte) {
+		tt.Helper()
+		tt.OK(w.WriteField("key", object))
+
+		mw, err := w.CreateFormFile("file", "upload")
+		tt.OK(err)
+		n, err := mw.Write(b)
+		if n != len(b) {
+			tt.Fatal("len mismatch", n, "!=", len(b))
+		}
+		tt.OK(err)
+	}
+
+	upload := func(ts *testServer, bucket string, w *multipart.Writer, body io.Reader) (*http.Response, error) {
+		w.Close()
+		req, err := http.NewRequest("POST", ts.url("/"+bucket), body)
+		ts.OK(err)
+		req.Header.Set("Content-Type", w.FormDataContentType())
+		return httpClient().Do(req)
+	}
+
+	assertUpload := func(ts *testServer, bucket string, w *multipart.Writer, body io.Reader) {
+		res, err := upload(ts, bucket, w, body)
+		ts.OK(err)
+		if res.StatusCode != http.StatusOK {
+			ts.Fatal("bad status", res.StatusCode)
+		}
+	}
+
+	assertUploadFails := func(ts *testServer, bucket string, w *multipart.Writer, body io.Reader, expectedCode gofakes3.ErrorCode) {
+		res, err := upload(ts, bucket, w, body)
+		ts.OK(err)
+		if res.StatusCode != expectedCode.Status() {
+			ts.Fatal("bad status", res.StatusCode, "!=", expectedCode.Status())
+		}
+		defer res.Body.Close()
+		var errResp gofakes3.ErrorResponse
+		dec := xml.NewDecoder(res.Body)
+		ts.OK(dec.Decode(&errResp))
+
+		if errResp.Code != expectedCode {
+			ts.Fatal("bad code", errResp.Code, "!=", expectedCode)
+		}
+	}
+
+	t.Run("single-upload", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+		var b bytes.Buffer
+		w := multipart.NewWriter(&b)
+		addFile(ts.TT, w, "yep", []byte("stuff"))
+		assertUpload(ts, defaultBucket, w, &b)
+		ts.assertObject(defaultBucket, "yep", nil, "stuff")
+	})
+
+	t.Run("multiple-files-fails", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+		var b bytes.Buffer
+		w := multipart.NewWriter(&b)
+		addFile(ts.TT, w, "yep", []byte("stuff"))
+		addFile(ts.TT, w, "nup", []byte("bork"))
+		assertUploadFails(ts, defaultBucket, w, &b, gofakes3.ErrIncorrectNumberOfFilesInPostRequest)
+	})
+
+	t.Run("key-too-large", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+		var b bytes.Buffer
+		w := multipart.NewWriter(&b)
+		addFile(ts.TT, w, strings.Repeat("a", gofakes3.KeySizeLimit+1), []byte("yep"))
+		assertUploadFails(ts, defaultBucket, w, &b, gofakes3.ErrKeyTooLong)
 	})
 }
 

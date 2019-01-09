@@ -5,3 +5,4 @@ logs/
 *.db
 s3f_*
 *.test
+*.out

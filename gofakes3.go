@@ -251,9 +251,9 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 // CreateObject (Browser Upload) creates a new S3 object.
 func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
-	const _24MB = (1 << 20) * 24
+
+	const _24MB = (1 << 20) * 24 // maximum amount of memory before temp files are used
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		// Could also use MaxMessageLengthExceeded:
 		return ErrMalformedPOSTRequest
 	}
 
