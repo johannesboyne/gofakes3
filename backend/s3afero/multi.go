@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -416,6 +417,10 @@ func (db *MultiBucketBackend) DeleteObject(bucketName, objectName string) error 
 		return gofakes3.BucketNotFound(bucketName)
 	}
 
+	return db.deleteObjectLocked(bucketName, objectName)
+}
+
+func (db *MultiBucketBackend) deleteObjectLocked(bucketName, objectName string) error {
 	fullPath := path.Join(bucketName, objectName)
 
 	// S3 does not report an error when attemping to delete a key that does not exist, so
@@ -429,4 +434,34 @@ func (db *MultiBucketBackend) DeleteObject(bucketName, objectName string) error 
 	}
 
 	return nil
+}
+
+func (db *MultiBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, rerr error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// Another slighly racy check:
+	exists, err := afero.Exists(db.bucketFs, bucketName)
+	if err != nil {
+		return result, err
+	} else if !exists {
+		return result, gofakes3.BucketNotFound(bucketName)
+	}
+
+	for _, object := range objects {
+		if err := db.deleteObjectLocked(bucketName, object); err != nil {
+			log.Println("delete object failed:", err)
+			result.Error = append(result.Error, gofakes3.ErrorResult{
+				Code:    gofakes3.ErrInternal,
+				Message: gofakes3.ErrInternal.Message(),
+				Key:     object,
+			})
+		} else {
+			result.Deleted = append(result.Deleted, gofakes3.ObjectID{
+				Key: object,
+			})
+		}
+	}
+
+	return result, nil
 }

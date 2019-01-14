@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -318,6 +319,32 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 	return nil
 }
 
+func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, rerr error) {
+	if bucketName != db.name {
+		return result, gofakes3.BucketNotFound(bucketName)
+	}
+
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	for _, object := range objects {
+		if err := db.deleteObjectLocked(bucketName, object); err != nil {
+			log.Println("delete object failed:", err)
+			result.Error = append(result.Error, gofakes3.ErrorResult{
+				Code:    gofakes3.ErrInternal,
+				Message: gofakes3.ErrInternal.Message(),
+				Key:     object,
+			})
+		} else {
+			result.Deleted = append(result.Deleted, gofakes3.ObjectID{
+				Key: object,
+			})
+		}
+	}
+
+	return result, nil
+}
+
 func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) error {
 	if bucketName != db.name {
 		return gofakes3.BucketNotFound(bucketName)
@@ -326,6 +353,10 @@ func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) error
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	return db.deleteObjectLocked(bucketName, objectName)
+}
+
+func (db *SingleBucketBackend) deleteObjectLocked(bucketName, objectName string) error {
 	// S3 does not report an error when attemping to delete a key that does not exist, so
 	// we need to skip IsNotExist errors.
 	if err := db.fs.Remove(filepath.FromSlash(objectName)); err != nil && !os.IsNotExist(err) {
