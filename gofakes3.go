@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -60,6 +61,7 @@ type GoFakeS3 struct {
 	metadataSizeLimit int
 	integrityCheck    bool
 	uploader          *uploader
+	requestID         uint64
 	log               Logger
 }
 
@@ -73,6 +75,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
 		uploader:          newUploader(),
+		requestID:         0,
 	}
 	for _, opt := range options {
 		opt(s3)
@@ -85,6 +88,10 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 	}
 
 	return s3
+}
+
+func (g *GoFakeS3) nextRequestID() uint64 {
+	return atomic.AddUint64(&g.requestID, 1)
 }
 
 // Create the AWS S3 API
@@ -214,9 +221,6 @@ func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
-	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
-	w.Header().Set("Server", "AmazonS3")
 	w.Write([]byte{})
 	return nil
 }
@@ -242,15 +246,12 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 
 	obj.Range.writeHeader(obj.Size, w) // Writes Content-Length, and Content-Range if applicable.
 
-	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
-	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 	for mk, mv := range obj.Metadata {
 		w.Header().Set(mk, mv)
 	}
 	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
-	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
-	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err
@@ -303,10 +304,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 	}
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
-	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 	w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
-	w.Header().Set("Server", "AmazonS3")
 	w.Write([]byte{})
 
 	return nil
@@ -348,10 +346,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	}
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
-	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 	w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
-	w.Header().Set("Server", "AmazonS3")
 	w.Write([]byte{})
 
 	return nil
@@ -418,16 +413,12 @@ func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *h
 	}
 	defer obj.Contents.Close()
 
-	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
-	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
 	for mk, mv := range obj.Metadata {
 		w.Header().Set(mk, mv)
 	}
 	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
-	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
-	w.Header().Set("Server", "AmazonS3")
+	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
-	w.Header().Set("Connection", "close")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Write([]byte{})
 

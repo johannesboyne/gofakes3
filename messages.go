@@ -118,7 +118,7 @@ type Content struct {
 	Key          string      `xml:"Key"`
 	LastModified ContentTime `xml:"LastModified"`
 	ETag         string      `xml:"ETag"`
-	Size         int         `xml:"Size"`
+	Size         int64       `xml:"Size"`
 	StorageClass string      `xml:"StorageClass"`
 }
 

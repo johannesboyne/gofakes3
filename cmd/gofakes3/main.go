@@ -6,12 +6,18 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3afero"
 	"github.com/johannesboyne/gofakes3/backend/s3bolt"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/spf13/afero"
 )
+
+const usage = `
+`
 
 func main() {
 	if err := run(); err != nil {
@@ -19,44 +25,74 @@ func main() {
 	}
 }
 
-func run() error {
-	var (
-		db           string
-		host         string
-		backendKind  string
-		bucket       string
-		fixedTimeStr string
-		noIntegrity  bool
-	)
+type fakeS3Flags struct {
+	host          string
+	backendKind   string
+	initialBucket string
+	fixedTimeStr  string
+	noIntegrity   bool
 
-	flag.StringVar(&db, "db", "locals3.db", "Database path / name when using bolt backend")
-	flag.StringVar(&host, "host", ":9000", "Host to run the service")
-	flag.StringVar(&backendKind, "backend", "", "Backend to use to store data (memory, bolt)")
-	flag.StringVar(&bucket, "bucket", "fakes3", "Bucket to create by default (required)")
-	flag.StringVar(&fixedTimeStr, "time", "", "RFC3339 format. If passed, the server's clock will always see this time; does not affect existing stored dates.")
-	flag.BoolVar(&noIntegrity, "no-integrity", false, "Pass this flag to disable Content-MD5 validation when uploading.")
-	flag.Parse()
+	boltDb         string
+	directFsPath   string
+	directFsMeta   string
+	directFsBucket string
+	fsPath         string
+	fsMeta         string
+}
 
-	if bucket == "" {
-		bucket = "fakes3"
-	}
+func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
+	flagSet.StringVar(&f.host, "host", ":9000", "Host to run the service")
+	flagSet.StringVar(&f.fixedTimeStr, "time", "", "RFC3339 format. If passed, the server's clock will always see this time; does not affect existing stored dates.")
+	flagSet.StringVar(&f.initialBucket, "initialbucket", "", "If passed, this bucket will be created on startup if it does not already exist.")
+	flagSet.BoolVar(&f.noIntegrity, "no-integrity", false, "Pass this flag to disable Content-MD5 validation when uploading.")
 
-	var (
-		backend       gofakes3.Backend
-		timeSource    gofakes3.TimeSource
-		timeSkewLimit = gofakes3.DefaultSkewLimit
-	)
+	// Backend specific:
+	flagSet.StringVar(&f.backendKind, "backend", "", "Backend to use to store data (memory, bolt, directfs, fs)")
+	flagSet.StringVar(&f.boltDb, "bolt.db", "locals3.db", "Database path / name when using bolt backend")
+	flagSet.StringVar(&f.directFsPath, "directfs.path", "", "File path to serve using S3. You should not modify the contents of this path outside gofakes3 while it is running as it can cause inconsistencies.")
+	flagSet.StringVar(&f.directFsMeta, "directfs.meta", "", "Optional path for storing S3 metadata for your bucket. If not passed, metadata will not persist between restarts of gofakes3.")
+	flagSet.StringVar(&f.directFsBucket, "directfs.bucket", "mybucket", "Name of the bucket for your file path; this will be the only supported bucket by the 'directfs' backend for the duration of your run.")
+	flagSet.StringVar(&f.fsPath, "fs.path", "", "Path to your S3 buckets. Buckets are stored under the '/buckets' subpath.")
+	flagSet.StringVar(&f.fsMeta, "fs.meta", "", "Optional path for storing S3 metadata for your buckets. Defaults to the '/metadata' subfolder of -fs.path if not passed.")
 
-	if fixedTimeStr != "" {
-		fixedTime, err := time.Parse(time.RFC3339Nano, fixedTimeStr)
+	// Deprecated:
+	flagSet.StringVar(&f.boltDb, "db", "locals3.db", "Deprecated; use -bolt.db")
+	flagSet.StringVar(&f.initialBucket, "bucket", "", `Deprecated; use -initialbucket`)
+}
+
+func (f *fakeS3Flags) timeOptions() (source gofakes3.TimeSource, skewLimit time.Duration, err error) {
+	skewLimit = gofakes3.DefaultSkewLimit
+
+	if f.fixedTimeStr != "" {
+		fixedTime, err := time.Parse(time.RFC3339Nano, f.fixedTimeStr)
 		if err != nil {
-			return err
+			return nil, 0, err
 		}
-		timeSource = gofakes3.FixedTimeSource(fixedTime)
-		timeSkewLimit = 0
+		source = gofakes3.FixedTimeSource(fixedTime)
+		skewLimit = 0
 	}
 
-	switch backendKind {
+	return source, skewLimit, nil
+}
+
+func run() error {
+	var values fakeS3Flags
+
+	flagSet := flag.NewFlagSet("", 0)
+	values.attach(flagSet)
+
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
+		return err
+	}
+
+	var backend gofakes3.Backend
+
+	timeSource, timeSkewLimit, err := values.timeOptions()
+	if err != nil {
+		return err
+	}
+
+	switch values.backendKind {
 	case "":
 		flag.PrintDefaults()
 		fmt.Println()
@@ -64,33 +100,88 @@ func run() error {
 
 	case "bolt":
 		var err error
-		backend, err = s3bolt.NewFile(db, s3bolt.WithTimeSource(timeSource))
+		backend, err = s3bolt.NewFile(values.boltDb, s3bolt.WithTimeSource(timeSource))
 		if err != nil {
 			return err
 		}
-		log.Println("using bolt backend with file", db)
+		log.Println("using bolt backend with file", values.boltDb)
 
 	case "mem", "memory":
+		if values.initialBucket == "" {
+			log.Println("no buckets available; consider passing -initialbucket")
+		}
 		backend = s3mem.New(s3mem.WithTimeSource(timeSource))
 		log.Println("using memory backend")
 
+	case "fs":
+		if timeSource != nil {
+			log.Println("warning: time source not supported by this backend")
+		}
+
+		baseFs, err := s3afero.FsPath(values.fsPath)
+		if err != nil {
+			return fmt.Errorf("gofakes3: could not create -fs.path: %v", err)
+		}
+
+		var options []s3afero.MultiOption
+		if values.fsMeta != "" {
+			metaFs, err := s3afero.FsPath(values.fsMeta)
+			if err != nil {
+				return fmt.Errorf("gofakes3: could not create -fs.meta: %v", err)
+			}
+			options = append(options, s3afero.MultiWithMetaFs(metaFs))
+		}
+
+		backend, err = s3afero.MultiBucket(baseFs, options...)
+		if err != nil {
+			return err
+		}
+
+	case "directfs":
+		if timeSource != nil {
+			log.Println("warning: time source not supported by this backend")
+		}
+
+		baseFs, err := s3afero.FsPath(values.directFsPath)
+		if err != nil {
+			return fmt.Errorf("gofakes3: could not create -directfs.path: %v", err)
+		}
+
+		var metaFs afero.Fs
+		if values.directFsMeta == "" {
+			log.Println("using ephemeral memory backend for metadata; this will not persist. See -directfs.metapath flag if you need persistence.")
+			metaFs = afero.NewMemMapFs()
+		} else {
+			metaFs, err = s3afero.FsPath(values.directFsMeta)
+			if err != nil {
+				return fmt.Errorf("gofakes3: could not create -directfs.meta: %v", err)
+			}
+		}
+
+		backend, err = s3afero.SingleBucket(values.directFsBucket, baseFs, metaFs)
+		if err != nil {
+			return err
+		}
+
 	default:
-		return fmt.Errorf("unknown backend %q", backendKind)
+		return fmt.Errorf("unknown backend %q", values.backendKind)
 	}
 
-	if err := backend.CreateBucket(bucket); err != nil && !gofakes3.IsAlreadyExists(err) {
-		return fmt.Errorf("gofakes3: could not create initial bucket %q: %v", bucket, err)
+	if values.initialBucket != "" {
+		if err := backend.CreateBucket(values.initialBucket); err != nil && !gofakes3.IsAlreadyExists(err) {
+			return fmt.Errorf("gofakes3: could not create initial bucket %q: %v", values.initialBucket, err)
+		}
+		log.Println("created -initialbucket", values.initialBucket)
 	}
-
-	log.Println("created bucket", bucket)
 
 	faker := gofakes3.New(backend,
-		gofakes3.WithTimeSource(timeSource),
+		gofakes3.WithIntegrityCheck(!values.noIntegrity),
 		gofakes3.WithTimeSkewLimit(timeSkewLimit),
-		gofakes3.WithIntegrityCheck(!noIntegrity),
+		gofakes3.WithTimeSource(timeSource),
 		gofakes3.WithLogger(gofakes3.GlobalLog()),
 	)
-	return listenAndServe(host, faker.Server())
+
+	return listenAndServe(values.host, faker.Server())
 }
 
 func listenAndServe(addr string, handler http.Handler) error {

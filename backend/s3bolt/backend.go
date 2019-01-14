@@ -154,7 +154,7 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 					Key:          string(k),
 					LastModified: mod,
 					ETag:         `"` + hex.EncodeToString(hash[:]) + `"`,
-					Size:         len(v),
+					Size:         int64(len(v)),
 				}
 				bucket.Add(item)
 			}

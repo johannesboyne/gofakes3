@@ -75,7 +75,7 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 				Key:          item.key,
 				LastModified: gofakes3.NewContentTime(item.lastModified),
 				ETag:         `"` + hex.EncodeToString(item.hash) + `"`,
-				Size:         len(item.data),
+				Size:         int64(len(item.data)),
 			})
 		}
 	}

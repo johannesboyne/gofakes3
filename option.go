@@ -49,3 +49,9 @@ func WithLogger(logger Logger) Option {
 func WithGlobalLog() Option {
 	return WithLogger(GlobalLog())
 }
+
+// WithRequestID sets the starting ID used to generate the "x-amz-request-id"
+// header.
+func WithRequestID(id uint64) Option {
+	return func(g *GoFakeS3) { g.requestID = id }
+}

@@ -1,6 +1,8 @@
 package gofakes3
 
 import (
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -25,6 +27,13 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 		object = ""
 		err    error
 	)
+
+	hdr := w.Header()
+
+	id := fmt.Sprintf("%016X", g.nextRequestID())
+	hdr.Set("x-amz-id-2", base64.StdEncoding.EncodeToString([]byte(id+id+id+id))) // x-amz-id-2 is 48 bytes of random stuff
+	hdr.Set("x-amz-request-id", id)
+	hdr.Set("Server", "AmazonS3")
 
 	if len(parts) == 2 {
 		object = parts[1]
