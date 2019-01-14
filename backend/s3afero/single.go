@@ -56,7 +56,7 @@ func SingleBucket(name string, fs afero.Fs, metaFs afero.Fs, opts ...SingleOptio
 	b := &SingleBucketBackend{
 		name:      name,
 		fs:        fs,
-		metaStore: newMetaStore(metaFs),
+		metaStore: newMetaStore(metaFs, modTimeFsCalc(fs)),
 	}
 	for _, opt := range opts {
 		if err := opt(b); err != nil {

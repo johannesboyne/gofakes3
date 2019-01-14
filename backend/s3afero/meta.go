@@ -30,14 +30,28 @@ func (mp metaPath) FilePath() string {
 }
 
 type metaStore struct {
-	fs afero.Fs
+	fs          afero.Fs
+	modTimeCalc modTimeCalc
+	modTimeRes  time.Duration
 }
 
-func newMetaStore(fs afero.Fs) *metaStore {
+func newMetaStore(fs afero.Fs, modTimeCalc modTimeCalc) *metaStore {
 	b := &metaStore{
-		fs: fs,
+		fs:          fs,
+		modTimeCalc: modTimeCalc,
+		modTimeRes:  -1,
 	}
 	return b
+}
+
+func (ms *metaStore) getModTimeRes() (dur time.Duration, err error) {
+	if ms.modTimeRes < 0 {
+		ms.modTimeRes, err = ms.modTimeCalc()
+		if err != nil {
+			return -1, err
+		}
+	}
+	return ms.modTimeRes, nil
 }
 
 func (ms *metaStore) metaPath(bucket string, object string) metaPath {
@@ -67,8 +81,13 @@ func (ms *metaStore) loadMeta(bucket string, object string, size int64, mtime ti
 		}
 	}
 
-	// FIXME: modification time resolution
-	if len(meta.Hash) == 0 || meta.Size != size || !mtime.Equal(meta.ModTime) {
+	modRes, err := ms.getModTimeRes()
+	if err != nil {
+		return nil, err
+	}
+
+	modDiff := mtime.Sub(meta.ModTime)
+	if len(meta.Hash) == 0 || meta.Size != size || modDiff < -modRes || modDiff > modRes {
 		meta.Size = size
 		meta.ModTime = mtime
 		meta.Hash, err = hashFile(ms.fs, fullPath)

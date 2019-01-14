@@ -58,7 +58,7 @@ func MultiBucket(fs afero.Fs, opts ...MultiOption) (*MultiBucketBackend, error) 
 	if b.configOnly.metaFs == nil {
 		b.configOnly.metaFs = afero.NewBasePathFs(fs, "metadata")
 	}
-	b.metaStore = newMetaStore(b.configOnly.metaFs)
+	b.metaStore = newMetaStore(b.configOnly.metaFs, modTimeFsCalc(fs))
 
 	return b, nil
 }
