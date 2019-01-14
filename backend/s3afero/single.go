@@ -14,6 +14,17 @@ import (
 	"github.com/spf13/afero"
 )
 
+// SingleBucketBackend is a gofakes3.Backend that allows you to treat an existing
+// filesystem as an S3 bucket directly. It does not support multiple buckets.
+//
+// A second afero.Fs, metaFs, may be passed; if this is nil,
+// afero.NewMemMapFs() is used and the metadata will not persist between
+// restarts of gofakes3.
+//
+// It is STRONGLY recommended that the metadata Fs is not contained within the
+// `/buckets` subdirectory as that could make a significant mess, but this is
+// infeasible to validate, so you're encouraged to be extremely careful!
+//
 type SingleBucketBackend struct {
 	lock      sync.Mutex
 	fs        afero.Fs
@@ -27,8 +38,13 @@ func SingleBucket(name string, fs afero.Fs, metaFs afero.Fs, opts ...SingleOptio
 	if err := ensureNoOsFs("fs", fs); err != nil {
 		return nil, err
 	}
-	if err := ensureNoOsFs("metaFs", metaFs); err != nil {
-		return nil, err
+
+	if metaFs == nil {
+		metaFs = afero.NewMemMapFs()
+	} else {
+		if err := ensureNoOsFs("metaFs", metaFs); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := gofakes3.ValidateBucketName(name); err != nil {

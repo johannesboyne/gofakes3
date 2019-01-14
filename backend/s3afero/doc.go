@@ -14,5 +14,5 @@ This means that there are a lot of mixed-up calls to the 'filepath' package, whi
 uses the Os separator, and the 'path' package, which uses only the '/' characters
 S3 expects when simulating filesystems.
 
-This will be updated with better details as more concrete patterns emerge.
+Essentially, everything is '/' delimited until the afero boundary.
 */

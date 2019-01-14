@@ -138,6 +138,9 @@ func run() error {
 		}
 
 	case "directfs":
+		if values.initialBucket != "" {
+			return fmt.Errorf("gofakes3: -initialbucket not supported by directfs")
+		}
 		if timeSource != nil {
 			log.Println("warning: time source not supported by this backend")
 		}
@@ -148,14 +151,13 @@ func run() error {
 		}
 
 		var metaFs afero.Fs
-		if values.directFsMeta == "" {
-			log.Println("using ephemeral memory backend for metadata; this will not persist. See -directfs.metapath flag if you need persistence.")
-			metaFs = afero.NewMemMapFs()
-		} else {
+		if values.directFsMeta != "" {
 			metaFs, err = s3afero.FsPath(values.directFsMeta)
 			if err != nil {
 				return fmt.Errorf("gofakes3: could not create -directfs.meta: %v", err)
 			}
+		} else {
+			log.Println("using ephemeral memory backend for metadata; this will not persist. See -directfs.metapath flag if you need persistence.")
 		}
 
 		backend, err = s3afero.SingleBucket(values.directFsBucket, baseFs, metaFs)

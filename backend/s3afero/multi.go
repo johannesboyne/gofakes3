@@ -13,6 +13,15 @@ import (
 	"github.com/spf13/afero"
 )
 
+// MultiBucketBackend is a gofakes3.Backend that allows you to create multiple
+// buckets within the same afero.Fs. Buckets are stored under the `/buckets`
+// subdirectory. Metadata is stored in the `/metadata` subdirectory by default,
+// but any afero.Fs can be used.
+//
+// It is STRONGLY recommended that the metadata Fs is not contained within the
+// `/buckets` subdirectory as that could make a significant mess, but this is
+// infeasible to validate, so you're encouraged to be extremely careful!
+//
 type MultiBucketBackend struct {
 	lock      sync.Mutex
 	baseFs    afero.Fs
