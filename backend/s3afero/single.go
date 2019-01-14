@@ -2,6 +2,7 @@ package s3afero
 
 import (
 	"crypto/md5"
+	"encoding/hex"
 	"io"
 	"os"
 	"path"
@@ -135,7 +136,7 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 			response.Add(&gofakes3.Content{
 				Key:          objectPath,
 				LastModified: gofakes3.NewContentTime(mtime),
-				ETag:         `"` + string(meta.Hash) + `"`,
+				ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
 				Size:         size,
 			})
 		}
@@ -235,16 +236,29 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+
+	var closed bool
+	defer func() {
+		// Unfortunately, afero's MemMapFs updates the mtime if you double-close, which
+		// highlights that other afero.Fs implementations may have side effects here::
+		if !closed {
+			f.Close()
+		}
+	}()
 
 	hasher := md5.New()
 	w := io.MultiWriter(f, hasher)
 	if _, err := io.Copy(w, input); err != nil {
 		return err
 	}
+
+	// We have to close here before we stat the file as some filesystems don't update the
+	// mtime until after close:
 	if err := f.Close(); err != nil {
 		return err
 	}
+
+	closed = true
 
 	stat, err := db.fs.Stat(objectFilePath)
 	if err != nil {

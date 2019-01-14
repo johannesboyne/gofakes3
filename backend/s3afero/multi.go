@@ -2,6 +2,7 @@ package s3afero
 
 import (
 	"crypto/md5"
+	"encoding/hex"
 	"io"
 	"os"
 	"path"
@@ -108,7 +109,9 @@ func (db *MultiBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) (
 }
 
 func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.Bucket, error) {
-	dirEntries, err := afero.ReadDir(db.bucketFs, filepath.FromSlash(prefixPath))
+	bucketPath := path.Join(bucket, prefixPath)
+
+	dirEntries, err := afero.ReadDir(db.bucketFs, filepath.FromSlash(bucketPath))
 	if os.IsNotExist(err) {
 		return nil, gofakes3.BucketNotFound(bucket)
 	} else if err != nil {
@@ -141,7 +144,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 			response.Add(&gofakes3.Content{
 				Key:          objectPath,
 				LastModified: gofakes3.NewContentTime(mtime),
-				ETag:         `"` + string(meta.Hash) + `"`,
+				ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
 				Size:         size,
 			})
 		}
@@ -231,7 +234,7 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 
 	size, mtime := stat.Size(), stat.ModTime()
 
-	meta, err := db.metaStore.loadMeta(bucketName, fullPath, size, mtime)
+	meta, err := db.metaStore.loadMeta(bucketName, objectName, size, mtime)
 	if err != nil {
 		return nil, err
 	}
@@ -311,16 +314,28 @@ func (db *MultiBucketBackend) PutObject(bucketName, objectName string, meta map[
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+
+	var closed bool
+	defer func() {
+		// Unfortunately, afero's MemMapFs updates the mtime if you double-close, which
+		// highlights that other afero.Fs implementations may have side effects here::
+		if !closed {
+			f.Close()
+		}
+	}()
 
 	hasher := md5.New()
 	w := io.MultiWriter(f, hasher)
 	if _, err := io.Copy(w, input); err != nil {
 		return err
 	}
+
+	// We have to close here before we stat the file as some filesystems don't update the
+	// mtime until after close:
 	if err := f.Close(); err != nil {
 		return err
 	}
+	closed = true
 
 	stat, err := db.bucketFs.Stat(objectFilePath)
 	if err != nil {
