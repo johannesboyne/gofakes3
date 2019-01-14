@@ -3,6 +3,7 @@ package s3afero
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -153,9 +154,56 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 	return response, nil
 }
 
-func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
-	// FIXME: implement
-	return nil, gofakes3.ErrNotImplemented
+func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
+	stat, err := db.bucketFs.Stat(filepath.FromSlash(bucket))
+	if os.IsNotExist(err) {
+		return nil, gofakes3.BucketNotFound(bucket)
+	} else if err != nil {
+		return nil, err
+	} else if !stat.IsDir() {
+		return nil, fmt.Errorf("gofakes3: expected %q to be a bucket path", bucket)
+	}
+
+	response := gofakes3.NewBucket(bucket)
+
+	if err := afero.Walk(db.bucketFs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+
+		objectPath := filepath.ToSlash(path)
+		parts := strings.SplitN(objectPath, "/", 2)
+		if len(parts) != 2 {
+			panic(fmt.Errorf("unexpected path %q", path)) // should never happen
+		}
+		objectName := parts[1]
+
+		match := prefix.Match(objectName)
+		if match == nil {
+			return nil
+		}
+
+		size := info.Size()
+		mtime := info.ModTime()
+		meta, err := db.metaStore.loadMeta(bucket, objectName, size, mtime)
+		if err != nil {
+			return err
+		}
+
+		response.Add(&gofakes3.Content{
+			Key:          objectName,
+			LastModified: gofakes3.NewContentTime(mtime),
+			ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
+			Size:         size,
+		})
+
+		return nil
+
+	}); err != nil {
+		return nil, err
+	}
+
+	return response, nil
 }
 
 func (db *MultiBucketBackend) CreateBucket(name string) error {
