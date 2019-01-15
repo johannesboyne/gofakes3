@@ -24,6 +24,16 @@ func prefixFromQuery(query url.Values) Prefix {
 	return prefix
 }
 
+func NewPrefix(prefix, delim *string) (p Prefix) {
+	if prefix != nil {
+		p.HasPrefix, p.Prefix = true, *prefix
+	}
+	if delim != nil {
+		p.HasDelimiter, p.Delimiter = true, *delim
+	}
+	return p
+}
+
 // PrefixMatch checks whether key starts with prefix. If the prefix does not
 // match, nil is returned.
 //
@@ -120,4 +130,8 @@ type PrefixMatch struct {
 
 	// The longest matched part of the key.
 	MatchedPart string
+}
+
+func (match *PrefixMatch) AsCommonPrefix() CommonPrefix {
+	return CommonPrefix{Prefix: match.MatchedPart}
 }

@@ -1,12 +1,16 @@
 package gofakes3
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,20 +26,41 @@ const (
 	// 	KB in size. The size of user-defined metadata is measured by taking the
 	// 	sum of the number of bytes in the UTF-8 encoding of each key and value.
 	//
-	// As this does not specify KB or KiB, KB is used; if gofakes3 is used for
-	// testing, and your tests show that 2KiB works, but Amazon uses 2KB...
-	// that's a much worse time to discover the disparity!
+	// As this does not specify KB or KiB, KB is used in gofakes3. The reason
+	// for this is if gofakes3 is used for testing, and your tests show that
+	// 2KiB works, but Amazon uses 2KB...  that's a much worse time to discover
+	// the disparity!
 	DefaultMetadataSizeLimit = 2000
 
+	// Like DefaultMetadataSizeLimit, the docs don't specify MB or MiB, so we
+	// will accept 5MB for now. The Go client SDK rejects 5MB with the error
+	// "part size must be at least 5242880 bytes", which is a hint that it
+	// has been interpreted as MiB at least _somewhere_, but we should remain
+	// liberal in what we accept in the face of ambiguity.
+	DefaultUploadPartSize = 5 * 1000 * 1000
+
 	DefaultSkewLimit = 15 * time.Minute
+
+	MaxUploadsLimit       = 1000
+	DefaultMaxUploads     = 1000
+	MaxUploadPartsLimit   = 1000
+	DefaultMaxUploadParts = 1000
+
+	// From the docs: "Part numbers can be any number from 1 to 10,000, inclusive."
+	MaxUploadPartNumber = 10000
 )
 
+// GoFakeS3 implements HTTP handlers for processing S3 requests and returning
+// S3 responses.
+//
+// Logic is delegated to other components, like Backend or uploader.
 type GoFakeS3 struct {
 	storage           Backend
 	timeSource        TimeSource
 	timeSkew          time.Duration
 	metadataSizeLimit int
 	integrityCheck    bool
+	uploader          *uploader
 }
 
 // Setup a new fake object storage
@@ -47,6 +72,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
+		uploader:          newUploader(),
 	}
 	for _, opt := range options {
 		opt(s3)
@@ -93,15 +119,12 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 	if r.Method != http.MethodHead {
 		w.Header().Set("Content-Type", "application/xml")
 
-		x, err := xml.MarshalIndent(resp, "", "  ")
-		if err != nil {
+		w.Write([]byte(xml.Header))
+		if err := g.xmlEncoder(w).Encode(resp); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			log.Println(err)
 			return
 		}
-
-		w.Write([]byte(xml.Header))
-		w.Write(x)
 	}
 }
 
@@ -113,10 +136,12 @@ func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	s := &Storage{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Id:          "fe7272ea58be830e56fe1663b10fafef",
-		DisplayName: "GoFakeS3",
-		Buckets:     buckets,
+		Xmlns:   "http://s3.amazonaws.com/doc/2006-03-01/",
+		Buckets: buckets,
+		Owner: &UserInfo{
+			ID:          "fe7272ea58be830e56fe1663b10fafef",
+			DisplayName: "GoFakeS3",
+		},
 	}
 	x, err := xml.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -182,12 +207,8 @@ func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Requ
 	log.Println("HEAD BUCKET", bucket)
 	log.Println("bucketname:", bucket)
 
-	exists, err := g.storage.BucketExists(bucket)
-	if err != nil {
+	if err := g.ensureBucketExists(bucket); err != nil {
 		return err
-	}
-	if !exists {
-		return ResourceError(ErrNoSuchBucket, bucket)
 	}
 
 	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
@@ -230,9 +251,9 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 // CreateObject (Browser Upload) creates a new S3 object.
 func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("CREATE OBJECT THROUGH BROWSER UPLOAD")
-	const _24MB = (1 << 20) * 24
+
+	const _24MB = (1 << 20) * 24 // maximum amount of memory before temp files are used
 	if err := r.ParseMultipartForm(_24MB); nil != err {
-		// Could also use MaxMessageLengthExceeded:
 		return ErrMalformedPOSTRequest
 	}
 
@@ -257,23 +278,16 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 	}
 	defer infile.Close()
 
-	meta := make(map[string]string)
-	for hk, hv := range r.MultipartForm.Value {
-		if strings.HasPrefix(hk, "X-Amz-") {
-			meta[hk] = hv[0]
-		}
-	}
-	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
-
-	if g.metadataSizeLimit > 0 && metadataSize(meta) > g.metadataSizeLimit {
-		return ErrMetadataTooLarge
+	meta, err := metadataHeaders(r.MultipartForm.Value, g.timeSource.Now(), g.metadataSizeLimit)
+	if err != nil {
+		return err
 	}
 
 	if len(key) > KeySizeLimit {
 		return ResourceError(ErrKeyTooLong, key)
 	}
 
-	if err := g.storage.PutObject(bucket, key, meta, infile); err != nil {
+	if err := g.storage.PutObject(bucket, key, meta, infile, fileHeader.Size); err != nil {
 		return err
 	}
 
@@ -291,13 +305,15 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r *http.Request) (err error) {
 	log.Println("CREATE OBJECT:", bucket, object)
 
-	meta := make(map[string]string)
-	for hk, hv := range r.Header {
-		if strings.HasPrefix(hk, "X-Amz-") {
-			meta[hk] = hv[0]
-		}
+	meta, err := metadataHeaders(r.Header, g.timeSource.Now(), g.metadataSizeLimit)
+	if err != nil {
+		return err
 	}
-	meta["Last-Modified"] = formatHeaderTime(g.timeSource.Now())
+
+	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+	if err != nil || size <= 0 {
+		return ErrMissingContentLength
+	}
 
 	if len(object) > KeySizeLimit {
 		return ResourceError(ErrKeyTooLong, object)
@@ -316,7 +332,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		}
 	}
 
-	if err := g.storage.PutObject(bucket, object, meta, rdr); err != nil {
+	if err := g.storage.PutObject(bucket, object, meta, rdr, size); err != nil {
 		return err
 	}
 
@@ -406,6 +422,183 @@ func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *h
 	return nil
 }
 
+func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+	log.Println("initiate multipart upload", bucket, object)
+
+	meta, err := metadataHeaders(r.Header, g.timeSource.Now(), g.metadataSizeLimit)
+	if err != nil {
+		return err
+	}
+	if err := g.ensureBucketExists(bucket); err != nil {
+		return err
+	}
+
+	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
+	out := InitiateMultipartUpload{UploadID: upload.ID}
+	return g.xmlEncoder(w).Encode(out)
+}
+
+// From the docs:
+//	A part number uniquely identifies a part and also defines its position
+// 	within the object being created. If you upload a new part using the same
+// 	part number that was used with a previous part, the previously uploaded part
+// 	is overwritten. Each part must be at least 5 MB in size, except the last
+// 	part. There is no size limit on the last part of your multipart upload.
+//
+func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
+	log.Println("put multipart upload", bucket, object, uploadID)
+
+	partNumber, err := strconv.ParseInt(r.URL.Query().Get("partNumber"), 10, 0)
+	if err != nil || partNumber <= 0 || partNumber > MaxUploadPartNumber {
+		return ErrInvalidPart
+	}
+
+	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+	if err != nil || size <= 0 {
+		return ErrMissingContentLength
+	}
+
+	upload, err := g.uploader.Get(bucket, object, uploadID)
+	if err != nil {
+		// FIXME: What happens with S3 when you abort a multipart upload while
+		// part uploads are still in progress? In this case, we will retain the
+		// reference to the part even though another request goroutine may
+		// delete it; it will be available for GC when this function finishes.
+		return err
+	}
+
+	defer r.Body.Close()
+	var rdr io.Reader = r.Body
+
+	if g.integrityCheck {
+		md5Base64 := r.Header.Get("Content-MD5")
+		if md5Base64 != "" {
+			var err error
+			rdr, err = newHashingReader(rdr, md5Base64)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	body, err := ReadAll(rdr, size)
+	if err != nil {
+		return err
+	}
+
+	if int64(len(body)) != r.ContentLength {
+		return ErrIncompleteBody
+	}
+
+	etag, err := upload.AddPart(int(partNumber), g.timeSource.Now(), body)
+	if err != nil {
+		return err
+	}
+
+	w.Header().Add("ETag", etag)
+	return nil
+}
+
+func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
+	log.Println("abort multipart upload", bucket, object, uploadID)
+	_, err := g.uploader.Complete(bucket, object, uploadID)
+	return err
+}
+
+func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
+	log.Println("complete multipart upload", bucket, object, uploadID)
+
+	body, err := ioutil.ReadAll(r.Body)
+	defer r.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	var in CompleteMultipartUploadRequest
+	if err := xml.Unmarshal(body, &in); err != nil {
+		return ErrorMessage(ErrMalformedXML, err.Error())
+	}
+
+	upload, err := g.uploader.Complete(bucket, object, uploadID)
+	if err != nil {
+		return err
+	}
+
+	fileBody, etag, err := upload.Reassemble(&in)
+	if err != nil {
+		return err
+	}
+
+	if err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody))); err != nil {
+		return err
+	}
+
+	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
+		ETag:   etag,
+		Bucket: bucket,
+		Key:    object,
+	})
+}
+
+func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r *http.Request) error {
+	query := r.URL.Query()
+	prefix := prefixFromQuery(query)
+	marker := uploadListMarkerFromQuery(query)
+
+	maxUploads, err := parseClampedInt(query.Get("max-uploads"), DefaultMaxUploads, 0, MaxUploadsLimit)
+	if err != nil {
+		return ErrInvalidURI
+	}
+	if maxUploads == 0 {
+		maxUploads = DefaultMaxUploads
+	}
+
+	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
+	if err != nil {
+		return err
+	}
+
+	return g.xmlEncoder(w).Encode(out)
+}
+
+func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
+	query := r.URL.Query()
+
+	marker, err := parseClampedInt(query.Get("part-number-marker"), 0, 0, math.MaxInt64)
+	if err != nil {
+		return ErrInvalidURI
+	}
+
+	maxParts, err := parseClampedInt(query.Get("max-parts"), DefaultMaxUploadParts, 0, MaxUploadPartsLimit)
+	if err != nil {
+		return ErrInvalidURI
+	}
+
+	out, err := g.uploader.ListParts(bucket, object, uploadID, int(marker), maxParts)
+	if err != nil {
+		return err
+	}
+
+	return g.xmlEncoder(w).Encode(out)
+}
+
+func (g *GoFakeS3) ensureBucketExists(bucket string) error {
+	exists, err := g.storage.BucketExists(bucket)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ResourceError(ErrNoSuchBucket, bucket)
+	}
+	return nil
+}
+
+func (g *GoFakeS3) xmlEncoder(w io.Writer) *xml.Encoder {
+	xe := xml.NewEncoder(w)
+	xe.Indent("", "  ")
+	return xe
+}
+
 func formatHeaderTime(t time.Time) string {
 	// https://github.com/aws/aws-sdk-go/issues/1937 - FIXED
 	// https://github.com/aws/aws-sdk-go-v2/issues/178 - Still open
@@ -421,4 +614,20 @@ func metadataSize(meta map[string]string) int {
 		total += len(k) + len(v)
 	}
 	return total
+}
+
+func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (map[string]string, error) {
+	meta := make(map[string]string)
+	for hk, hv := range headers {
+		if strings.HasPrefix(hk, "X-Amz-") {
+			meta[hk] = hv[0]
+		}
+	}
+	meta["Last-Modified"] = formatHeaderTime(at)
+
+	if sizeLimit > 0 && metadataSize(meta) > sizeLimit {
+		return meta, ErrMetadataTooLarge
+	}
+
+	return meta, nil
 }

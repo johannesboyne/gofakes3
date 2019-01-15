@@ -31,6 +31,8 @@ type Backend interface {
 	// gofakes3.ErrBucketAlreadyExists MUST be returned.
 	CreateBucket(name string) error
 
+	// BucketExists should return a boolean indicating the bucket existence, or
+	// an error if the backend was unable to determine existence.
 	BucketExists(name string) (exists bool, err error)
 
 	// DeleteBucket deletes a bucket if and only if it is empty.
@@ -72,9 +74,12 @@ type Backend interface {
 	// exist.
 	HeadObject(bucketName, objectName string) (*Object, error)
 
-	// PutObject should assume that the key is valid.
-	// meta may be nil.
-	PutObject(bucketName, key string, meta map[string]string, input io.Reader) error
+	// PutObject should assume that the key is valid. The map containing meta
+	// may be nil.
+	//
+	// The size can be used if the backend needs to read the whole reader; use
+	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
+	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) error
 
 	DeleteMulti(bucketName string, objects ...string) (DeleteResult, error)
 }

@@ -1,6 +1,7 @@
 package gofakes3
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -60,6 +61,27 @@ func TestPrefixMatch(t *testing.T) {
 				if tc.common != match.CommonPrefix {
 					t.Fatal("prefix common failed at index", idx)
 				}
+			}
+		})
+	}
+}
+
+func TestNewPrefix(t *testing.T) {
+	s := func(in string) *string { return &in }
+
+	for _, tc := range []struct {
+		prefix, delim *string
+		out           Prefix
+	}{
+		{nil, nil, Prefix{}},
+		{s("foo"), nil, Prefix{HasPrefix: true, Prefix: "foo"}},
+		{nil, s("foo"), Prefix{HasDelimiter: true, Delimiter: "foo"}},
+		{s("foo"), s("bar"), Prefix{HasPrefix: true, Prefix: "foo", HasDelimiter: true, Delimiter: "bar"}},
+	} {
+		t.Run("", func(t *testing.T) {
+			exp := NewPrefix(tc.prefix, tc.delim)
+			if !reflect.DeepEqual(tc.out, exp) {
+				t.Fatal(tc.out, "!=", exp)
 			}
 		})
 	}

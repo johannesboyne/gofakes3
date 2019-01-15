@@ -45,15 +45,34 @@ const (
 
 	ErrKeyTooLong           ErrorCode = "KeyTooLongError" // This is not a typo: Error is part of the string, but redundant in the constant name
 	ErrMalformedPOSTRequest ErrorCode = "MalformedPOSTRequest"
-	ErrMetadataTooLarge     ErrorCode = "MetadataTooLarge"
-	ErrMethodNotAllowed     ErrorCode = "MethodNotAllowed"
-	ErrMalformedXML         ErrorCode = "MalformedXML"
+
+	// One or more of the specified parts could not be found. The part might
+	// not have been uploaded, or the specified entity tag might not have
+	// matched the part's entity tag.
+	ErrInvalidPart ErrorCode = "InvalidPart"
+
+	// The list of parts was not in ascending order. Parts list must be
+	// specified in order by part number.
+	ErrInvalidPartOrder ErrorCode = "InvalidPartOrder"
+
+	ErrInvalidURI ErrorCode = "InvalidURI"
+
+	ErrMetadataTooLarge ErrorCode = "MetadataTooLarge"
+	ErrMethodNotAllowed ErrorCode = "MethodNotAllowed"
+	ErrMalformedXML     ErrorCode = "MalformedXML"
+
+	// You must provide the Content-Length HTTP header.
+	ErrMissingContentLength ErrorCode = "MissingContentLength"
 
 	// See BucketNotFound() for a helper function for this error:
 	ErrNoSuchBucket ErrorCode = "NoSuchBucket"
 
 	// See KeyNotFound() for a helper function for this error:
 	ErrNoSuchKey ErrorCode = "NoSuchKey"
+
+	// The specified multipart upload does not exist. The upload ID might be
+	// invalid, or the multipart upload might have been aborted or completed.
+	ErrNoSuchUpload ErrorCode = "NoSuchUpload"
 
 	ErrRequestTimeTooSkewed ErrorCode = "RequestTimeTooSkewed"
 	ErrTooManyBuckets       ErrorCode = "TooManyBuckets"
@@ -142,6 +161,10 @@ func ErrorMessage(code ErrorCode, message string) error {
 	return &ErrorResponse{Code: code, Message: message}
 }
 
+func ErrorMessagef(code ErrorCode, message string, args ...interface{}) error {
+	return &ErrorResponse{Code: code, Message: fmt.Sprintf(message, args...)}
+}
+
 // ErrorCode represents an S3 error code, documented here:
 // https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 type ErrorCode string
@@ -178,6 +201,9 @@ func (e ErrorCode) Status() int {
 		ErrInlineDataTooLarge,
 		ErrInvalidBucketName,
 		ErrInvalidDigest,
+		ErrInvalidPart,
+		ErrInvalidPartOrder,
+		ErrInvalidURI,
 		ErrKeyTooLong,
 		ErrMetadataTooLarge,
 		ErrMethodNotAllowed,
@@ -190,11 +216,15 @@ func (e ErrorCode) Status() int {
 		return http.StatusForbidden
 
 	case ErrNoSuchBucket,
-		ErrNoSuchKey:
+		ErrNoSuchKey,
+		ErrNoSuchUpload:
 		return http.StatusNotFound
 
 	case ErrNotImplemented:
 		return http.StatusNotImplemented
+
+	case ErrMissingContentLength:
+		return http.StatusLengthRequired
 
 	case ErrInternal:
 		return http.StatusInternalServerError
