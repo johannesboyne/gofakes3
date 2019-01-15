@@ -132,17 +132,18 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 			continue
 		}
 
-		size := entry.Size()
-		mtime := entry.ModTime()
-
-		meta, err := db.metaStore.loadMeta(bucket, objectPath, size, mtime)
-		if err != nil {
-			return nil, err
-		}
-
 		if entry.IsDir() {
 			response.AddPrefix(path.Join(prefixPath, prefixPart))
+
 		} else {
+			size := entry.Size()
+			mtime := entry.ModTime()
+
+			meta, err := db.metaStore.loadMeta(bucket, objectPath, size, mtime)
+			if err != nil {
+				return nil, err
+			}
+
 			response.Add(&gofakes3.Content{
 				Key:          objectPath,
 				LastModified: gofakes3.NewContentTime(mtime),

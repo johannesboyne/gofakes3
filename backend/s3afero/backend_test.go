@@ -162,3 +162,69 @@ func TestPutListDir(t *testing.T) {
 		})
 	}
 }
+
+func TestPutDelete(t *testing.T) {
+	backends := testingBackends(t)
+
+	for _, backend := range backends {
+		t.Run(fmt.Sprintf("%T", backend), func(t *testing.T) {
+			meta := map[string]string{
+				"foo": "bar",
+			}
+
+			contents := []byte("contents1")
+			if err := backend.PutObject("test", "foo", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := backend.DeleteObject("test", "foo"); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := backend.GetBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(result.Contents) != 0 {
+				t.Fatal()
+			}
+		})
+	}
+}
+
+func TestPutDeleteMulti(t *testing.T) {
+	backends := testingBackends(t)
+
+	for _, backend := range backends {
+		t.Run(fmt.Sprintf("%T", backend), func(t *testing.T) {
+			meta := map[string]string{
+				"foo": "bar",
+			}
+
+			contents1 := []byte("contents1")
+			if err := backend.PutObject("test", "foo/bar", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
+				t.Fatal(err)
+			}
+
+			contents2 := []byte("contents2")
+			if err := backend.PutObject("test", "foo/baz", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
+				t.Fatal(err)
+			}
+
+			deleteResult, err := backend.DeleteMulti("test", "foo/bar", "foo/baz")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			bucketContents, err := backend.GetBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(bucketContents.Contents) != 0 {
+				t.Fatal()
+			}
+		})
+	}
+}
