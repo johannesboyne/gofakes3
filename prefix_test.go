@@ -127,13 +127,3 @@ func unwrapStr(v *string) string {
 	}
 	return ""
 }
-
-func prefixFromPtrs(p, d *string) Prefix {
-	prefix := Prefix{
-		HasPrefix:    p != nil,
-		HasDelimiter: d != nil,
-		Prefix:       unwrapStr(p),
-		Delimiter:    unwrapStr(d),
-	}
-	return prefix
-}
