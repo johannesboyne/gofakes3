@@ -337,7 +337,7 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string) (*gofakes
 	}, nil
 }
 
-func (db *MultiBucketBackend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader) error {
+func (db *MultiBucketBackend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

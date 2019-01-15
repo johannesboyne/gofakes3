@@ -255,7 +255,7 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string) (*gofake
 	}, nil
 }
 
-func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader) error {
+func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
 	if bucketName != db.name {
 		return gofakes3.BucketNotFound(bucketName)
 	}
