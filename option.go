@@ -37,3 +37,9 @@ func WithMetadataSizeLimit(size int) Option {
 func WithIntegrityCheck(check bool) Option {
 	return func(g *GoFakeS3) { g.integrityCheck = check }
 }
+
+// WithLogger allows you to supply a logger to GoFakeS3 for debugging/tracing.
+// logger may be nil.
+func WithLogger(logger Logger) Option {
+	return func(g *GoFakeS3) { g.log = logger }
+}
