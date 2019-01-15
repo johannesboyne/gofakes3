@@ -139,6 +139,7 @@ type testServer struct {
 
 	backend gofakes3.Backend
 	server  *httptest.Server
+	options []gofakes3.Option
 
 	// if this is nil, no buckets are created. by default, a starting bucket is
 	// created using the value of the 'defaultBucket' constant.
@@ -150,6 +151,9 @@ type testServerOption func(ts *testServer)
 func withoutInitialBuckets() testServerOption { return func(ts *testServer) { ts.initialBuckets = nil } }
 func withInitialBuckets(buckets ...string) testServerOption {
 	return func(ts *testServer) { ts.initialBuckets = buckets }
+}
+func withFakerOptions(opts ...gofakes3.Option) testServerOption {
+	return func(ts *testServer) { ts.options = opts }
 }
 
 func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
@@ -169,14 +173,17 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 		ts.backend = s3mem.New(s3mem.WithTimeSource(ts.TimeSourceAdvancer))
 	}
 
-	ts.GoFakeS3 = gofakes3.New(ts.backend,
+	fakerOpts := []gofakes3.Option{
 		gofakes3.WithTimeSource(ts.TimeSourceAdvancer),
 		gofakes3.WithTimeSkewLimit(0),
 
 		// TestMain wires the stdlib's global logger up to a file already,
 		// which this takes advantage of:
 		gofakes3.WithGlobalLog(),
-	)
+	}
+	fakerOpts = append(fakerOpts, ts.options...)
+
+	ts.GoFakeS3 = gofakes3.New(ts.backend, fakerOpts...)
 	ts.server = httptest.NewServer(ts.GoFakeS3.Server())
 
 	for _, bucket := range ts.initialBuckets {

@@ -123,6 +123,24 @@ func TestCreateObject(t *testing.T) {
 	}
 }
 
+func TestCreateObjectMetadataSizeLimit(t *testing.T) {
+	ts := newTestServer(t, withFakerOptions(
+		gofakes3.WithMetadataSizeLimit(1),
+	))
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	_, err := svc.PutObject(&s3.PutObjectInput{
+		Bucket:   aws.String(defaultBucket),
+		Key:      aws.String("object"),
+		Metadata: map[string]*string{"too": aws.String("big")},
+		Body:     bytes.NewReader([]byte("hello")),
+	})
+	if !hasErrorCode(err, gofakes3.ErrMetadataTooLarge) {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateObjectMD5(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
