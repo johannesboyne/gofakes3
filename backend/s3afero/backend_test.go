@@ -216,6 +216,9 @@ func TestPutDeleteMulti(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := deleteResult.AsError(); err != nil {
+				t.Fatal(err)
+			}
 
 			bucketContents, err := backend.GetBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
