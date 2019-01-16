@@ -43,3 +43,9 @@ func WithIntegrityCheck(check bool) Option {
 func WithLogger(logger Logger) Option {
 	return func(g *GoFakeS3) { g.log = logger }
 }
+
+// WithGlobalLog configures gofakes3 to use GlobalLog() for logging, which uses
+// the standard library's log.Println() call to log messages.
+func WithGlobalLog() Option {
+	return WithLogger(GlobalLog())
+}

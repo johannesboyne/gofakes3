@@ -173,8 +173,9 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 		gofakes3.WithTimeSource(ts.TimeSourceAdvancer),
 		gofakes3.WithTimeSkewLimit(0),
 
-		// TestMain wires the stdlib's global logger up to a file, so we should just use that.
-		gofakes3.WithLogger(gofakes3.GlobalLog()),
+		// TestMain wires the stdlib's global logger up to a file already,
+		// which this takes advantage of:
+		gofakes3.WithGlobalLog(),
 	)
 	ts.server = httptest.NewServer(ts.GoFakeS3.Server())
 
