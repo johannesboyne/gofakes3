@@ -64,9 +64,10 @@ func (o ObjectRangeRequest) Range(size int64) ObjectRange {
 	return ObjectRange{Start: start, Length: length}
 }
 
-// parseHeader takes a bit of a shortcut and fails if you pass multiple ranges.
-// Need to verify whether S3 supports this as it will lead to a backward
-// compatibilty break in the Backend struct. May never be a problem in practice.
+// parseHeader parses a single byte range from the Range header.
+//
+// Amazon S3 doesn't support retrieving multiple ranges of data per GET request:
+// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectGET.html
 func (o *ObjectRangeRequest) parseHeader(s string) error {
 	if s == "" {
 		return nil
