@@ -225,11 +225,20 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	log.Println("Bucket:", bucket)
 	log.Println("└── Object:", object)
 
-	obj, err := g.storage.GetObject(bucket, object)
-	if err != nil {
+	var rnge ObjectRangeRequest
+	if err := rnge.parseHeader(r.Header.Get("Range")); err != nil {
 		return err
 	}
+
+	obj, err := g.storage.GetObject(bucket, object, rnge)
+	if err != nil {
+		return err
+	} else if obj == nil {
+		return ErrInternal
+	}
 	defer obj.Contents.Close()
+
+	obj.Range.writeHeader(obj.Size, w) // Writes Content-Length, and Content-Range if applicable.
 
 	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
@@ -239,7 +248,6 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
 	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
 	w.Header().Set("Server", "AmazonS3")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err

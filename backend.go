@@ -51,7 +51,7 @@ type Backend interface {
 	//
 	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
 	// otherwise you will leak resources.
-	GetObject(bucketName, objectName string) (*Object, error)
+	GetObject(bucketName, objectName string, rnge ObjectRangeRequest) (*Object, error)
 
 	// DeleteObject deletes an object from the bucket.
 	//

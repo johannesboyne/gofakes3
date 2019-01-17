@@ -252,6 +252,7 @@ type Object struct {
 	Size     int64
 	Contents io.ReadCloser
 	Hash     []byte
+	Range    ObjectRange
 }
 
 // UploadID uses a string as the underlying type, but the string should only

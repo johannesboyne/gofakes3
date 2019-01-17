@@ -115,7 +115,7 @@ func TestCreateObject(t *testing.T) {
 		Body:   bytes.NewReader([]byte("hello")),
 	}))
 
-	obj := ts.objectAsString(defaultBucket, "object")
+	obj := ts.objectAsString(defaultBucket, "object", nil)
 	if obj != "hello" {
 		t.Fatal("object creation failed")
 	}
