@@ -60,6 +60,7 @@ type GoFakeS3 struct {
 	timeSkew          time.Duration
 	metadataSizeLimit int
 	integrityCheck    bool
+	hostBucket        bool
 	uploader          *uploader
 	requestID         uint64
 	log               Logger
@@ -96,12 +97,24 @@ func (g *GoFakeS3) nextRequestID() uint64 {
 
 // Create the AWS S3 API
 func (g *GoFakeS3) Server() http.Handler {
-	wc := &withCORS{r: http.HandlerFunc(g.routeBase), log: g.log}
+	var handler http.Handler = &withCORS{r: http.HandlerFunc(g.routeBase), log: g.log}
 
-	hf := func(w http.ResponseWriter, rq *http.Request) {
+	if g.timeSkew != 0 {
+		handler = g.timeSkewMiddleware(handler)
+	}
+
+	if g.hostBucket {
+		handler = g.hostBucketMiddleware(handler)
+	}
+
+	return handler
+}
+
+func (g *GoFakeS3) timeSkewMiddleware(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, rq *http.Request) {
 		timeHdr := rq.Header.Get("x-amz-date")
 
-		if g.timeSkew > 0 && timeHdr != "" {
+		if timeHdr != "" {
 			rqTime, _ := time.Parse("20060102T150405Z", timeHdr)
 			at := g.timeSource.Now()
 			skew := at.Sub(rqTime)
@@ -112,10 +125,26 @@ func (g *GoFakeS3) Server() http.Handler {
 			}
 		}
 
-		wc.ServeHTTP(w, rq)
-	}
+		handler.ServeHTTP(w, rq)
+	})
+}
 
-	return http.HandlerFunc(hf)
+// hostBucketMiddleware forces the server to use VirtualHost-style bucket URLs:
+// https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html
+func (g *GoFakeS3) hostBucketMiddleware(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, rq *http.Request) {
+		parts := strings.SplitN(rq.Host, ".", 2)
+		bucket := parts[0]
+
+		p := rq.URL.Path
+		rq.URL.Path = "/" + bucket
+		if p != "/" {
+			rq.URL.Path += p
+		}
+		g.log.Print(LogInfo, p, "=>", rq.URL)
+
+		handler.ServeHTTP(w, rq)
+	})
 }
 
 func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) {

@@ -2,7 +2,6 @@ package gofakes3
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 )
 
@@ -22,8 +21,6 @@ var (
 		"x-amz-meta-to",
 	}
 	corsHeadersString = strings.Join(corsHeaders, ", ")
-
-	bucketRewritePattern = regexp.MustCompile("(127.0.0.1:\\d{1,7})|(.localhost:\\d{1,7})|(localhost:\\d{1,7})")
 )
 
 type withCORS struct {
@@ -39,19 +36,6 @@ func (s *withCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		return
 	}
-
-	// Bucket name rewriting
-	// this is due to some inconsistencies in the AWS SDKs
-	bucket := bucketRewritePattern.ReplaceAllString(r.Host, "")
-	if len(bucket) > 0 {
-		s.log.Print(LogInfo, "rewrite bucket ->", bucket)
-		p := r.URL.Path
-		r.URL.Path = "/" + bucket
-		if p != "/" {
-			r.URL.Path += p
-		}
-	}
-	s.log.Print(LogInfo, "=>", r.URL)
 
 	s.r.ServeHTTP(w, r)
 }
