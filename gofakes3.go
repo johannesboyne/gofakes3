@@ -124,7 +124,6 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 
 		w.Write([]byte(xml.Header))
 		if err := g.xmlEncoder(w).Encode(resp); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
 			g.log.Print(LogErr, err)
 			return
 		}
