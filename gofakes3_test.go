@@ -157,6 +157,34 @@ func TestCreateObjectMD5(t *testing.T) {
 	}
 }
 
+func TestDeleteBucket(t *testing.T) {
+	t.Run("delete-empty", func(t *testing.T) {
+		ts := newTestServer(t, withoutInitialBuckets())
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.backendCreateBucket("test")
+		ts.OKAll(svc.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("test"),
+		}))
+	})
+
+	t.Run("delete-fails-if-not-empty", func(t *testing.T) {
+		ts := newTestServer(t, withoutInitialBuckets())
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.backendCreateBucket("test")
+		ts.backendPutString("test", "test", nil, "test")
+		_, err := svc.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("test"),
+		})
+		if !hasErrorCode(err, gofakes3.ErrBucketNotEmpty) {
+			t.Fatal("expected ErrBucketNotEmpty, found", err)
+		}
+	})
+}
+
 func TestDeleteMulti(t *testing.T) {
 	deletedKeys := func(rs *s3.DeleteObjectsOutput) []string {
 		deleted := make([]string, len(rs.Deleted))

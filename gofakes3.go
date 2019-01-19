@@ -196,7 +196,8 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 	return nil
 }
 
-// DeleteBucket creates a new S3 bucket in the BoltDB storage.
+// DeleteBucket deletes the bucket in the underlying backend, if and only if it
+// contains no items.
 func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
 	log.Println("DELETE BUCKET:", bucket)
 	return g.storage.DeleteBucket(bucket)
