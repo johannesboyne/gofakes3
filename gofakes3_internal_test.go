@@ -1,8 +1,10 @@
 package gofakes3
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http/httptest"
 	"testing"
 )
@@ -29,9 +31,13 @@ func TestHttpError(t *testing.T) {
 }
 
 func TestHttpErrorWriteFailure(t *testing.T) {
-	// FIXME: with a pluggable logger, we can intercept the log message to
-	// verify the write error is handled.
-	var g GoFakeS3
+	var buf bytes.Buffer
+	std := log.New(&buf, "", 0)
+	logger := StdLog(std)
+	var g = GoFakeS3{
+		log: logger,
+	}
+
 	rq := httptest.NewRequest("GET", "/", nil)
 	rs := httptest.NewRecorder()
 	g.httpError(&failingResponseWriter{rs}, rq, ErrNoSuchBucket)
@@ -39,6 +45,9 @@ func TestHttpErrorWriteFailure(t *testing.T) {
 		t.Fatal()
 	}
 	if rs.Body.Len() != 0 {
+		t.Fatal()
+	}
+	if buf.String() != "ERR nope\n" {
 		t.Fatal()
 	}
 }

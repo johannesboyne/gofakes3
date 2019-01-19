@@ -88,6 +88,7 @@ func run() error {
 		gofakes3.WithTimeSource(timeSource),
 		gofakes3.WithTimeSkewLimit(timeSkewLimit),
 		gofakes3.WithIntegrityCheck(!noIntegrity),
+		gofakes3.WithLogger(gofakes3.GlobalLog()),
 	)
 	return listenAndServe(host, faker.Server())
 }
