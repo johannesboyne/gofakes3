@@ -186,14 +186,14 @@ func (ts *testServer) url(url string) string {
 	return fmt.Sprintf("%s/%s", ts.server.URL, strings.TrimLeft(url, "/"))
 }
 
-func (ts *testServer) createBucket(bucket string) {
+func (ts *testServer) backendCreateBucket(bucket string) {
 	ts.Helper()
 	if err := ts.backend.CreateBucket(bucket); err != nil {
 		ts.Fatal("create bucket failed", err)
 	}
 }
 
-func (ts *testServer) objectExists(bucket, key string) bool {
+func (ts *testServer) backendObjectExists(bucket, key string) bool {
 	ts.Helper()
 	obj, err := ts.backend.HeadObject(bucket, key)
 	if err != nil {
@@ -206,12 +206,17 @@ func (ts *testServer) objectExists(bucket, key string) bool {
 	return obj != nil
 }
 
-func (ts *testServer) putString(bucket, key string, meta map[string]string, in string) {
+func (ts *testServer) backendPutString(bucket, key string, meta map[string]string, in string) {
 	ts.Helper()
 	ts.OK(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in), int64(len(in))))
 }
 
-func (ts *testServer) objectAsString(bucket, key string, rnge *gofakes3.ObjectRangeRequest) string {
+func (ts *testServer) backendPutBytes(bucket, key string, meta map[string]string, in []byte) {
+	ts.Helper()
+	ts.OK(ts.backend.PutObject(bucket, key, meta, bytes.NewReader(in), int64(len(in))))
+}
+
+func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.ObjectRangeRequest) string {
 	ts.Helper()
 	if rnge == nil {
 		rnge = &gofakes3.ObjectRangeRequest{}

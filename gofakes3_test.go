@@ -86,17 +86,17 @@ func TestListBuckets(t *testing.T) {
 
 	assertBuckets()
 
-	ts.createBucket("test")
+	ts.backendCreateBucket("test")
 	assertBuckets("test")
 	assertBucketTime("test", defaultDate)
 
-	ts.createBucket("test2")
+	ts.backendCreateBucket("test2")
 	assertBuckets("test", "test2")
 	assertBucketTime("test2", defaultDate)
 
 	ts.Advance(1 * time.Minute)
 
-	ts.createBucket("test3")
+	ts.backendCreateBucket("test3")
 	assertBuckets("test", "test2", "test3")
 
 	assertBucketTime("test", defaultDate)
@@ -115,7 +115,7 @@ func TestCreateObject(t *testing.T) {
 		Body:   bytes.NewReader([]byte("hello")),
 	}))
 
-	obj := ts.objectAsString(defaultBucket, "object", nil)
+	obj := ts.backendGetString(defaultBucket, "object", nil)
 	if obj != "hello" {
 		t.Fatal("object creation failed")
 	}
@@ -150,7 +150,7 @@ func TestCreateObjectMD5(t *testing.T) {
 		}
 	}
 
-	if ts.objectExists(defaultBucket, "invalid") {
+	if ts.backendObjectExists(defaultBucket, "invalid") {
 		t.Fatal("unexpected object")
 	}
 }
@@ -178,9 +178,9 @@ func TestDeleteMulti(t *testing.T) {
 		defer ts.Close()
 		svc := ts.s3Client()
 
-		ts.putString(defaultBucket, "foo", nil, "one")
-		ts.putString(defaultBucket, "bar", nil, "two")
-		ts.putString(defaultBucket, "baz", nil, "three")
+		ts.backendPutString(defaultBucket, "foo", nil, "one")
+		ts.backendPutString(defaultBucket, "bar", nil, "two")
+		ts.backendPutString(defaultBucket, "baz", nil, "three")
 
 		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
 			Bucket: aws.String(defaultBucket),
@@ -200,9 +200,9 @@ func TestDeleteMulti(t *testing.T) {
 		defer ts.Close()
 		svc := ts.s3Client()
 
-		ts.putString(defaultBucket, "foo", nil, "one")
-		ts.putString(defaultBucket, "bar", nil, "two")
-		ts.putString(defaultBucket, "baz", nil, "three")
+		ts.backendPutString(defaultBucket, "foo", nil, "one")
+		ts.backendPutString(defaultBucket, "bar", nil, "two")
+		ts.backendPutString(defaultBucket, "baz", nil, "three")
 
 		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
 			Bucket: aws.String(defaultBucket),

@@ -25,12 +25,12 @@ func TestCLILsBuckets(t *testing.T) {
 		t.Fatal()
 	}
 
-	cli.createBucket("foo")
+	cli.backendCreateBucket("foo")
 	if !reflect.DeepEqual(cli.lsBuckets().Names(), []string{"foo"}) {
 		t.Fatal()
 	}
 
-	cli.createBucket("bar")
+	cli.backendCreateBucket("bar")
 	if !reflect.DeepEqual(cli.lsBuckets().Names(), []string{"bar", "foo"}) {
 		t.Fatal()
 	}
@@ -44,20 +44,20 @@ func TestCLILsFiles(t *testing.T) {
 		t.Fatal()
 	}
 
-	cli.putString(defaultBucket, "test-one", nil, "hello")
+	cli.backendPutString(defaultBucket, "test-one", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		nil, []string{"test-one"})
 
-	cli.putString(defaultBucket, "test-two", nil, "hello")
+	cli.backendPutString(defaultBucket, "test-two", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		nil, []string{"test-one", "test-two"})
 
 	// only "test-one" and "test-two" should pass the prefix match
-	cli.putString(defaultBucket, "no-match", nil, "hello")
+	cli.backendPutString(defaultBucket, "no-match", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "test-",
 		nil, []string{"test-one", "test-two"})
 
-	cli.putString(defaultBucket, "test/yep", nil, "hello")
+	cli.backendPutString(defaultBucket, "test/yep", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		[]string{"test/"}, []string{"no-match", "test-one", "test-two"})
 
@@ -74,8 +74,8 @@ func TestCLIRmOne(t *testing.T) {
 	cli := newTestCLI(t)
 	defer cli.Close()
 
-	cli.putString(defaultBucket, "foo", nil, "hello")
-	cli.putString(defaultBucket, "bar", nil, "hello")
+	cli.backendPutString(defaultBucket, "foo", nil, "hello")
+	cli.backendPutString(defaultBucket, "bar", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "", nil, []string{"foo", "bar"})
 
 	cli.rm(cli.fileArg(defaultBucket, "foo"))
@@ -86,13 +86,39 @@ func TestCLIRmMulti(t *testing.T) {
 	cli := newTestCLI(t)
 	defer cli.Close()
 
-	cli.putString(defaultBucket, "foo", nil, "hello")
-	cli.putString(defaultBucket, "bar", nil, "hello")
-	cli.putString(defaultBucket, "baz", nil, "hello")
+	cli.backendPutString(defaultBucket, "foo", nil, "hello")
+	cli.backendPutString(defaultBucket, "bar", nil, "hello")
+	cli.backendPutString(defaultBucket, "baz", nil, "hello")
 	cli.assertLsFiles(defaultBucket, "", nil, []string{"foo", "bar", "baz"})
 
 	cli.rmMulti(defaultBucket, "foo", "bar", "baz")
 	cli.assertLsFiles(defaultBucket, "", nil, nil)
+}
+
+func TestCLIDownload(t *testing.T) {
+	// NOTE: this must be set to the largest value you plan to test in the test cases.
+	var source = randomFileBody(1000000000)
+
+	for _, tc := range []struct {
+		in []byte
+	}{
+		{in: nil},
+		{in: source[:1]},
+		{in: source[:1000000]},
+		{in: source[:10000000]},
+		{in: source[:100000000]},
+	} {
+		t.Run("", func(t *testing.T) {
+			cli := newTestCLI(t)
+			defer cli.Close()
+
+			cli.backendPutBytes(defaultBucket, "foo", nil, tc.in)
+			out := cli.download(defaultBucket, "foo")
+			if !bytes.Equal(out, tc.in) {
+				t.Fatal()
+			}
+		})
+	}
 }
 
 type testCLI struct {
@@ -128,9 +154,18 @@ func (tc *testCLI) command(method string, subcommand string, args ...string) *ex
 	return cmd
 }
 
-func (tc *testCLI) run(method string, subcommand string, args ...string) (out []byte) {
+func (tc *testCLI) run(method string, subcommand string, args ...string) {
 	tc.Helper()
 	err := tc.command(method, subcommand, args...).Run()
+	if _, ok := err.(*exec.Error); ok {
+		tc.Skip("aws cli not found on $PATH")
+	}
+	tc.OK(err)
+}
+
+func (tc *testCLI) output(method string, subcommand string, args ...string) (out []byte) {
+	tc.Helper()
+	out, err := tc.command(method, subcommand, args...).Output()
 	if _, ok := err.(*exec.Error); ok {
 		tc.Skip("aws cli not found on $PATH")
 	}
@@ -200,6 +235,11 @@ func (tc *testCLI) lsBuckets() (buckets gofakes3.Buckets) {
 	}
 
 	return buckets
+}
+
+func (tc *testCLI) download(bucket, object string) []byte {
+	tc.Helper()
+	return tc.combinedOutput("s3", "cp", fmt.Sprintf("s3://%s/%s", bucket, object), "-")
 }
 
 func (tc *testCLI) rmMulti(bucket string, objects ...string) {
