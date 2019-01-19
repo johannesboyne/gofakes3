@@ -144,7 +144,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	}, nil
 }
 
-func (db *Backend) GetObject(bucketName, objectName string, rnge gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+func (db *Backend) GetObject(bucketName, objectName string, rnge *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -159,9 +159,11 @@ func (db *Backend) GetObject(bucketName, objectName string, rnge gofakes3.Object
 	}
 
 	sz := int64(len(obj.data))
-	rngeRs := rnge.Range(sz)
 	data := obj.data
-	if !rnge.IsZero() {
+
+	var rngeRs *gofakes3.ObjectRange
+	if rnge != nil {
+		rngeRs = rnge.Range(sz)
 		data = data[rngeRs.Start : rngeRs.Start+rngeRs.Length]
 	}
 

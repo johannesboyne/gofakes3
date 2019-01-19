@@ -27,10 +27,12 @@ type boltObject struct {
 	Hash         []byte
 }
 
-func (b *boltObject) Object(rnge gofakes3.ObjectRangeRequest) *gofakes3.Object {
-	rngeRs := rnge.Range(b.Size)
+func (b *boltObject) Object(rnge *gofakes3.ObjectRangeRequest) *gofakes3.Object {
 	data := b.Contents
-	if !rnge.IsZero() {
+
+	var rngeRs *gofakes3.ObjectRange
+	if rnge != nil {
+		rngeRs = rnge.Range(b.Size)
 		data = data[rngeRs.Start : rngeRs.Start+rngeRs.Length]
 	}
 

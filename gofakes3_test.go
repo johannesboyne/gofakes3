@@ -3,7 +3,9 @@ package gofakes3_test
 import (
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	"reflect"
@@ -217,6 +219,89 @@ func TestDeleteMulti(t *testing.T) {
 		assertDeletedKeys(t, rs, "bar", "foo")
 		ts.assertLs(defaultBucket, "", nil, []string{"baz"})
 	})
+}
+
+func TestGetObjectRange(t *testing.T) {
+	assertRange := func(ts *testServer, key string, hdr string, expected []byte) {
+		svc := ts.s3Client()
+		obj, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(key),
+			Range:  aws.String(hdr),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		out, err := ioutil.ReadAll(obj.Body)
+		ts.OK(err)
+		if !bytes.Equal(expected, out) {
+			ts.Fatal("range failed", hdr, err)
+		}
+	}
+
+	in := randomFileBody(1024)
+
+	for idx, tc := range []struct {
+		hdr      string
+		expected []byte
+	}{
+		{"bytes=0-", in},
+		{"bytes=1-", in[1:]},
+		{"bytes=0-0", in[:1]},
+		{"bytes=0-1", in[:2]},
+		{"bytes=1023-1023", in[1023:1024]},
+
+		// if the requested end is beyond the real end, it should still work
+		{"bytes=1023-1024", in[1023:1024]},
+
+		// if the requested start is beyond the real end, it should still work
+		{"bytes=1024-1024", []byte{}},
+
+		// suffix-byte-range-spec:
+		{"bytes=-0", []byte{}},
+		{"bytes=-1", in[1023:1024]},
+		{"bytes=-1024", in},
+		{"bytes=-1025", in},
+	} {
+		t.Run(fmt.Sprintf("%d/%s", idx, tc.hdr), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			ts.backendPutBytes(defaultBucket, "foo", nil, in)
+			assertRange(ts, "foo", tc.hdr, tc.expected)
+		})
+	}
+}
+
+func TestGetObjectRangeInvalid(t *testing.T) {
+	assertRangeInvalid := func(ts *testServer, key string, hdr string) {
+		svc := ts.s3Client()
+		_, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(key),
+			Range:  aws.String(hdr),
+		})
+		if !hasErrorCode(err, gofakes3.ErrInvalidRange) {
+			ts.Fatal("expected ErrInvalidRange, found", err)
+		}
+	}
+
+	in := randomFileBody(1024)
+
+	for idx, tc := range []struct {
+		hdr string
+	}{
+		{"boats=0-0"},
+		{"bytes="},
+	} {
+		t.Run(fmt.Sprintf("%d/%s", idx, tc.hdr), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			ts.backendPutBytes(defaultBucket, "foo", nil, in)
+			assertRangeInvalid(ts, "foo", tc.hdr)
+		})
+	}
 }
 
 func TestCreateObjectBrowserUpload(t *testing.T) {

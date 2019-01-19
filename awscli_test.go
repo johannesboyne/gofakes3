@@ -104,6 +104,11 @@ func TestCLIDownload(t *testing.T) {
 	}{
 		{in: nil},
 		{in: source[:1]},
+
+		// FIXME: Beyond a certain size, the AWS client switches to using range
+		// requests and downloads several parts in parallel. This takes a stab
+		// at what that size is, but it isn't an especially robust way to
+		// determine what the spill point is:
 		{in: source[:1000000]},
 		{in: source[:10000000]},
 		{in: source[:100000000]},

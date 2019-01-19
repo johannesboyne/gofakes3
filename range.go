@@ -11,12 +11,8 @@ type ObjectRange struct {
 	Start, Length int64
 }
 
-var zeroRange ObjectRange
-
-func (o ObjectRange) IsZero() bool { return o == zeroRange }
-
-func (o ObjectRange) writeHeader(sz int64, w http.ResponseWriter) {
-	if !o.IsZero() {
+func (o *ObjectRange) writeHeader(sz int64, w http.ResponseWriter) {
+	if o != nil {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", o.Start, o.Start+o.Length-1, sz))
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", o.Length))
 	} else {
@@ -29,23 +25,26 @@ type ObjectRangeRequest struct {
 	FromEnd    bool
 }
 
-var zeroRangeRequest ObjectRangeRequest
+const RangeNoEnd = -1
 
-func (o ObjectRangeRequest) IsZero() bool { return o == zeroRangeRequest }
+func (o *ObjectRangeRequest) Range(size int64) *ObjectRange {
+	if o == nil {
+		return nil
+	}
 
-func (o ObjectRangeRequest) Range(size int64) ObjectRange {
 	var start, length int64
 
 	if !o.FromEnd {
-		// If no end is specified, range extends to end of the file.
 		start = o.Start
 		end := o.End
-		if end >= size {
-			end = size - 1
-		}
-		if o.End == 0 {
+
+		if o.End == RangeNoEnd {
+			// If no end is specified, range extends to end of the file.
 			length = size - o.Start
 		} else {
+			if end >= size {
+				end = size - 1
+			}
 			length = end - o.Start + 1
 		}
 
@@ -58,40 +57,41 @@ func (o ObjectRangeRequest) Range(size int64) ObjectRange {
 		}
 		start = size - end
 		length = size - start
-
 	}
 
-	return ObjectRange{Start: start, Length: length}
+	return &ObjectRange{Start: start, Length: length}
 }
 
-// parseHeader parses a single byte range from the Range header.
+// parseRangeHeader parses a single byte range from the Range header.
 //
 // Amazon S3 doesn't support retrieving multiple ranges of data per GET request:
 // https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectGET.html
-func (o *ObjectRangeRequest) parseHeader(s string) error {
+func parseRangeHeader(s string) (*ObjectRangeRequest, error) {
 	if s == "" {
-		return nil
+		return nil, nil
 	}
 
 	const b = "bytes="
 	if !strings.HasPrefix(s, b) {
-		return ErrInvalidRange
+		return nil, ErrInvalidRange
 	}
 
 	ranges := strings.Split(s[len(b):], ",")
 	if len(ranges) > 1 {
-		return ErrorMessage(ErrNotImplemented, "multiple ranges not supported")
+		return nil, ErrorMessage(ErrNotImplemented, "multiple ranges not supported")
 	}
 
 	rnge := strings.TrimSpace(ranges[0])
 	if len(rnge) == 0 {
-		return nil
+		return nil, ErrInvalidRange
 	}
 
 	i := strings.Index(rnge, "-")
 	if i < 0 {
-		return ErrInvalidRange
+		return nil, ErrInvalidRange
 	}
+
+	var o ObjectRangeRequest
 
 	start, end := strings.TrimSpace(rnge[:i]), strings.TrimSpace(rnge[i+1:])
 	if start == "" {
@@ -99,24 +99,26 @@ func (o *ObjectRangeRequest) parseHeader(s string) error {
 
 		i, err := strconv.ParseInt(end, 10, 64)
 		if err != nil {
-			return ErrInvalidRange
+			return nil, ErrInvalidRange
 		}
 		o.End = i
 
 	} else {
 		i, err := strconv.ParseInt(start, 10, 64)
 		if err != nil || i < 0 {
-			return ErrInvalidRange
+			return nil, ErrInvalidRange
 		}
 		o.Start = i
 		if end != "" {
 			i, err := strconv.ParseInt(end, 10, 64)
 			if err != nil || o.Start > i {
-				return ErrInvalidRange
+				return nil, ErrInvalidRange
 			}
 			o.End = i
+		} else {
+			o.End = RangeNoEnd
 		}
 	}
 
-	return nil
+	return &o, nil
 }

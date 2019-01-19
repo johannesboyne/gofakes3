@@ -225,8 +225,8 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	log.Println("Bucket:", bucket)
 	log.Println("└── Object:", object)
 
-	var rnge ObjectRangeRequest
-	if err := rnge.parseHeader(r.Header.Get("Range")); err != nil {
+	rnge, err := parseRangeHeader(r.Header.Get("Range"))
+	if err != nil {
 		return err
 	}
 

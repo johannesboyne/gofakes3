@@ -218,10 +218,7 @@ func (ts *testServer) backendPutBytes(bucket, key string, meta map[string]string
 
 func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.ObjectRangeRequest) string {
 	ts.Helper()
-	if rnge == nil {
-		rnge = &gofakes3.ObjectRangeRequest{}
-	}
-	obj, err := ts.backend.GetObject(bucket, key, *rnge)
+	obj, err := ts.backend.GetObject(bucket, key, rnge)
 	ts.OK(err)
 
 	defer obj.Contents.Close()
@@ -565,7 +562,7 @@ func (ts *testServer) assertListMultipartUploads(
 func (ts *testServer) assertObject(bucket string, object string, meta map[string]string, contents interface{}) {
 	ts.Helper()
 
-	obj, err := ts.backend.GetObject(bucket, object, gofakes3.ObjectRangeRequest{})
+	obj, err := ts.backend.GetObject(bucket, object, nil)
 	ts.OK(err)
 	defer obj.Contents.Close()
 
