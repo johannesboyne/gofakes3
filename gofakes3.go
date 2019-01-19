@@ -248,6 +248,7 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
 	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
 	w.Header().Set("Server", "AmazonS3")
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err
@@ -425,6 +426,7 @@ func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *h
 	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 	w.Header().Set("Connection", "close")
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.Write([]byte{})
 
 	return nil
