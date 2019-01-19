@@ -27,11 +27,20 @@ type boltObject struct {
 	Hash         []byte
 }
 
-func (b *boltObject) Object() *gofakes3.Object {
+func (b *boltObject) Object(rnge *gofakes3.ObjectRangeRequest) *gofakes3.Object {
+	data := b.Contents
+
+	var rngeRs *gofakes3.ObjectRange
+	if rnge != nil {
+		rngeRs = rnge.Range(b.Size)
+		data = data[rngeRs.Start : rngeRs.Start+rngeRs.Length]
+	}
+
 	return &gofakes3.Object{
 		Metadata: b.Metadata,
 		Size:     b.Size,
-		Contents: readerWithDummyCloser{bytes.NewReader(b.Contents)},
+		Contents: readerWithDummyCloser{bytes.NewReader(data)},
+		Range:    rngeRs,
 		Hash:     b.Hash,
 	}
 }

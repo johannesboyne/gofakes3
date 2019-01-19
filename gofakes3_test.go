@@ -3,7 +3,9 @@ package gofakes3_test
 import (
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	"reflect"
@@ -86,17 +88,17 @@ func TestListBuckets(t *testing.T) {
 
 	assertBuckets()
 
-	ts.createBucket("test")
+	ts.backendCreateBucket("test")
 	assertBuckets("test")
 	assertBucketTime("test", defaultDate)
 
-	ts.createBucket("test2")
+	ts.backendCreateBucket("test2")
 	assertBuckets("test", "test2")
 	assertBucketTime("test2", defaultDate)
 
 	ts.Advance(1 * time.Minute)
 
-	ts.createBucket("test3")
+	ts.backendCreateBucket("test3")
 	assertBuckets("test", "test2", "test3")
 
 	assertBucketTime("test", defaultDate)
@@ -115,7 +117,7 @@ func TestCreateObject(t *testing.T) {
 		Body:   bytes.NewReader([]byte("hello")),
 	}))
 
-	obj := ts.objectAsString(defaultBucket, "object")
+	obj := ts.backendGetString(defaultBucket, "object", nil)
 	if obj != "hello" {
 		t.Fatal("object creation failed")
 	}
@@ -150,9 +152,37 @@ func TestCreateObjectMD5(t *testing.T) {
 		}
 	}
 
-	if ts.objectExists(defaultBucket, "invalid") {
+	if ts.backendObjectExists(defaultBucket, "invalid") {
 		t.Fatal("unexpected object")
 	}
+}
+
+func TestDeleteBucket(t *testing.T) {
+	t.Run("delete-empty", func(t *testing.T) {
+		ts := newTestServer(t, withoutInitialBuckets())
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.backendCreateBucket("test")
+		ts.OKAll(svc.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("test"),
+		}))
+	})
+
+	t.Run("delete-fails-if-not-empty", func(t *testing.T) {
+		ts := newTestServer(t, withoutInitialBuckets())
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.backendCreateBucket("test")
+		ts.backendPutString("test", "test", nil, "test")
+		_, err := svc.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("test"),
+		})
+		if !hasErrorCode(err, gofakes3.ErrBucketNotEmpty) {
+			t.Fatal("expected ErrBucketNotEmpty, found", err)
+		}
+	})
 }
 
 func TestDeleteMulti(t *testing.T) {
@@ -178,9 +208,9 @@ func TestDeleteMulti(t *testing.T) {
 		defer ts.Close()
 		svc := ts.s3Client()
 
-		ts.putString(defaultBucket, "foo", nil, "one")
-		ts.putString(defaultBucket, "bar", nil, "two")
-		ts.putString(defaultBucket, "baz", nil, "three")
+		ts.backendPutString(defaultBucket, "foo", nil, "one")
+		ts.backendPutString(defaultBucket, "bar", nil, "two")
+		ts.backendPutString(defaultBucket, "baz", nil, "three")
 
 		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
 			Bucket: aws.String(defaultBucket),
@@ -200,9 +230,9 @@ func TestDeleteMulti(t *testing.T) {
 		defer ts.Close()
 		svc := ts.s3Client()
 
-		ts.putString(defaultBucket, "foo", nil, "one")
-		ts.putString(defaultBucket, "bar", nil, "two")
-		ts.putString(defaultBucket, "baz", nil, "three")
+		ts.backendPutString(defaultBucket, "foo", nil, "one")
+		ts.backendPutString(defaultBucket, "bar", nil, "two")
+		ts.backendPutString(defaultBucket, "baz", nil, "three")
 
 		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
 			Bucket: aws.String(defaultBucket),
@@ -217,6 +247,89 @@ func TestDeleteMulti(t *testing.T) {
 		assertDeletedKeys(t, rs, "bar", "foo")
 		ts.assertLs(defaultBucket, "", nil, []string{"baz"})
 	})
+}
+
+func TestGetObjectRange(t *testing.T) {
+	assertRange := func(ts *testServer, key string, hdr string, expected []byte) {
+		svc := ts.s3Client()
+		obj, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(key),
+			Range:  aws.String(hdr),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		out, err := ioutil.ReadAll(obj.Body)
+		ts.OK(err)
+		if !bytes.Equal(expected, out) {
+			ts.Fatal("range failed", hdr, err)
+		}
+	}
+
+	in := randomFileBody(1024)
+
+	for idx, tc := range []struct {
+		hdr      string
+		expected []byte
+	}{
+		{"bytes=0-", in},
+		{"bytes=1-", in[1:]},
+		{"bytes=0-0", in[:1]},
+		{"bytes=0-1", in[:2]},
+		{"bytes=1023-1023", in[1023:1024]},
+
+		// if the requested end is beyond the real end, it should still work
+		{"bytes=1023-1024", in[1023:1024]},
+
+		// if the requested start is beyond the real end, it should still work
+		{"bytes=1024-1024", []byte{}},
+
+		// suffix-byte-range-spec:
+		{"bytes=-0", []byte{}},
+		{"bytes=-1", in[1023:1024]},
+		{"bytes=-1024", in},
+		{"bytes=-1025", in},
+	} {
+		t.Run(fmt.Sprintf("%d/%s", idx, tc.hdr), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			ts.backendPutBytes(defaultBucket, "foo", nil, in)
+			assertRange(ts, "foo", tc.hdr, tc.expected)
+		})
+	}
+}
+
+func TestGetObjectRangeInvalid(t *testing.T) {
+	assertRangeInvalid := func(ts *testServer, key string, hdr string) {
+		svc := ts.s3Client()
+		_, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(key),
+			Range:  aws.String(hdr),
+		})
+		if !hasErrorCode(err, gofakes3.ErrInvalidRange) {
+			ts.Fatal("expected ErrInvalidRange, found", err)
+		}
+	}
+
+	in := randomFileBody(1024)
+
+	for idx, tc := range []struct {
+		hdr string
+	}{
+		{"boats=0-0"},
+		{"bytes="},
+	} {
+		t.Run(fmt.Sprintf("%d/%s", idx, tc.hdr), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			ts.backendPutBytes(defaultBucket, "foo", nil, in)
+			assertRangeInvalid(ts, "foo", tc.hdr)
+		})
+	}
 }
 
 func TestCreateObjectBrowserUpload(t *testing.T) {

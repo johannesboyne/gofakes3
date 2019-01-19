@@ -198,7 +198,8 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 	return nil
 }
 
-// DeleteBucket creates a new S3 bucket in the BoltDB storage.
+// DeleteBucket deletes the bucket in the underlying backend, if and only if it
+// contains no items.
 func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "DELETE BUCKET:", bucket)
 	return g.storage.DeleteBucket(bucket)
@@ -226,11 +227,20 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	g.log.Print(LogInfo, "Bucket:", bucket)
 	g.log.Print(LogInfo, "└── Object:", object)
 
-	obj, err := g.storage.GetObject(bucket, object)
+	rnge, err := parseRangeHeader(r.Header.Get("Range"))
 	if err != nil {
 		return err
 	}
+
+	obj, err := g.storage.GetObject(bucket, object, rnge)
+	if err != nil {
+		return err
+	} else if obj == nil {
+		return ErrInternal
+	}
 	defer obj.Contents.Close()
+
+	obj.Range.writeHeader(obj.Size, w) // Writes Content-Length, and Content-Range if applicable.
 
 	w.Header().Set("x-amz-id-2", "LriYPLdmOdAiIfgSm/F1YsViT1LW94/xUQxMsF7xiEb1a0wiIOIxl+zbwZ163pt7")
 	w.Header().Set("x-amz-request-id", "0A49CE4060975EAC")
@@ -240,7 +250,7 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
 	w.Header().Set("ETag", "\""+hex.EncodeToString(obj.Hash)+"\"")
 	w.Header().Set("Server", "AmazonS3")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err
@@ -418,6 +428,7 @@ func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *h
 	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
 	w.Header().Set("Connection", "close")
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.Write([]byte{})
 
 	return nil

@@ -7,8 +7,8 @@ import (
 func TestRoutingSlashes(t *testing.T) {
 	ts := newTestServer(t, withoutInitialBuckets())
 	defer ts.Close()
-	ts.createBucket("test")
-	ts.putString("test", "obj", nil, "yep")
+	ts.backendCreateBucket("test")
+	ts.backendPutString("test", "obj", nil, "yep")
 
 	client := httpClient()
 

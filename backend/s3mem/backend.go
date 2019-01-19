@@ -144,7 +144,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	}, nil
 }
 
-func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, error) {
+func (db *Backend) GetObject(bucketName, objectName string, rnge *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -158,14 +158,24 @@ func (db *Backend) GetObject(bucketName, objectName string) (*gofakes3.Object, e
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
+	sz := int64(len(obj.data))
+	data := obj.data
+
+	var rngeRs *gofakes3.ObjectRange
+	if rnge != nil {
+		rngeRs = rnge.Range(sz)
+		data = data[rngeRs.Start : rngeRs.Start+rngeRs.Length]
+	}
+
 	return &gofakes3.Object{
 		Hash:     obj.hash,
 		Metadata: obj.metadata,
-		Size:     int64(len(obj.data)),
+		Size:     sz,
+		Range:    rngeRs,
 
 		// The data slice should be completely replaced if the bucket item is edited, so
 		// it should be safe to return the data slice directly.
-		Contents: readerWithDummyCloser{bytes.NewReader(obj.data)},
+		Contents: readerWithDummyCloser{bytes.NewReader(data)},
 	}, nil
 }
 

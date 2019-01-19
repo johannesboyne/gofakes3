@@ -51,7 +51,11 @@ type Backend interface {
 	//
 	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
 	// otherwise you will leak resources.
-	GetObject(bucketName, objectName string) (*Object, error)
+	//
+	// If rnge is nil, it is assumed you want the entire object. If rnge is not
+	// nil, but the underlying backend does not support range requests,
+	// implementers MUST return ErrNotImplemented.
+	GetObject(bucketName, objectName string, rnge *ObjectRangeRequest) (*Object, error)
 
 	// DeleteObject deletes an object from the bucket.
 	//

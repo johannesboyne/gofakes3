@@ -37,12 +37,13 @@ const (
 	// only for reference.
 	ErrInlineDataTooLarge ErrorCode = "InlineDataTooLarge"
 
-	// The Content-MD5 you specified is not valid.
-	ErrInvalidDigest ErrorCode = "InvalidDigest"
-
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html#bucketnamingrules
 	ErrInvalidBucketName ErrorCode = "InvalidBucketName"
 
+	// The Content-MD5 you specified is not valid.
+	ErrInvalidDigest ErrorCode = "InvalidDigest"
+
+	ErrInvalidRange         ErrorCode = "InvalidRange"
 	ErrKeyTooLong           ErrorCode = "KeyTooLongError" // This is not a typo: Error is part of the string, but redundant in the constant name
 	ErrMalformedPOSTRequest ErrorCode = "MalformedPOSTRequest"
 
@@ -214,6 +215,9 @@ func (e ErrorCode) Status() int {
 
 	case ErrRequestTimeTooSkewed:
 		return http.StatusForbidden
+
+	case ErrInvalidRange:
+		return http.StatusRequestedRangeNotSatisfiable
 
 	case ErrNoSuchBucket,
 		ErrNoSuchKey,
