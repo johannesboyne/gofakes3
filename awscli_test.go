@@ -97,7 +97,7 @@ func TestCLIRmMulti(t *testing.T) {
 
 func TestCLIDownload(t *testing.T) {
 	// NOTE: this must be set to the largest value you plan to test in the test cases.
-	var source = randomFileBody(1000000000)
+	var source = randomFileBody(100000000)
 
 	for _, tc := range []struct {
 		in []byte
