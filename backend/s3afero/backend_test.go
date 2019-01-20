@@ -49,7 +49,7 @@ func TestPutGet(t *testing.T) {
 			hasher.Write(contents)
 			hash := hasher.Sum(nil)
 
-			obj, err := backend.GetObject("test", "yep")
+			obj, err := backend.GetObject("test", "yep", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,6 +66,52 @@ func TestPutGet(t *testing.T) {
 
 			if !bytes.Equal(contents, result) {
 				t.Fatal(result, "!=", contents)
+			}
+			if obj.Size != int64(len(contents)) {
+				t.Fatal(obj.Size, "!=", len(contents))
+			}
+			if !bytes.Equal(obj.Hash, hash) {
+				t.Fatal(hex.EncodeToString(obj.Hash), "!=", hex.EncodeToString(hash))
+			}
+		})
+	}
+}
+
+func TestPutGetRange(t *testing.T) {
+	backends := testingBackends(t)
+
+	for _, backend := range backends {
+		t.Run("", func(t *testing.T) {
+			meta := map[string]string{
+				"foo": "bar",
+			}
+
+			contents := []byte("contents")
+			expected := contents[1:7]
+			if err := backend.PutObject("test", "yep", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
+				t.Fatal(err)
+			}
+			hasher := md5.New()
+			hasher.Write(contents)
+			hash := hasher.Sum(nil)
+
+			obj, err := backend.GetObject("test", "yep", &gofakes3.ObjectRangeRequest{Start: 1, End: 6})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(obj.Metadata, meta) {
+				t.Fatal(obj.Metadata, "!=", meta)
+			}
+
+			result, err := ioutil.ReadAll(obj.Contents)
+			defer obj.Contents.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !bytes.Equal(expected, result) {
+				t.Fatal(result, "!=", expected)
 			}
 			if obj.Size != int64(len(contents)) {
 				t.Fatal(obj.Size, "!=", len(contents))

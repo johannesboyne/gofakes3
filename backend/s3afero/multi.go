@@ -297,7 +297,7 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 	}, nil
 }
 
-func (db *MultiBucketBackend) GetObject(bucketName, objectName string) (*gofakes3.Object, error) {
+func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (obj *gofakes3.Object, rerr error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -318,12 +318,28 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string) (*gofakes
 		return nil, err
 	}
 
+	defer func() {
+		// If an error occurs, the caller won't have access to Object.Body in order to close it:
+		if rerr != nil {
+			f.Close()
+		}
+	}()
+
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
+
+	var rdr io.ReadCloser = f
+	rnge := rangeRequest.Range(size)
+	if rnge != nil {
+		if _, err := f.Seek(rnge.Start, io.SeekStart); err != nil {
+			return nil, err
+		}
+		rdr = limitReadCloser(rdr, f.Close, rnge.Length)
+	}
 
 	meta, err := db.metaStore.loadMeta(bucketName, objectName, size, mtime)
 	if err != nil {
@@ -333,8 +349,9 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string) (*gofakes
 	return &gofakes3.Object{
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
+		Range:    rnge,
 		Size:     size,
-		Contents: f,
+		Contents: rdr,
 	}, nil
 }
 

@@ -221,7 +221,7 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 	}, nil
 }
 
-func (db *SingleBucketBackend) GetObject(bucketName, objectName string) (*gofakes3.Object, error) {
+func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
 	if bucketName != db.name {
 		return nil, gofakes3.BucketNotFound(bucketName)
 	}
@@ -243,6 +243,15 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string) (*gofake
 
 	size, mtime := stat.Size(), stat.ModTime()
 
+	var rdr io.ReadCloser = f
+	rnge := rangeRequest.Range(size)
+	if rnge != nil {
+		if _, err := f.Seek(rnge.Start, io.SeekStart); err != nil {
+			return nil, err
+		}
+		rdr = limitReadCloser(rdr, f.Close, rnge.Length)
+	}
+
 	meta, err := db.metaStore.loadMeta(bucketName, objectName, size, mtime)
 	if err != nil {
 		return nil, err
@@ -252,7 +261,8 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string) (*gofake
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
-		Contents: f,
+		Range:    rnge,
+		Contents: rdr,
 	}, nil
 }
 

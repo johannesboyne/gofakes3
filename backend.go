@@ -55,7 +55,7 @@ type Backend interface {
 	// If rnge is nil, it is assumed you want the entire object. If rnge is not
 	// nil, but the underlying backend does not support range requests,
 	// implementers MUST return ErrNotImplemented.
-	GetObject(bucketName, objectName string, rnge *ObjectRangeRequest) (*Object, error)
+	GetObject(bucketName, objectName string, rangeRequest *ObjectRangeRequest) (*Object, error)
 
 	// DeleteObject deletes an object from the bucket.
 	//

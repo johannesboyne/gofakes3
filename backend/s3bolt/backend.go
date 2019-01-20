@@ -248,7 +248,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	return obj, nil
 }
 
-func (db *Backend) GetObject(bucketName, objectName string, rnge *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
 	var t boltObject
 
 	err := db.bolt.View(func(tx *bolt.Tx) error {
@@ -273,7 +273,7 @@ func (db *Backend) GetObject(bucketName, objectName string, rnge *gofakes3.Objec
 		return nil, err
 	}
 
-	return t.Object(rnge), nil
+	return t.Object(rangeRequest), nil
 }
 
 func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
