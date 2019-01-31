@@ -75,7 +75,7 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 				Key:          item.key,
 				LastModified: gofakes3.NewContentTime(item.lastModified),
 				ETag:         `"` + hex.EncodeToString(item.hash) + `"`,
-				Size:         len(item.data),
+				Size:         int64(len(item.data)),
 			})
 		}
 	}
@@ -144,7 +144,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	}, nil
 }
 
-func (db *Backend) GetObject(bucketName, objectName string, rnge *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -161,17 +161,16 @@ func (db *Backend) GetObject(bucketName, objectName string, rnge *gofakes3.Objec
 	sz := int64(len(obj.data))
 	data := obj.data
 
-	var rngeRs *gofakes3.ObjectRange
+	rnge := rangeRequest.Range(sz)
 	if rnge != nil {
-		rngeRs = rnge.Range(sz)
-		data = data[rngeRs.Start : rngeRs.Start+rngeRs.Length]
+		data = data[rnge.Start : rnge.Start+rnge.Length]
 	}
 
 	return &gofakes3.Object{
 		Hash:     obj.hash,
 		Metadata: obj.metadata,
 		Size:     sz,
-		Range:    rngeRs,
+		Range:    rnge,
 
 		// The data slice should be completely replaced if the bucket item is edited, so
 		// it should be safe to return the data slice directly.

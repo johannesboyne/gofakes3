@@ -2,8 +2,10 @@ package gofakes3
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -118,7 +120,7 @@ type Content struct {
 	Key          string      `xml:"Key"`
 	LastModified ContentTime `xml:"LastModified"`
 	ETag         string      `xml:"ETag"`
-	Size         int         `xml:"Size"`
+	Size         int64       `xml:"Size"`
 	StorageClass string      `xml:"StorageClass"`
 }
 
@@ -159,6 +161,17 @@ type DeleteResult struct {
 	Error   []ErrorResult `xml:",omitempty"`
 }
 
+func (d DeleteResult) AsError() error {
+	if len(d.Error) == 0 {
+		return nil
+	}
+	var strs = make([]string, 0, len(d.Error))
+	for _, er := range d.Error {
+		strs = append(strs, er.String())
+	}
+	return fmt.Errorf("delete failed:\n%s", strings.Join(strs, "\n"))
+}
+
 type ErrorResult struct {
 	XMLName   xml.Name  `xml:"Error"`
 	Key       string    `xml:"Key,omitempty"`
@@ -166,6 +179,10 @@ type ErrorResult struct {
 	Message   string    `xml:"Message,omitempty"`
 	Resource  string    `xml:"Resource,omitempty"`
 	RequestID string    `xml:"RequestId,omitempty"`
+}
+
+func (er ErrorResult) String() string {
+	return fmt.Sprintf("%s: [%s] %s", er.Key, er.Code, er.Message)
 }
 
 type InitiateMultipartUpload struct {

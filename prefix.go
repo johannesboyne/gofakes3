@@ -34,6 +34,28 @@ func NewPrefix(prefix, delim *string) (p Prefix) {
 	return p
 }
 
+// FilePrefix returns the path portion, then the remaining portion of the
+// Prefix if the Delimiter is "/". If the Delimiter is not set, or not "/",
+// ok will be false.
+//
+// For example:
+//	/foo/bar/  : path: /foo/bar  remaining: ""
+//	/foo/bar/b : path: /foo/bar  remaining: "b"
+//	/foo/bar   : path: /foo      remaining: "bar"
+//
+func (p Prefix) FilePrefix() (path, remaining string, ok bool) {
+	if !p.HasPrefix || !p.HasDelimiter || p.Delimiter != "/" {
+		return "", "", ok
+	}
+
+	idx := strings.LastIndexByte(p.Prefix, '/')
+	if idx < 0 {
+		return "", p.Prefix, true
+	} else {
+		return p.Prefix[:idx], p.Prefix[idx+1:], true
+	}
+}
+
 // PrefixMatch checks whether key starts with prefix. If the prefix does not
 // match, nil is returned.
 //

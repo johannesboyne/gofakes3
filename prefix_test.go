@@ -1,20 +1,15 @@
 package gofakes3
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
 
 func TestPrefixMatch(t *testing.T) {
-	// Cheapo helpers for hiding pointer strings, used to increase information density
-	// in the test case table:
+	// Cheapo helpers for hiding pointer strings, which are used to increase
+	// information density in the test case table:
 	s := func(v string) *string { return &v }
-	unwrap := func(v *string) string {
-		if v != nil {
-			return *v
-		}
-		return ""
-	}
 
 	for idx, tc := range []struct {
 		key    string
@@ -47,8 +42,8 @@ func TestPrefixMatch(t *testing.T) {
 			prefix := Prefix{
 				HasPrefix:    tc.p != nil,
 				HasDelimiter: tc.d != nil,
-				Prefix:       unwrap(tc.p),
-				Delimiter:    unwrap(tc.d),
+				Prefix:       unwrapStr(tc.p),
+				Delimiter:    unwrapStr(tc.d),
 			}
 			match := prefix.Match(tc.key)
 			if (tc.out == nil) != (match == nil) {
@@ -85,4 +80,50 @@ func TestNewPrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrefixFilePrefix(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	for idx, tc := range []struct {
+		p, d      *string
+		ok        bool
+		path, rem string
+	}{
+		{s("foo/bar"), s("/"), true, "foo", "bar"},
+		{s("foo/bar/"), s("/"), true, "foo/bar", ""},
+		{s("foo/bar/b"), s("/"), true, "foo/bar", "b"},
+		{s("foo"), s("/"), true, "", "foo"},
+		{s("foo/"), s("/"), true, "foo", ""},
+		{s("/"), s("/"), true, "", ""},
+		{s(""), s("/"), true, "", ""},
+
+		{s(""), nil, false, "", ""},
+		{s("foo"), nil, false, "", ""},
+		{s("foo/bar"), nil, false, "", ""},
+		{s("foo-bar"), s("-"), false, "", ""},
+	} {
+		t.Run(fmt.Sprintf("%d/(%s-%s)", idx, tc.path, tc.rem), func(t *testing.T) {
+			prefix := NewPrefix(tc.p, tc.d)
+
+			foundPath, foundRem, ok := prefix.FilePrefix()
+			if tc.ok != ok {
+				t.Fatal()
+			} else if tc.ok {
+				if tc.path != foundPath {
+					t.Fatal("prefix path", tc.path, "!=", foundPath)
+				}
+				if tc.rem != foundRem {
+					t.Fatal("prefix rem", tc.rem, "!=", foundRem)
+				}
+			}
+		})
+	}
+}
+
+func unwrapStr(v *string) string {
+	if v != nil {
+		return *v
+	}
+	return ""
 }
