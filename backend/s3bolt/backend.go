@@ -125,8 +125,8 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, err
 }
 
-func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
-	var bucket *gofakes3.Bucket
+func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	var bucket *gofakes3.ListBucketResult
 
 	mod := gofakes3.NewContentTime(db.timeSource.Now())
 
@@ -137,7 +137,7 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 		}
 
 		c := b.Cursor()
-		bucket = gofakes3.NewBucket(name)
+		bucket = gofakes3.NewListBucketResult(name)
 
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			key := string(k)
@@ -273,7 +273,9 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 		return nil, err
 	}
 
-	return t.Object(rangeRequest), nil
+	// FIXME: objectName here is a bit of a hack; this can be cleaned up when we have a
+	// database migration script.
+	return t.Object(objectName, rangeRequest), nil
 }
 
 func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
@@ -291,6 +293,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		}
 
 		data, err := bson.Marshal(&boltObject{
+			Name:     objectName,
 			Metadata: meta,
 			Size:     int64(len(bts)),
 			Contents: bts,

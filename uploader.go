@@ -219,7 +219,7 @@ func (u *uploader) ListParts(bucket, object string, uploadID UploadID, marker in
 
 		result.Parts = append(result.Parts, ListMultipartUploadPartItem{
 			ETag:         part.ETag,
-			Size:         len(part.Body),
+			Size:         int64(len(part.Body)),
 			PartNumber:   partNumber,
 			LastModified: part.LastModified,
 		})

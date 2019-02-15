@@ -55,7 +55,9 @@ const (
 //
 // Logic is delegated to other components, like Backend or uploader.
 type GoFakeS3 struct {
-	storage           Backend
+	storage   Backend
+	versioned VersionedBackend
+
 	timeSource        TimeSource
 	timeSkew          time.Duration
 	metadataSizeLimit int
@@ -78,6 +80,8 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		uploader:          newUploader(),
 		requestID:         0,
 	}
+	s3.versioned, _ = backend.(VersionedBackend)
+
 	for _, opt := range options {
 		opt(s3)
 	}
@@ -156,9 +160,6 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 	w.WriteHeader(resp.ErrorCode().Status())
 
 	if r.Method != http.MethodHead {
-		w.Header().Set("Content-Type", "application/xml")
-
-		w.Write([]byte(xml.Header))
 		if err := g.xmlEncoder(w).Encode(resp); err != nil {
 			g.log.Print(LogErr, err)
 			return
@@ -166,8 +167,7 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 	}
 }
 
-// Get a list of all Buckets
-func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) listBuckets(w http.ResponseWriter, r *http.Request) error {
 	buckets, err := g.storage.ListBuckets()
 	if err != nil {
 		return err
@@ -181,40 +181,36 @@ func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
 			DisplayName: "GoFakeS3",
 		},
 	}
-	x, err := xml.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
 
-	w.Header().Set("Content-Type", "application/xml")
-	w.Write([]byte(xml.Header))
-	w.Write(x)
-	return nil
+	return g.xmlEncoder(w).Encode(s)
 }
 
-// GetBucket lists the contents of a bucket.
-func (g *GoFakeS3) getBucket(bucketName string, w http.ResponseWriter, r *http.Request) error {
-	g.log.Print(LogInfo, "GET BUCKET")
+func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.Request) error {
+	g.log.Print(LogInfo, "LIST BUCKET")
 
 	prefix := prefixFromQuery(r.URL.Query())
 
 	g.log.Print(LogInfo, "bucketname:", bucketName)
 	g.log.Print(LogInfo, "prefix    :", prefix)
 
-	bucket, err := g.storage.GetBucket(bucketName, prefix)
+	bucket, err := g.storage.ListBucket(bucketName, prefix)
 	if err != nil {
 		return err
 	}
 
-	x, err := xml.MarshalIndent(bucket, "", "  ")
+	return g.xmlEncoder(w).Encode(bucket)
+}
+
+func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, r *http.Request) error {
+	prefix := prefixFromQuery(r.URL.Query())
+	if g.versioned == nil {
+		return ErrNotImplemented
+	}
+	bucket, err := g.versioned.ListBucketVersions(bucketName, prefix)
 	if err != nil {
 		return err
 	}
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.Write([]byte(xml.Header))
-	w.Write(x)
-	return nil
+	return g.xmlEncoder(w).Encode(bucket)
 }
 
 // CreateBucket creates a new S3 bucket in the BoltDB storage.
@@ -228,7 +224,6 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	w.Header().Set("Host", r.Header.Get("Host"))
 	w.Header().Set("Location", "/"+bucket)
 	w.Write([]byte{})
 	return nil
@@ -255,7 +250,13 @@ func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Requ
 }
 
 // GetObject retrievs a bucket object.
-func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) getObject(
+	bucket, object string,
+	versionID VersionID,
+	w http.ResponseWriter,
+	r *http.Request,
+) error {
+
 	g.log.Print(LogInfo, "GET OBJECT")
 	g.log.Print(LogInfo, "Bucket:", bucket)
 	g.log.Print(LogInfo, "└── Object:", object)
@@ -265,22 +266,37 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 		return err
 	}
 
-	obj, err := g.storage.GetObject(bucket, object, rnge)
-	if err != nil {
-		return err
-	} else if obj == nil {
+	var obj *Object
+
+	{ // get object from backend
+		if versionID == "" {
+			obj, err = g.storage.GetObject(bucket, object, rnge)
+			if err != nil {
+				return err
+			}
+		} else {
+			if g.versioned == nil {
+				return ErrNotImplemented
+			}
+			obj, err = g.versioned.GetObjectVersion(bucket, object, versionID, rnge)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if obj == nil {
+		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
 		return ErrInternal
 	}
 	defer obj.Contents.Close()
 
-	obj.Range.writeHeader(obj.Size, w) // Writes Content-Length, and Content-Range if applicable.
-
-	for mk, mv := range obj.Metadata {
-		w.Header().Set(mk, mv)
+	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
+		return err
 	}
-	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
+
+	// Writes Content-Length, and Content-Range if applicable:
+	obj.Range.writeHeader(obj.Size, w)
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err
@@ -289,7 +305,64 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	return nil
 }
 
-// CreateObject (Browser Upload) creates a new S3 object.
+// writeGetOrHeadObjectResponse contains shared logic for constructing headers for
+// a HEAD and a GET request for a /bucket/object URL.
+func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWriter, r *http.Request) error {
+	// "If the current version of the object is a delete marker, Amazon S3
+	// behaves as if the object was deleted and includes x-amz-delete-marker:
+	// true in the response."
+	if obj.IsDeleteMarker {
+		w.Header().Set("x-amz-version-id", string(obj.VersionID))
+		w.Header().Set("x-amz-delete-marker", "true")
+		return KeyNotFound(obj.Name)
+	}
+
+	for mk, mv := range obj.Metadata {
+		w.Header().Set(mk, mv)
+	}
+	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
+
+	if obj.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(obj.VersionID))
+	}
+	return nil
+}
+
+// headObject retrieves only meta information of an object and not the whole.
+func (g *GoFakeS3) headObject(
+	bucket, object string,
+	versionID VersionID,
+	w http.ResponseWriter,
+	r *http.Request,
+) error {
+
+	g.log.Print(LogInfo, "HEAD OBJECT")
+	g.log.Print(LogInfo, "Bucket:", bucket)
+	g.log.Print(LogInfo, "└── Object:", object)
+
+	obj, err := g.storage.HeadObject(bucket, object)
+	if err != nil {
+		return err
+	}
+	if obj == nil {
+		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
+		return ErrInternal
+	}
+	defer obj.Contents.Close()
+
+	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
+		return err
+	}
+
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
+
+	return nil
+}
+
+// createObjectBrowserUpload allows objects to be created from a multipart upload initiated
+// by a browser form.
 func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "CREATE OBJECT THROUGH BROWSER UPLOAD")
 
@@ -419,39 +492,7 @@ func (g *GoFakeS3) deleteMulti(bucket string, w http.ResponseWriter, r *http.Req
 		out.Deleted = nil
 	}
 
-	x, err := xml.MarshalIndent(&out, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	w.Write([]byte(xml.Header))
-	w.Write(x)
-	return nil
-}
-
-// HeadObject retrieves only meta information of an object and not the whole.
-func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
-	g.log.Print(LogInfo, "HEAD OBJECT")
-
-	g.log.Print(LogInfo, "Bucket:", bucket)
-	g.log.Print(LogInfo, "└── Object:", object)
-
-	obj, err := g.storage.HeadObject(bucket, object)
-	if err != nil {
-		return err
-	}
-	defer obj.Contents.Close()
-
-	for mk, mv := range obj.Metadata {
-		w.Header().Set(mk, mv)
-	}
-	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
-	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Write([]byte{})
-
-	return nil
+	return g.xmlEncoder(w).Encode(out)
 }
 
 func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.ResponseWriter, r *http.Request) error {
@@ -540,15 +581,9 @@ func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID
 func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "complete multipart upload", bucket, object, uploadID)
 
-	body, err := ioutil.ReadAll(r.Body)
-	defer r.Body.Close()
-	if err != nil {
-		return err
-	}
-
 	var in CompleteMultipartUploadRequest
-	if err := xml.Unmarshal(body, &in); err != nil {
-		return ErrorMessage(ErrMalformedXML, err.Error())
+	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
+		return err
 	}
 
 	upload, err := g.uploader.Complete(bucket, object, uploadID)
@@ -614,6 +649,25 @@ func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID Uplo
 	return g.xmlEncoder(w).Encode(out)
 }
 
+func (g *GoFakeS3) getBucketVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
+	if g.versioned == nil {
+		return ErrNotImplemented
+	}
+	out := g.versioned.VersioningConfiguration(bucket)
+	return g.xmlEncoder(w).Encode(out)
+}
+
+func (g *GoFakeS3) putBucketVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
+	if g.versioned == nil {
+		return ErrNotImplemented
+	}
+	var in VersioningConfiguration
+	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
+		return err
+	}
+	return g.versioned.SetVersioningConfiguration(bucket, in)
+}
+
 func (g *GoFakeS3) ensureBucketExists(bucket string) error {
 	exists, err := g.storage.BucketExists(bucket)
 	if err != nil {
@@ -625,10 +679,27 @@ func (g *GoFakeS3) ensureBucketExists(bucket string) error {
 	return nil
 }
 
-func (g *GoFakeS3) xmlEncoder(w io.Writer) *xml.Encoder {
+func (g *GoFakeS3) xmlEncoder(w http.ResponseWriter) *xml.Encoder {
+	w.Write([]byte(xml.Header))
+	w.Header().Set("Content-Type", "application/xml")
+
 	xe := xml.NewEncoder(w)
 	xe.Indent("", "  ")
 	return xe
+}
+
+func (g *GoFakeS3) xmlDecodeBody(rdr io.ReadCloser, into interface{}) error {
+	body, err := ioutil.ReadAll(rdr)
+	defer rdr.Close()
+	if err != nil {
+		return err
+	}
+
+	if err := xml.Unmarshal(body, into); err != nil {
+		return ErrorMessage(ErrMalformedXML, err.Error())
+	}
+
+	return nil
 }
 
 func formatHeaderTime(t time.Time) string {

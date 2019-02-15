@@ -7,7 +7,7 @@ import (
 )
 
 func TestBucketAddPrefix(t *testing.T) {
-	b := NewBucket("yep")
+	b := NewListBucketResult("yep")
 	b.AddPrefix("prefix1")
 	if len(b.CommonPrefixes) != 1 {
 		t.Fatal("unexpected prefixes length")

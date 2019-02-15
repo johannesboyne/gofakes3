@@ -3,7 +3,6 @@ package gofakes3
 import (
 	"encoding/xml"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -42,45 +41,6 @@ type BucketInfo struct {
 	CreationDate ContentTime `xml:"CreationDate"`
 }
 
-type Bucket struct {
-	XMLName        xml.Name       `xml:"ListBucketResult"`
-	Xmlns          string         `xml:"xmlns,attr"`
-	Name           string         `xml:"Name"`
-	Prefix         string         `xml:"Prefix"`
-	Marker         string         `xml:"Marker"`
-	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
-	Contents       []*Content     `xml:"Contents"`
-
-	// prefixes maintains an index of prefixes that have already been seen.
-	// This is a convenience for backend implementers like s3bolt and s3mem,
-	// which operate on a full, flat list of keys.
-	prefixes map[string]bool
-}
-
-func NewBucket(name string) *Bucket {
-	return &Bucket{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:  name,
-	}
-}
-
-func (b *Bucket) Add(item *Content) {
-	if item.StorageClass == "" {
-		item.StorageClass = "STANDARD"
-	}
-	b.Contents = append(b.Contents, item)
-}
-
-func (b *Bucket) AddPrefix(prefix string) {
-	if b.prefixes == nil {
-		b.prefixes = map[string]bool{}
-	} else if b.prefixes[prefix] {
-		return
-	}
-	b.prefixes[prefix] = true
-	b.CommonPrefixes = append(b.CommonPrefixes, CommonPrefix{Prefix: prefix})
-}
-
 // CommonPrefix is used in Bucket.CommonPrefixes to list partial delimited keys
 // that represent pseudo-directories.
 type CommonPrefix struct {
@@ -117,11 +77,11 @@ type CompleteMultipartUploadResult struct {
 }
 
 type Content struct {
-	Key          string      `xml:"Key"`
-	LastModified ContentTime `xml:"LastModified"`
-	ETag         string      `xml:"ETag"`
-	Size         int64       `xml:"Size"`
-	StorageClass string      `xml:"StorageClass"`
+	Key          string       `xml:"Key"`
+	LastModified ContentTime  `xml:"LastModified"`
+	ETag         string       `xml:"ETag"`
+	Size         int64        `xml:"Size"`
+	StorageClass StorageClass `xml:"StorageClass"`
 }
 
 type ContentTime struct {
@@ -189,6 +149,132 @@ type InitiateMultipartUpload struct {
 	UploadID UploadID `xml:"UploadId"`
 }
 
+type ListBucketResult struct {
+	XMLName        xml.Name       `xml:"ListBucketResult"`
+	Xmlns          string         `xml:"xmlns,attr"`
+	Name           string         `xml:"Name"`
+	Prefix         string         `xml:"Prefix"`
+	Marker         string         `xml:"Marker"`
+	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
+	Contents       []*Content     `xml:"Contents"`
+
+	// prefixes maintains an index of prefixes that have already been seen.
+	// This is a convenience for backend implementers like s3bolt and s3mem,
+	// which operate on a full, flat list of keys.
+	prefixes map[string]bool
+}
+
+func NewListBucketResult(name string) *ListBucketResult {
+	return &ListBucketResult{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:  name,
+	}
+}
+
+func (b *ListBucketResult) Add(item *Content) {
+	b.Contents = append(b.Contents, item)
+}
+
+func (b *ListBucketResult) AddPrefix(prefix string) {
+	if b.prefixes == nil {
+		b.prefixes = map[string]bool{}
+	} else if b.prefixes[prefix] {
+		return
+	}
+	b.prefixes[prefix] = true
+	b.CommonPrefixes = append(b.CommonPrefixes, CommonPrefix{Prefix: prefix})
+}
+
+type DeleteMarker struct {
+	XMLName      xml.Name    `xml:"DeleteMarker"`
+	Key          string      `xml:"Key"`
+	IsLatest     bool        `xml:"IsLatest"`
+	LastModified ContentTime `xml:"LastModified,omitempty"`
+	Owner        *UserInfo   `xml:"Owner,omitempty"`
+}
+
+func (d DeleteMarker) isVersionItem() {}
+
+type Version struct {
+	XMLName      xml.Name    `xml:"Version"`
+	Key          string      `xml:"Key"`
+	IsLatest     bool        `xml:"IsLatest"`
+	LastModified ContentTime `xml:"LastModified,omitempty"`
+	Size         int64       `xml:"Size"`
+
+	// According to the S3 docs, this is always STANDARD for a Version:
+	StorageClass StorageClass `xml:"StorageClass"`
+
+	ETag  string    `xml:"ETag"`
+	Owner *UserInfo `xml:"Owner,omitempty"`
+}
+
+func (v Version) isVersionItem() {}
+
+type VersionItem interface {
+	isVersionItem()
+}
+
+type ListBucketVersionsResult struct {
+	XMLName        xml.Name       `xml:"ListBucketVersionsResult"`
+	Xmlns          string         `xml:"xmlns,attr"`
+	Name           string         `xml:"Name"`
+	Prefix         string         `xml:"Prefix"`
+	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
+	IsTruncated    bool           `xml:"IsTruncated"`
+	MaxKeys        int            `xml:"MaxKeys"`
+
+	// Marks the last Key returned in a truncated response.
+	KeyMarker string `xml:"KeyMarker,omitempty"`
+
+	// When the number of responses exceeds the value of MaxKeys, NextKeyMarker
+	// specifies the first key not returned that satisfies the search criteria.
+	// Use this value for the key-marker request parameter in a subsequent
+	// request.
+	NextKeyMarker string `xml:"NextKeyMarker,omitempty"`
+
+	// Marks the last version of the Key returned in a truncated response.
+	VersionIDMarker string `xml:"VersionIdMarker,omitempty"`
+
+	// When the number of responses exceeds the value of MaxKeys,
+	// NextVersionIdMarker specifies the first object version not returned that
+	// satisfies the search criteria. Use this value for the version-id-marker
+	// request parameter in a subsequent request.
+	NextVersionIDMarker string `xml:"NextVersionIdMarker,omitempty"`
+
+	// AWS responds with a list of either <Version> or <DeleteMarker> objects. The order
+	// needs to be preserved and they need to be direct of ListBucketVersionsResult:
+	//	<ListBucketVersionsResult>
+	//		<DeleteMarker ... />
+	//		<Version ... />
+	//		<DeleteMarker ... />
+	//		<Version ... />
+	//	</ListBucketVersionsResult>
+	Versions []VersionItem
+
+	// prefixes maintains an index of prefixes that have already been seen.
+	// This is a convenience for backend implementers like s3bolt and s3mem,
+	// which operate on a full, flat list of keys.
+	prefixes map[string]bool
+}
+
+func NewListBucketVersionsResult(bucketName string) *ListBucketVersionsResult {
+	return &ListBucketVersionsResult{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:  bucketName,
+	}
+}
+
+func (b *ListBucketVersionsResult) AddPrefix(prefix string) {
+	if b.prefixes == nil {
+		b.prefixes = map[string]bool{}
+	} else if b.prefixes[prefix] {
+		return
+	}
+	b.prefixes[prefix] = true
+	b.CommonPrefixes = append(b.CommonPrefixes, CommonPrefix{Prefix: prefix})
+}
+
 type ListMultipartUploadsResult struct {
 	Bucket string `xml:"Bucket"`
 
@@ -222,27 +308,27 @@ type ListMultipartUploadsResult struct {
 }
 
 type ListMultipartUploadItem struct {
-	Key          string      `xml:"Key"`
-	UploadID     UploadID    `xml:"UploadId"`
-	Initiator    *UserInfo   `xml:"Initiator,omitempty"`
-	Owner        *UserInfo   `xml:"Owner,omitempty"`
-	StorageClass string      `xml:"StorageClass,omitempty"`
-	Initiated    ContentTime `xml:"Initiated,omitempty"`
+	Key          string       `xml:"Key"`
+	UploadID     UploadID     `xml:"UploadId"`
+	Initiator    *UserInfo    `xml:"Initiator,omitempty"`
+	Owner        *UserInfo    `xml:"Owner,omitempty"`
+	StorageClass StorageClass `xml:"StorageClass,omitempty"`
+	Initiated    ContentTime  `xml:"Initiated,omitempty"`
 }
 
 type ListMultipartUploadPartsResult struct {
 	XMLName xml.Name `xml:"ListPartsResult"`
 
-	Bucket               string    `xml:"Bucket"`
-	Key                  string    `xml:"Key"`
-	UploadID             UploadID  `xml:"UploadId"`
-	StorageClass         string    `xml:"StorageClass,omitempty"`
-	Initiator            *UserInfo `xml:"Initiator,omitempty"`
-	Owner                *UserInfo `xml:"Owner,omitempty"`
-	PartNumberMarker     int       `xml:"PartNumberMarker"`
-	NextPartNumberMarker int       `xml:"NextPartNumberMarker"`
-	MaxParts             int64     `xml:"MaxParts"`
-	IsTruncated          bool      `xml:"IsTruncated,omitempty"`
+	Bucket               string       `xml:"Bucket"`
+	Key                  string       `xml:"Key"`
+	UploadID             UploadID     `xml:"UploadId"`
+	StorageClass         StorageClass `xml:"StorageClass,omitempty"`
+	Initiator            *UserInfo    `xml:"Initiator,omitempty"`
+	Owner                *UserInfo    `xml:"Owner,omitempty"`
+	PartNumberMarker     int          `xml:"PartNumberMarker"`
+	NextPartNumberMarker int          `xml:"NextPartNumberMarker"`
+	MaxParts             int64        `xml:"MaxParts"`
+	IsTruncated          bool         `xml:"IsTruncated,omitempty"`
 
 	Parts []ListMultipartUploadPartItem `xml:"Part"`
 }
@@ -251,7 +337,35 @@ type ListMultipartUploadPartItem struct {
 	PartNumber   int         `xml:"PartNumber"`
 	LastModified ContentTime `xml:"LastModified,omitempty"`
 	ETag         string      `xml:"ETag,omitempty"`
-	Size         int         `xml:"Size"`
+	Size         int64       `xml:"Size"`
+}
+
+// MFADeleteStatus is used by VersioningConfiguration.
+type MFADeleteStatus bool
+
+func (v *MFADeleteStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var s string
+	if err := d.DecodeElement(&s, &start); err != nil {
+		// FIXME: this doesn't seem to detect or report errors if the element is the wrong type.
+		return err
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "enabled" {
+		*v = true
+	} else if s == "disabled" {
+		*v = false
+	} else {
+		return fmt.Errorf("gofakes3: unexpected value %q for MFADeleteStatus, expected 'Enabled' or 'Disabled'", s)
+	}
+	return nil
+}
+
+func (v MFADeleteStatus) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if v {
+		return e.EncodeElement("Enabled", start)
+	} else {
+		return e.EncodeElement("Disabled", start)
+	}
 }
 
 type ObjectID struct {
@@ -261,17 +375,33 @@ type ObjectID struct {
 	VersionID string `xml:"VersionId,omitempty" json:"VersionId,omitempty"`
 }
 
-// Object contains the data retrieved from a bucket for the specified key.
-//
-// You MUST always call Contents.Close() otherwise you may leak resources.
-type Object struct {
-	Metadata map[string]string
-	Size     int64
-	Contents io.ReadCloser
-	Hash     []byte
-	Range    *ObjectRange
+type StorageClass string
+
+func (s StorageClass) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if s == "" {
+		s = StorageStandard
+	}
+	return e.EncodeElement("Enabled", start)
 }
+
+const (
+	StorageStandard StorageClass = "STANDARD"
+)
 
 // UploadID uses a string as the underlying type, but the string should only
 // represent a decimal integer. See uploader.uploadID for details.
 type UploadID string
+
+type VersionID string
+
+type VersioningConfiguration struct {
+	XMLName xml.Name         `xml:"VersioningConfiguration"`
+	Status  VersioningStatus `xml:"Status"`
+
+	// When enabled, the bucket owner must include the x-amz-mfa request header
+	// in requests to change the versioning state of a bucket and to
+	// permanently delete a versioned object.
+	MFADelete MFADeleteStatus `xml:"MfaDelete"`
+}
+
+type VersioningStatus string

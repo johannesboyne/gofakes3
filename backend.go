@@ -4,6 +4,26 @@ import (
 	"io"
 )
 
+// Object contains the data retrieved from a backend for the specified bucket
+// and object key.
+//
+// You MUST always call Contents.Close() otherwise you may leak resources.
+type Object struct {
+	Name     string
+	Metadata map[string]string
+	Size     int64
+	Contents io.ReadCloser
+	Hash     []byte
+	Range    *ObjectRange
+
+	// VersionID will be empty if bucket versioning has not been enabled.
+	VersionID VersionID
+
+	// If versioning is enabled for the bucket, this is true if this object version
+	// is a delete marker.
+	IsDeleteMarker bool
+}
+
 // Backend provides a set of operations to be implemented in order to support
 // gofakes3.
 //
@@ -16,13 +36,16 @@ type Backend interface {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTServiceGET.html
 	ListBuckets() ([]BucketInfo, error)
 
-	// GetBucket returns the contents of a bucket. Backends should use the
+	// ListBucket returns the contents of a bucket. Backends should use the
 	// supplied prefix to limit the contents of the bucket and to sort the
 	// matched items into the Contents and CommonPrefixes fields.
 	//
-	// GetBucket must return a gofakes3.ErrNoSuchBucket error if the bucket
+	// ListBucket must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
-	GetBucket(name string, prefix Prefix) (*Bucket, error)
+	//
+	// WARNING: this API does not yet support pagination; it will change when
+	// this is implemented.
+	ListBucket(name string, prefix Prefix) (*ListBucketResult, error)
 
 	// CreateBucket creates the bucket if it does not already exist. The name
 	// should be assumed to be a valid name.
@@ -55,6 +78,8 @@ type Backend interface {
 	// If rnge is nil, it is assumed you want the entire object. If rnge is not
 	// nil, but the underlying backend does not support range requests,
 	// implementers MUST return ErrNotImplemented.
+	//
+	// If the backend is a VersionedBackend, GetObject retrieves the latest version.
 	GetObject(bucketName, objectName string, rangeRequest *ObjectRangeRequest) (*Object, error)
 
 	// DeleteObject deletes an object from the bucket.
@@ -86,4 +111,27 @@ type Backend interface {
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) error
 
 	DeleteMulti(bucketName string, objects ...string) (DeleteResult, error)
+}
+
+// VersionedBucket may be optionally implemented by a Backend in order to support
+// operations on S3 object versions.
+//
+// If you don't implement VersionedBackend, requests to GoFakeS3 that attempt to
+// make use of versions will return ErrNotImplemented.
+//
+type VersionedBackend interface {
+	// VersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
+	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
+	VersioningConfiguration(bucket string) VersioningConfiguration
+
+	// SetVersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
+	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
+	SetVersioningConfiguration(bucket string, v VersioningConfiguration) error
+
+	GetObjectVersion(
+		bucketName, objectName string,
+		versionID VersionID,
+		rangeRequest *ObjectRangeRequest) (*Object, error)
+
+	ListBucketVersions(bucketName string, prefix Prefix) (*ListBucketVersionsResult, error)
 }

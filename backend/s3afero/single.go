@@ -90,7 +90,7 @@ func (db *SingleBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	}, nil
 }
 
-func (db *SingleBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
+func (db *SingleBucketBackend) ListBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	if bucket != db.name {
 		return nil, gofakes3.BucketNotFound(bucket)
 	}
@@ -106,13 +106,13 @@ func (db *SingleBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) 
 	}
 }
 
-func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.Bucket, error) {
+func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ListBucketResult, error) {
 	dirEntries, err := afero.ReadDir(db.fs, filepath.FromSlash(prefixPath))
 	if err != nil {
 		return nil, err
 	}
 
-	response := gofakes3.NewBucket(bucket)
+	response := gofakes3.NewListBucketResult(bucket)
 
 	for _, entry := range dirEntries {
 		object := entry.Name()
@@ -148,8 +148,8 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 	return response, nil
 }
 
-func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
-	response := gofakes3.NewBucket(bucket)
+func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	response := gofakes3.NewListBucketResult(bucket)
 
 	if err := afero.Walk(db.fs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -214,6 +214,7 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
@@ -258,6 +259,7 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,

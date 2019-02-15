@@ -94,7 +94,7 @@ func (db *MultiBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *MultiBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
+func (db *MultiBucketBackend) ListBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	if err := gofakes3.ValidateBucketName(bucket); err != nil {
 		return nil, gofakes3.BucketNotFound(bucket)
 	}
@@ -110,7 +110,7 @@ func (db *MultiBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) (
 	}
 }
 
-func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.Bucket, error) {
+func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ListBucketResult, error) {
 	bucketPath := path.Join(bucket, prefixPath)
 
 	dirEntries, err := afero.ReadDir(db.bucketFs, filepath.FromSlash(bucketPath))
@@ -120,7 +120,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 		return nil, err
 	}
 
-	response := gofakes3.NewBucket(bucket)
+	response := gofakes3.NewListBucketResult(bucket)
 
 	for _, entry := range dirEntries {
 		object := entry.Name()
@@ -156,7 +156,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 	return response, nil
 }
 
-func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
+func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	stat, err := db.bucketFs.Stat(filepath.FromSlash(bucket))
 	if os.IsNotExist(err) {
 		return nil, gofakes3.BucketNotFound(bucket)
@@ -166,7 +166,7 @@ func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, 
 		return nil, fmt.Errorf("gofakes3: expected %q to be a bucket path", bucket)
 	}
 
-	response := gofakes3.NewBucket(bucket)
+	response := gofakes3.NewListBucketResult(bucket)
 
 	if err := afero.Walk(db.bucketFs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -290,6 +290,7 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
@@ -347,6 +348,7 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Range:    rnge,

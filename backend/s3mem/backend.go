@@ -52,7 +52,7 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
+func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -61,7 +61,7 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 		return nil, gofakes3.BucketNotFound(name)
 	}
 
-	response := gofakes3.NewBucket(name)
+	response := gofakes3.NewListBucketResult(name)
 	for _, item := range storedBucket.data {
 		match := prefix.Match(item.key)
 		if match == nil {
@@ -137,6 +137,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     obj.hash,
 		Metadata: obj.metadata,
 		Size:     int64(len(obj.data)),
@@ -167,6 +168,7 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     obj.hash,
 		Metadata: obj.metadata,
 		Size:     sz,
