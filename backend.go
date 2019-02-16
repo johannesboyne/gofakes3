@@ -24,6 +24,19 @@ type Object struct {
 	IsDeleteMarker bool
 }
 
+type ObjectDeleteResult struct {
+	// Specifies whether the versioned object that was permanently deleted was
+	// (true) or was not (false) a delete marker. In a simple DELETE, this
+	// header indicates whether (true) or not (false) a delete marker was
+	// created.
+	IsDeleteMarker bool
+
+	// Returns the version ID of the delete marker created as a result of the
+	// DELETE operation. If you delete a specific object version, the value
+	// returned by this header is the version ID of the object version deleted.
+	VersionID VersionID
+}
+
 // Backend provides a set of operations to be implemented in order to support
 // gofakes3.
 //
@@ -84,6 +97,9 @@ type Backend interface {
 
 	// DeleteObject deletes an object from the bucket.
 	//
+	// If the backend is a VersionedBackend and versioning is enabled, this
+	// should introduce a delete marker rather than actually delete the object.
+	//
 	// DeleteObject must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
 	//
@@ -94,7 +110,7 @@ type Backend interface {
 	//	delete marker, which becomes the latest version of the object. If there
 	//	isn't a null version, Amazon S3 does not remove any objects.
 	//
-	DeleteObject(bucketName, objectName string) error
+	DeleteObject(bucketName, objectName string) (ObjectDeleteResult, error)
 
 	// HeadObject fetches the Object from the backend, but the Contents will be
 	// a no-op ReadCloser.
@@ -113,7 +129,7 @@ type Backend interface {
 	DeleteMulti(bucketName string, objects ...string) (DeleteResult, error)
 }
 
-// VersionedBucket may be optionally implemented by a Backend in order to support
+// VersionedBackend may be optionally implemented by a Backend in order to support
 // operations on S3 object versions.
 //
 // If you don't implement VersionedBackend, requests to GoFakeS3 that attempt to
@@ -132,6 +148,9 @@ type VersionedBackend interface {
 		bucketName, objectName string,
 		versionID VersionID,
 		rangeRequest *ObjectRangeRequest) (*Object, error)
+
+	// DeleteObjectVersion permanently deletes a specific object version.
+	DeleteObjectVersion(bucketName, objectName string, versionID VersionID) (ObjectDeleteResult, error)
 
 	ListBucketVersions(bucketName string, prefix Prefix) (*ListBucketVersionsResult, error)
 }

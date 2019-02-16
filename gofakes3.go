@@ -454,14 +454,45 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	return nil
 }
 
-// deleteObject deletes a S3 object from the bucket.
 func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "DELETE:", bucket, object)
-	if err := g.storage.DeleteObject(bucket, object); err != nil {
+	result, err := g.storage.DeleteObject(bucket, object)
+	if err != nil {
 		return err
 	}
-	w.Header().Set("x-amz-delete-marker", "false")
-	w.Write([]byte{})
+
+	if result.IsDeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	} else {
+		w.Header().Set("x-amz-delete-marker", "false")
+	}
+
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	}
+
+	return nil
+}
+
+func (g *GoFakeS3) deleteObjectVersion(bucket, object string, version VersionID, w http.ResponseWriter, r *http.Request) error {
+	if g.versioned == nil {
+		return ErrNotImplemented
+	}
+	result, err := g.versioned.DeleteObjectVersion(bucket, object, version)
+	if err != nil {
+		return err
+	}
+
+	if result.IsDeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	} else {
+		w.Header().Set("x-amz-delete-marker", "false")
+	}
+
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	}
+
 	return nil
 }
 

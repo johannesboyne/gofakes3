@@ -223,7 +223,7 @@ func TestPutDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := backend.DeleteObject("test", "foo"); err != nil {
+			if _, err := backend.DeleteObject("test", "foo"); err != nil {
 				t.Fatal(err)
 			}
 

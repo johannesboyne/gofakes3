@@ -159,6 +159,8 @@ func (g *GoFakeS3) routeVersion(bucket, object string, versionID VersionID, w ht
 		return g.getObject(bucket, object, versionID, w, r)
 	case "HEAD":
 		return g.headObject(bucket, object, versionID, w, r)
+	case "DELETE":
+		return g.deleteObjectVersion(bucket, object, versionID, w, r)
 	default:
 		return ErrMethodNotAllowed
 	}

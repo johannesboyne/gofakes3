@@ -425,19 +425,19 @@ func (db *MultiBucketBackend) PutObject(bucketName, objectName string, meta map[
 	return nil
 }
 
-func (db *MultiBucketBackend) DeleteObject(bucketName, objectName string) error {
+func (db *MultiBucketBackend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	// Another slighly racy check:
 	exists, err := afero.Exists(db.bucketFs, bucketName)
 	if err != nil {
-		return err
+		return result, err
 	} else if !exists {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
-	return db.deleteObjectLocked(bucketName, objectName)
+	return result, db.deleteObjectLocked(bucketName, objectName)
 }
 
 func (db *MultiBucketBackend) deleteObjectLocked(bucketName, objectName string) error {

@@ -358,15 +358,15 @@ func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string)
 	return result, nil
 }
 
-func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) error {
+func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
 	if bucketName != db.name {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	return db.deleteObjectLocked(bucketName, objectName)
+	return result, db.deleteObjectLocked(bucketName, objectName)
 }
 
 func (db *SingleBucketBackend) deleteObjectLocked(bucketName, objectName string) error {

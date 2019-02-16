@@ -309,8 +309,8 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 	})
 }
 
-func (db *Backend) DeleteObject(bucketName, objectName string) error {
-	return db.bolt.Update(func(tx *bolt.Tx) error {
+func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
+	return result, db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)

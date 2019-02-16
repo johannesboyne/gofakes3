@@ -207,19 +207,19 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 	return nil
 }
 
-func (db *Backend) DeleteObject(bucketName, objectName string) error {
+func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
 	// S3 does not report an error when attemping to delete a key that does not exist:
 	delete(bucket.data, objectName)
 
-	return nil
+	return result, nil
 }
 
 func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, err error) {
