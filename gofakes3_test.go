@@ -111,11 +111,16 @@ func TestCreateObject(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	ts.OKAll(svc.PutObject(&s3.PutObjectInput{
+	out, err := svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(defaultBucket),
 		Key:    aws.String("object"),
 		Body:   bytes.NewReader([]byte("hello")),
-	}))
+	})
+	ts.OK(err)
+
+	if *out.ETag != `"5d41402abc4b2a76b9719d911017c592"` { // md5("hello")
+		ts.Fatal("bad etag", out.ETag)
+	}
 
 	obj := ts.backendGetString(defaultBucket, "object", nil)
 	if obj != "hello" {
@@ -372,11 +377,14 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 		return httpClient().Do(req)
 	}
 
-	assertUpload := func(ts *testServer, bucket string, w *multipart.Writer, body io.Reader) {
+	assertUpload := func(ts *testServer, bucket string, w *multipart.Writer, body io.Reader, etag string) {
 		res, err := upload(ts, bucket, w, body)
 		ts.OK(err)
 		if res.StatusCode != http.StatusOK {
 			ts.Fatal("bad status", res.StatusCode)
+		}
+		if etag != "" && res.Header.Get("ETag") != etag {
+			ts.Fatal("bad etag", res.Header.Get("ETag"), etag)
 		}
 	}
 
@@ -402,7 +410,7 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 		var b bytes.Buffer
 		w := multipart.NewWriter(&b)
 		addFile(ts.TT, w, "yep", []byte("stuff"))
-		assertUpload(ts, defaultBucket, w, &b)
+		assertUpload(ts, defaultBucket, w, &b, `"c13d88cb4cb02003daedb8a84e5d272a"`)
 		ts.assertObject(defaultBucket, "yep", nil, "stuff")
 	})
 
