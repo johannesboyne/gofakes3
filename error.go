@@ -23,6 +23,9 @@ const (
 	// Raised when attempting to delete a bucket that still contains items.
 	ErrBucketNotEmpty ErrorCode = "BucketNotEmpty"
 
+	// "Indicates that the versioning configuration specified in the request is invalid"
+	ErrIllegalVersioningConfiguration ErrorCode = "IllegalVersioningConfigurationException"
+
 	// You did not provide the number of bytes specified by the Content-Length
 	// HTTP header:
 	ErrIncompleteBody ErrorCode = "IncompleteBody"
@@ -74,6 +77,8 @@ const (
 	// The specified multipart upload does not exist. The upload ID might be
 	// invalid, or the multipart upload might have been aborted or completed.
 	ErrNoSuchUpload ErrorCode = "NoSuchUpload"
+
+	ErrNoSuchVersion ErrorCode = "NoSuchVersion"
 
 	ErrRequestTimeTooSkewed ErrorCode = "RequestTimeTooSkewed"
 	ErrTooManyBuckets       ErrorCode = "TooManyBuckets"
@@ -197,6 +202,7 @@ func (e ErrorCode) Status() int {
 		return http.StatusConflict
 
 	case ErrBadDigest,
+		ErrIllegalVersioningConfiguration,
 		ErrIncompleteBody,
 		ErrIncorrectNumberOfFilesInPostRequest,
 		ErrInlineDataTooLarge,
@@ -221,7 +227,8 @@ func (e ErrorCode) Status() int {
 
 	case ErrNoSuchBucket,
 		ErrNoSuchKey,
-		ErrNoSuchUpload:
+		ErrNoSuchUpload,
+		ErrNoSuchVersion:
 		return http.StatusNotFound
 
 	case ErrNotImplemented:

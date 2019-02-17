@@ -1,7 +1,6 @@
 package s3mem
 
 import (
-	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"io"
@@ -10,18 +9,29 @@ import (
 	"github.com/johannesboyne/gofakes3"
 )
 
+type versionGenerator interface {
+	Next(b []byte) (gofakes3.VersionID, []byte)
+}
+
 type Backend struct {
-	buckets    map[string]*bucket
-	timeSource gofakes3.TimeSource
-	lock       sync.Mutex
+	buckets          map[string]*bucket
+	timeSource       gofakes3.TimeSource
+	versionGenerator versionGenerator
+	versionScratch   []byte
+	lock             sync.Mutex
 }
 
 var _ gofakes3.Backend = &Backend{}
+var _ gofakes3.VersionedBackend = &Backend{}
 
 type Option func(b *Backend)
 
 func WithTimeSource(timeSource gofakes3.TimeSource) Option {
 	return func(b *Backend) { b.timeSource = timeSource }
+}
+
+func WithVersionGenerator(vg versionGenerator) Option {
+	return func(b *Backend) { b.versionGenerator = vg }
 }
 
 func New(opts ...Option) *Backend {
@@ -33,6 +43,9 @@ func New(opts ...Option) *Backend {
 	}
 	if b.timeSource == nil {
 		b.timeSource = gofakes3.DefaultTimeSource()
+	}
+	if b.versionGenerator == nil {
+		b.versionGenerator = gofakes3.NewVersionGenerator(uint64(b.timeSource.Now().UnixNano()), 0)
 	}
 	return b
 }
@@ -63,7 +76,7 @@ func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Li
 
 	response := gofakes3.NewListBucketResult(name)
 	for _, item := range storedBucket.data {
-		match := prefix.Match(item.key)
+		match := prefix.Match(item.name)
 		if match == nil {
 			continue
 
@@ -72,7 +85,7 @@ func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Li
 
 		} else {
 			response.Add(&gofakes3.Content{
-				Key:          item.key,
+				Key:          item.name,
 				LastModified: gofakes3.NewContentTime(item.lastModified),
 				ETag:         `"` + hex.EncodeToString(item.hash) + `"`,
 				Size:         int64(len(item.data)),
@@ -94,6 +107,7 @@ func (db *Backend) CreateBucket(name string) error {
 	db.buckets[name] = &bucket{
 		name:         name,
 		creationDate: gofakes3.NewContentTime(db.timeSource.Now()),
+		versionGen:   db.nextVersion,
 		data:         map[string]*bucketItem{},
 	}
 	return nil
@@ -155,29 +169,22 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 	}
 
 	obj := bucket.data[objectName]
-	if obj == nil {
+	if obj == nil || obj.deleteMarker {
+		// FIXME: If the current version of the object is a delete marker,
+		// Amazon S3 behaves as if the object was deleted and includes
+		// x-amz-delete-marker: true in the response.
+		//
+		// The solution may be to return an object but no error if the object is
+		// a delete marker, and let the main GoFakeS3 class decide what to do.
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	sz := int64(len(obj.data))
-	data := obj.data
-
-	rnge := rangeRequest.Range(sz)
-	if rnge != nil {
-		data = data[rnge.Start : rnge.Start+rnge.Length]
+	result := obj.toObject(rangeRequest)
+	if bucket.versioning {
+		result.VersionID = ""
 	}
 
-	return &gofakes3.Object{
-		Name:     objectName,
-		Hash:     obj.hash,
-		Metadata: obj.metadata,
-		Size:     sz,
-		Range:    rnge,
-
-		// The data slice should be completely replaced if the bucket item is edited, so
-		// it should be safe to return the data slice directly.
-		Contents: readerWithDummyCloser{bytes.NewReader(data)},
-	}, nil
+	return result, nil
 }
 
 func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
@@ -196,13 +203,13 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 
 	hash := md5.Sum(bts)
 
-	bucket.data[objectName] = &bucketItem{
+	bucket.put(objectName, &bucketItem{
+		name:         objectName,
 		data:         bts,
 		hash:         hash[:],
 		metadata:     meta,
-		key:          objectName,
 		lastModified: db.timeSource.Now(),
-	}
+	})
 
 	return nil
 }
@@ -216,10 +223,7 @@ func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.
 		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
-	// S3 does not report an error when attemping to delete a key that does not exist:
-	delete(bucket.data, objectName)
-
-	return result, nil
+	return bucket.rm(objectName, db.timeSource.Now())
 }
 
 func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, err error) {
@@ -239,6 +243,90 @@ func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gof
 	}
 
 	return result, nil
+}
+
+func (db *Backend) VersioningConfiguration(bucketName string) (versioning gofakes3.VersioningConfiguration, rerr error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return versioning, gofakes3.BucketNotFound(bucketName)
+	}
+
+	versioning.SetEnabled(bucket.versioning)
+	return versioning, nil
+}
+
+func (db *Backend) SetVersioningConfiguration(bucketName string, v gofakes3.VersioningConfiguration) error {
+	if v.MFADelete {
+		return gofakes3.ErrNotImplemented
+	}
+
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return gofakes3.BucketNotFound(bucketName)
+	}
+
+	bucket.setVersioning(v.Enabled())
+
+	return nil
+}
+
+func (db *Backend) GetObjectVersion(
+	bucketName, objectName string,
+	versionID gofakes3.VersionID,
+	rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return nil, gofakes3.BucketNotFound(bucketName)
+	}
+
+	if _, ok := bucket.data[objectName]; !ok {
+		return nil, gofakes3.KeyNotFound(objectName)
+	}
+
+	ver, ok := bucket.versionIndex[versionID]
+
+	// FIXME: It's not clear from the docs what S3 does when versioning has
+	// been enabled, then suspended, then you request a version ID that exists.
+	// For now, let's presume it will return the version if it exists, even
+	// if versioning is suspended.
+	if !ok || ver.item.name != objectName {
+		return nil, gofakes3.ErrNoSuchVersion
+	}
+
+	return ver.item.toObject(rangeRequest), nil
+}
+
+func (db *Backend) DeleteObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (result gofakes3.ObjectDeleteResult, rerr error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return result, gofakes3.BucketNotFound(bucketName)
+	}
+
+	return bucket.rmVersion(objectName, versionID, db.timeSource.Now())
+}
+
+func (db *Backend) ListBucketVersions(bucketName string, prefix gofakes3.Prefix) (*gofakes3.ListBucketVersionsResult, error) {
+	return nil, nil
+}
+
+// nextVersion assumes the backend's lock is acquired
+func (db *Backend) nextVersion() gofakes3.VersionID {
+	v, scr := db.versionGenerator.Next(db.versionScratch)
+	db.versionScratch = scr
+	return v
 }
 
 type readerWithDummyCloser struct{ io.Reader }

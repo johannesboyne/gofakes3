@@ -684,7 +684,11 @@ func (g *GoFakeS3) getBucketVersioning(bucket string, w http.ResponseWriter, r *
 	if g.versioned == nil {
 		return ErrNotImplemented
 	}
-	out := g.versioned.VersioningConfiguration(bucket)
+	out, err := g.versioned.VersioningConfiguration(bucket)
+	if err != nil {
+		return err
+	}
+
 	return g.xmlEncoder(w).Encode(out)
 }
 

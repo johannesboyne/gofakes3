@@ -82,7 +82,7 @@ type Backend interface {
 	DeleteBucket(name string) error
 
 	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does
-	// not exist.  See gofakes3.KeyNotFound() for a convenient way to create
+	// not exist. See gofakes3.KeyNotFound() for a convenient way to create
 	// one.
 	//
 	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
@@ -102,6 +102,7 @@ type Backend interface {
 	//
 	// DeleteObject must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
+	// FIXME: confirm with S3 whether this is the correct behaviour.
 	//
 	// DeleteObject must not return an error if the object does not exist. Source:
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#S3.DeleteObject:
@@ -138,18 +139,33 @@ type Backend interface {
 type VersionedBackend interface {
 	// VersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
-	VersioningConfiguration(bucket string) VersioningConfiguration
+	VersioningConfiguration(bucket string) (VersioningConfiguration, error)
 
 	// SetVersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
 	SetVersioningConfiguration(bucket string, v VersioningConfiguration) error
 
+	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does
+	// not exist. See gofakes3.KeyNotFound() for a convenient way to create
+	// one.
+	//
+	// GetObject must return gofakes3.ErrNoSuchVersion if the version does not
+	// exist.
 	GetObjectVersion(
 		bucketName, objectName string,
 		versionID VersionID,
 		rangeRequest *ObjectRangeRequest) (*Object, error)
 
 	// DeleteObjectVersion permanently deletes a specific object version.
+	//
+	// DeleteObjectVersion must return a gofakes3.ErrNoSuchBucket error if the bucket
+	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
+	//
+	// FIXME: It is not clear from the docs at
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectDELETE.html
+	// what happens if the version does not exist. The implication is that no
+	// error is returned; this is consistent with DeleteObject. Need to confirm
+	// exactly what happens in this scenario against S3.
 	DeleteObjectVersion(bucketName, objectName string, versionID VersionID) (ObjectDeleteResult, error)
 
 	ListBucketVersions(bucketName string, prefix Prefix) (*ListBucketVersionsResult, error)

@@ -356,7 +356,7 @@ func (v *MFADeleteStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	} else if s == "disabled" {
 		*v = false
 	} else {
-		return fmt.Errorf("gofakes3: unexpected value %q for MFADeleteStatus, expected 'Enabled' or 'Disabled'", s)
+		return ErrorMessagef(ErrIllegalVersioningConfiguration, "unexpected value %q for MFADeleteStatus, expected 'Enabled' or 'Disabled'", s)
 	}
 	return nil
 }
@@ -393,11 +393,10 @@ const (
 // represent a decimal integer. See uploader.uploadID for details.
 type UploadID string
 
-type VersionID string
-
 type VersioningConfiguration struct {
-	XMLName xml.Name         `xml:"VersioningConfiguration"`
-	Status  VersioningStatus `xml:"Status"`
+	XMLName xml.Name `xml:"VersioningConfiguration"`
+
+	Status VersioningStatus `xml:"Status"`
 
 	// When enabled, the bucket owner must include the x-amz-mfa request header
 	// in requests to change the versioning state of a bucket and to
@@ -405,4 +404,38 @@ type VersioningConfiguration struct {
 	MFADelete MFADeleteStatus `xml:"MfaDelete"`
 }
 
+func (v *VersioningConfiguration) Enabled() bool {
+	return v.Status == VersioningEnabled
+}
+
+func (v *VersioningConfiguration) SetEnabled(enabled bool) {
+	if enabled {
+		v.Status = VersioningEnabled
+	} else {
+		v.Status = VersioningSuspended
+	}
+}
+
 type VersioningStatus string
+
+func (v *VersioningStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var s string
+	if err := d.DecodeElement(&s, &start); err != nil {
+		// FIXME: this doesn't seem to detect or report errors if the element is the wrong type.
+		return err
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "enabled" {
+		*v = VersioningEnabled
+	} else if s == "suspended" {
+		*v = VersioningSuspended
+	} else {
+		return ErrorMessagef(ErrIllegalVersioningConfiguration, "unexpected value %q for Status, expected 'Enabled' or 'Suspended'", s)
+	}
+	return nil
+}
+
+const (
+	VersioningEnabled   VersioningStatus = "Enabled"
+	VersioningSuspended VersioningStatus = "Suspended"
+)
