@@ -332,7 +332,7 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 	return nil
 }
 
-func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, rerr error) {
+func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, rerr error) {
 	if bucketName != db.name {
 		return result, gofakes3.BucketNotFound(bucketName)
 	}

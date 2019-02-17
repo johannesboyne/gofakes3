@@ -322,7 +322,7 @@ func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.
 	})
 }
 
-func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, err error) {
+func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, err error) {
 	err = db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {

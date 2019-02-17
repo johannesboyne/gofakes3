@@ -115,13 +115,14 @@ type DeleteRequest struct {
 	Quiet bool `xml:"Quiet"`
 }
 
-// DeleteResult contains the response from a multi delete operation.
-type DeleteResult struct {
+// MultiDeleteResult contains the response from a multi delete operation.
+type MultiDeleteResult struct {
+	XMLName xml.Name      `xml:"DeleteResult"`
 	Deleted []ObjectID    `xml:"Deleted"`
 	Error   []ErrorResult `xml:",omitempty"`
 }
 
-func (d DeleteResult) AsError() error {
+func (d MultiDeleteResult) AsError() error {
 	if len(d.Error) == 0 {
 		return nil
 	}
@@ -129,7 +130,7 @@ func (d DeleteResult) AsError() error {
 	for _, er := range d.Error {
 		strs = append(strs, er.String())
 	}
-	return fmt.Errorf("delete failed:\n%s", strings.Join(strs, "\n"))
+	return fmt.Errorf("gofakes3: multi delete failed:\n%s", strings.Join(strs, "\n"))
 }
 
 type ErrorResult struct {

@@ -126,7 +126,7 @@ type Backend interface {
 	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) error
 
-	DeleteMulti(bucketName string, objects ...string) (DeleteResult, error)
+	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
 }
 
 // VersionedBackend may be optionally implemented by a Backend in order to support

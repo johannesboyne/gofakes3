@@ -456,7 +456,7 @@ func (db *MultiBucketBackend) deleteObjectLocked(bucketName, objectName string) 
 	return nil
 }
 
-func (db *MultiBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, rerr error) {
+func (db *MultiBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, rerr error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

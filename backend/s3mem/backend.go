@@ -222,7 +222,7 @@ func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.
 	return result, nil
 }
 
-func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, err error) {
+func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, err error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
