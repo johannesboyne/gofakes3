@@ -142,6 +142,28 @@ type ErrorResult struct {
 	RequestID string    `xml:"RequestId,omitempty"`
 }
 
+func ErrorResultFromError(err error) ErrorResult {
+	switch err := err.(type) {
+	case *resourceErrorResponse:
+		return ErrorResult{
+			Resource:  err.Resource,
+			RequestID: err.RequestID,
+			Message:   err.Message,
+			Code:      err.Code,
+		}
+	case *ErrorResponse:
+		return ErrorResult{
+			RequestID: err.RequestID,
+			Message:   err.Message,
+			Code:      err.Code,
+		}
+	case Error:
+		return ErrorResult{Code: err.ErrorCode()}
+	default:
+		return ErrorResult{Code: ErrInternal}
+	}
+}
+
 func (er ErrorResult) String() string {
 	return fmt.Sprintf("%s: [%s] %s", er.Key, er.Code, er.Message)
 }
@@ -392,6 +414,8 @@ const (
 // UploadID uses a string as the underlying type, but the string should only
 // represent a decimal integer. See uploader.uploadID for details.
 type UploadID string
+
+type VersionID string
 
 type VersioningConfiguration struct {
 	XMLName xml.Name `xml:"VersioningConfiguration"`

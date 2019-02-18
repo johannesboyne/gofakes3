@@ -1,39 +1,45 @@
-package gofakes3
+package s3mem
 
 import (
-	"encoding/base64"
+	"encoding/base32"
 	"fmt"
+	"math/big"
 	"sync"
+
+	"github.com/johannesboyne/gofakes3"
 )
 
-type VersionID string
+var add1 = new(big.Int).SetInt64(1)
 
-type VersionGenerator struct {
+type versionGenerator struct {
 	state uint64
 	size  int
+	next  *big.Int
 	mu    sync.Mutex
 }
 
-func NewVersionGenerator(seed uint64, size int) *VersionGenerator {
+func newVersionGenerator(seed uint64, size int) *versionGenerator {
 	if size <= 0 {
 		size = 64
 	}
-	return &VersionGenerator{state: seed}
+	return &versionGenerator{next: new(big.Int), state: seed}
 }
 
-// Next generates a fresh VersionID from the internal RNG.
-// If b is passed, it is used as the scratch buffer. If b is smaller than
-// Next requires, it is resized. The reallocated memory is returned along
-// with the version ID.
-//
-// Next is safe for concurrent use.
-func (v *VersionGenerator) Next(b []byte) (VersionID, []byte) {
+func (v *versionGenerator) Next(scratch []byte) (gofakes3.VersionID, []byte) {
 	v.mu.Lock()
+
+	v.next.Add(v.next, add1)
+	idb := []byte(fmt.Sprintf("%030d", v.next))
+
 	neat := v.size/8*8 + 8 // cheap and nasty way to ensure a multiple of 8 definitely greater than size
 
-	if len(b) < neat {
-		b = make([]byte, neat)
+	scratchLen := len(idb) + neat + 1
+	if len(scratch) < scratchLen {
+		scratch = make([]byte, scratchLen)
 	}
+	copy(scratch, idb)
+
+	b := scratch[len(idb)+1:]
 
 	// This is a simple inline implementation of http://xoshiro.di.unimi.it/splitmix64.c.
 	// It may not ultimately be the right tool for this job but with a large
@@ -52,5 +58,10 @@ func (v *VersionGenerator) Next(b []byte) (VersionID, []byte) {
 	// The version IDs appear to start with '3/' and follow with a base64-URL
 	// encoded blast of god knows what. There didn't appear to be any
 	// explanation of the format beyond that.
-	return VersionID(fmt.Sprintf("3/%s", base64.URLEncoding.EncodeToString(b[:v.size]))), b
+
+	// Base64 is not sortable though, and we need our versions to be lexicographically
+	// sortable for the SkipList key, so we have to encode it as base32hex, which _is_
+	// sortable, and just pretend that it's "Base64".
+
+	return gofakes3.VersionID(fmt.Sprintf("3/%s", base32.HexEncoding.EncodeToString(scratch))), scratch
 }
