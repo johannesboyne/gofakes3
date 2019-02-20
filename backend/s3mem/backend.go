@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/goskipiter"
 )
 
 type Backend struct {
@@ -151,13 +152,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	return &gofakes3.Object{
-		Name:     objectName,
-		Hash:     obj.data.hash,
-		Metadata: obj.data.metadata,
-		Size:     int64(len(obj.data.body)),
-		Contents: noOpReadCloser{},
-	}, nil
+	return obj.data.toObject(nil, false), nil
 }
 
 func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
@@ -180,7 +175,7 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	result := obj.data.toObject(rangeRequest)
+	result := obj.data.toObject(rangeRequest, true)
 	if bucket.versioning {
 		result.VersionID = ""
 	}
@@ -208,6 +203,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		name:         objectName,
 		body:         bts,
 		hash:         hash[:],
+		etag:         `"` + hex.EncodeToString(hash[:]) + `"`,
 		metadata:     meta,
 		lastModified: db.timeSource.Now(),
 	})
@@ -309,24 +305,29 @@ func (db *Backend) GetObjectVersion(
 		return nil, gofakes3.BucketNotFound(bucketName)
 	}
 
-	obj := bucket.object(objectName)
-	if obj == nil {
-		return nil, gofakes3.KeyNotFound(objectName)
+	ver, err := bucket.objectVersion(objectName, versionID)
+	if err != nil {
+		return nil, err
 	}
 
-	if obj.data != nil && obj.data.versionID == versionID {
-		return obj.data.toObject(rangeRequest), nil
-	}
-	if obj.versions == nil {
-		return nil, gofakes3.ErrNoSuchVersion
-	}
-	versionIface, _ := obj.versions.Get(versionID)
-	if versionIface == nil {
-		return nil, gofakes3.ErrNoSuchVersion
+	return ver.toObject(rangeRequest, true), nil
+}
+
+func (db *Backend) HeadObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (*gofakes3.Object, error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return nil, gofakes3.BucketNotFound(bucketName)
 	}
 
-	version := versionIface.(*bucketData)
-	return version.toObject(rangeRequest), nil
+	ver, err := bucket.objectVersion(objectName, versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return ver.toObject(nil, false), nil
 }
 
 func (db *Backend) DeleteObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (result gofakes3.ObjectDeleteResult, rerr error) {
@@ -341,8 +342,110 @@ func (db *Backend) DeleteObjectVersion(bucketName, objectName string, versionID 
 	return bucket.rmVersion(objectName, versionID, db.timeSource.Now())
 }
 
-func (db *Backend) ListBucketVersions(bucketName string, prefix gofakes3.Prefix) (*gofakes3.ListBucketVersionsResult, error) {
-	return nil, nil
+func (db *Backend) ListBucketVersions(
+	bucketName string,
+	prefix gofakes3.Prefix,
+	page gofakes3.ListBucketVersionsPage,
+) (*gofakes3.ListBucketVersionsResult, error) {
+
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	result := gofakes3.NewListBucketVersionsResult(bucketName, prefix, page)
+
+	bucket := db.buckets[bucketName]
+	if bucket == nil {
+		return result, gofakes3.BucketNotFound(bucketName)
+	}
+
+	if page.KeyMarker == "" && page.VersionIDMarker != "" {
+		// FIXME: what does S3 do if you pass a version ID marker but not a key marker?
+		// If it works just fine, that's a bit of a pain to implement.
+		return result, gofakes3.ErrNotImplemented
+	}
+
+	var iter = goskipiter.NewIterator(bucket.objects.Iterator())
+	if page.KeyMarker != "" {
+		if prefix.Match(page.KeyMarker) == nil {
+			// FIXME: NO idea what S3 would do here.
+			return result, gofakes3.ErrInternal
+		}
+		iter.Seek(page.KeyMarker)
+	}
+
+	var truncated = false
+	var first = true
+	var cnt int64 = 0
+
+	// FIXME: The S3 docs have this to say on the topic of result ordering:
+	//   "The following request returns objects in the order they were stored,
+	//   returning the most recently stored object first starting with the value
+	//   for key-marker."
+	//
+	// OK so this method....
+	// - Returns objects in the order they were stored
+	// - Returning the most recently stored object first
+	//
+	// This makes no sense at all!
+
+	for iter.Next() {
+		object := iter.Value().(*bucketObject)
+
+		prefixMatch := prefix.Match(object.name)
+		if prefixMatch == nil {
+			continue
+		}
+
+		if prefixMatch.CommonPrefix {
+			result.AddPrefix(prefixMatch.MatchedPart)
+			continue
+		}
+
+		versions := iter.Value().(*bucketObject).Iterator()
+		if first {
+			if page.VersionIDMarker != "" {
+				if !versions.Seek(page.VersionIDMarker) {
+					// FIXME: log
+					return result, gofakes3.ErrInternal
+				}
+			}
+			first = false
+		}
+
+		for versions.Next() {
+			version := versions.Value()
+
+			if version.deleteMarker {
+				result.Versions = append(result.Versions, gofakes3.DeleteMarker{
+					Key:          version.name,
+					VersionID:    version.versionID,
+					IsLatest:     version == object.data,
+					LastModified: gofakes3.NewContentTime(version.lastModified),
+				})
+
+			} else {
+				result.Versions = append(result.Versions, gofakes3.Version{
+					Key:          version.name,
+					VersionID:    version.versionID,
+					IsLatest:     version == object.data,
+					LastModified: gofakes3.NewContentTime(version.lastModified),
+					Size:         int64(len(version.body)),
+					ETag:         version.etag,
+				})
+			}
+
+			cnt++
+			if cnt >= page.MaxKeys {
+				truncated = versions.Next()
+				goto done
+			}
+		}
+	}
+
+done:
+	result.IsTruncated = truncated || iter.Next()
+
+	return result, nil
 }
 
 // nextVersion assumes the backend's lock is acquired

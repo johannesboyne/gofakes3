@@ -4,6 +4,10 @@ import (
 	"io"
 )
 
+const (
+	DefaultBucketVersionKeys = 1000
+)
+
 // Object contains the data retrieved from a backend for the specified bucket
 // and object key.
 //
@@ -35,6 +39,24 @@ type ObjectDeleteResult struct {
 	// DELETE operation. If you delete a specific object version, the value
 	// returned by this header is the version ID of the object version deleted.
 	VersionID VersionID
+}
+
+type ListBucketVersionsPage struct {
+	// Specifies the key in the bucket that you want to start listing from.
+	KeyMarker string
+
+	// Specifies the object version you want to start listing from.
+	VersionIDMarker VersionID
+
+	// Sets the maximum number of keys returned in the response body. The
+	// response might contain fewer keys, but will never contain more. If
+	// additional keys satisfy the search criteria, but were not returned
+	// because max-keys was exceeded, the response contains
+	// <isTruncated>true</isTruncated>. To return the additional keys, see
+	// key-marker and version-id-marker.
+	//
+	// MaxKeys MUST be > 0.
+	MaxKeys int64
 }
 
 // Backend provides a set of operations to be implemented in order to support
@@ -86,7 +108,8 @@ type Backend interface {
 	// one.
 	//
 	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
-	// otherwise you will leak resources.
+	// otherwise you will leak resources. Implementers should return a no-op
+	// implementation of io.ReadCloser.
 	//
 	// If rnge is nil, it is assumed you want the entire object. If rnge is not
 	// nil, but the underlying backend does not support range requests,
@@ -94,6 +117,17 @@ type Backend interface {
 	//
 	// If the backend is a VersionedBackend, GetObject retrieves the latest version.
 	GetObject(bucketName, objectName string, rangeRequest *ObjectRangeRequest) (*Object, error)
+
+	// HeadObject fetches the Object from the backend, but reading the Contents
+	// will return io.EOF immediately.
+	//
+	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
+	// otherwise you will leak resources. Implementers should return a no-op
+	// implementation of io.ReadCloser.
+	//
+	// HeadObject should return a NotFound() error if the object does not
+	// exist.
+	HeadObject(bucketName, objectName string) (*Object, error)
 
 	// DeleteObject deletes an object from the bucket.
 	//
@@ -112,13 +146,6 @@ type Backend interface {
 	//	isn't a null version, Amazon S3 does not remove any objects.
 	//
 	DeleteObject(bucketName, objectName string) (ObjectDeleteResult, error)
-
-	// HeadObject fetches the Object from the backend, but the Contents will be
-	// a no-op ReadCloser.
-	//
-	// HeadObject should return a NotFound() error if the object does not
-	// exist.
-	HeadObject(bucketName, objectName string) (*Object, error)
 
 	// PutObject should assume that the key is valid. The map containing meta
 	// may be nil.
@@ -149,12 +176,27 @@ type VersionedBackend interface {
 	// not exist. See gofakes3.KeyNotFound() for a convenient way to create
 	// one.
 	//
+	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
+	// otherwise you will leak resources. Implementers should return a no-op
+	// implementation of io.ReadCloser.
+	//
 	// GetObject must return gofakes3.ErrNoSuchVersion if the version does not
 	// exist.
 	GetObjectVersion(
 		bucketName, objectName string,
 		versionID VersionID,
 		rangeRequest *ObjectRangeRequest) (*Object, error)
+
+	// HeadObjectVersion fetches the Object version from the backend, but the Contents will be
+	// a no-op ReadCloser.
+	//
+	// If the returned Object is not nil, you MUST call Object.Contents.Close(),
+	// otherwise you will leak resources. Implementers should return a no-op
+	// implementation of io.ReadCloser.
+	//
+	// HeadObjectVersion should return a NotFound() error if the object does not
+	// exist.
+	HeadObjectVersion(bucketName, objectName string, versionID VersionID) (*Object, error)
 
 	// DeleteObjectVersion permanently deletes a specific object version.
 	//
@@ -168,5 +210,6 @@ type VersionedBackend interface {
 	// exactly what happens in this scenario against S3.
 	DeleteObjectVersion(bucketName, objectName string, versionID VersionID) (ObjectDeleteResult, error)
 
-	ListBucketVersions(bucketName string, prefix Prefix) (*ListBucketVersionsResult, error)
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGETVersion.html
+	ListBucketVersions(bucketName string, prefix Prefix, page ListBucketVersionsPage) (*ListBucketVersionsResult, error)
 }

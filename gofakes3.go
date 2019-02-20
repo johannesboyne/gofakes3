@@ -9,45 +9,11 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-)
-
-const (
-	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
-	//	"The name for a key is a sequence of Unicode characters whose UTF-8
-	//	encoding is at most 1024 bytes long."
-	KeySizeLimit = 1024
-
-	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
-	//	Within the PUT request header, the user-defined metadata is limited to 2
-	// 	KB in size. The size of user-defined metadata is measured by taking the
-	// 	sum of the number of bytes in the UTF-8 encoding of each key and value.
-	//
-	// As this does not specify KB or KiB, KB is used in gofakes3. The reason
-	// for this is if gofakes3 is used for testing, and your tests show that
-	// 2KiB works, but Amazon uses 2KB...  that's a much worse time to discover
-	// the disparity!
-	DefaultMetadataSizeLimit = 2000
-
-	// Like DefaultMetadataSizeLimit, the docs don't specify MB or MiB, so we
-	// will accept 5MB for now. The Go client SDK rejects 5MB with the error
-	// "part size must be at least 5242880 bytes", which is a hint that it
-	// has been interpreted as MiB at least _somewhere_, but we should remain
-	// liberal in what we accept in the face of ambiguity.
-	DefaultUploadPartSize = 5 * 1000 * 1000
-
-	DefaultSkewLimit = 15 * time.Minute
-
-	MaxUploadsLimit       = 1000
-	DefaultMaxUploads     = 1000
-	MaxUploadPartsLimit   = 1000
-	DefaultMaxUploadParts = 1000
-
-	// From the docs: "Part numbers can be any number from 1 to 10,000, inclusive."
-	MaxUploadPartNumber = 10000
 )
 
 // GoFakeS3 implements HTTP handlers for processing S3 requests and returning
@@ -202,11 +168,17 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 }
 
 func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, r *http.Request) error {
-	prefix := prefixFromQuery(r.URL.Query())
 	if g.versioned == nil {
 		return ErrNotImplemented
 	}
-	bucket, err := g.versioned.ListBucketVersions(bucketName, prefix)
+
+	prefix := prefixFromQuery(r.URL.Query())
+	page, err := listBucketVersionsPageFromQuery(r.URL.Query())
+	if err != nil {
+		return err
+	}
+
+	bucket, err := g.versioned.ListBucketVersions(bucketName, prefix, page)
 	if err != nil {
 		return err
 	}
@@ -768,4 +740,16 @@ func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (
 	}
 
 	return meta, nil
+}
+
+func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsPage, rerr error) {
+	maxKeys, err := parseClampedInt(query.Get("max-keys"), DefaultMaxBucketVersionKeys, 0, MaxBucketVersionKeys)
+	if err != nil {
+		return page, err
+	}
+
+	page.MaxKeys = maxKeys
+	page.KeyMarker = query.Get("key-marker")
+	page.VersionIDMarker = VersionID(query.Get("version-id-marker"))
+	return page, nil
 }

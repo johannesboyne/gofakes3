@@ -2,6 +2,7 @@ package s3mem
 
 import (
 	"bytes"
+	"io"
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
@@ -29,8 +30,82 @@ func newBucket(name string, at time.Time, versionGen versionGenFunc) *bucket {
 }
 
 type bucketObject struct {
+	name     string
 	data     *bucketData
 	versions *skiplist.SkipList
+}
+
+func (b *bucketObject) Iterator() *bucketObjectIterator {
+	var iter skiplist.Iterator
+	if b.versions != nil {
+		iter = b.versions.Iterator()
+	}
+
+	return &bucketObjectIterator{
+		data: b.data,
+		iter: iter,
+	}
+}
+
+type bucketObjectIterator struct {
+	data     *bucketData
+	iter     skiplist.Iterator
+	cur      *bucketData
+	seenData bool
+	done     bool
+}
+
+func (b *bucketObjectIterator) Seek(key gofakes3.VersionID) bool {
+	if b.iter.Seek(key) {
+		return true
+	}
+
+	b.iter = nil
+	if b.data != nil && b.data.versionID == key {
+		return true
+	}
+
+	b.data = nil
+	b.done = true
+
+	return false
+}
+
+func (b *bucketObjectIterator) Next() bool {
+	if b.done {
+		return false
+	}
+
+	if b.iter != nil {
+		iterAlive := b.iter.Next()
+		if iterAlive {
+			b.cur = b.iter.Value().(*bucketData)
+			return true
+		}
+
+		b.iter.Close()
+		b.iter = nil
+	}
+
+	if b.data != nil {
+		b.cur = b.data
+		b.data = nil
+		return true
+	}
+
+	b.done = true
+	return false
+}
+
+func (b *bucketObjectIterator) Close() {
+	if b.iter != nil {
+		b.iter.Close()
+	}
+	b.done = true
+}
+
+func (b *bucketObjectIterator) Value() *bucketData {
+	return b.cur
 }
 
 type bucketData struct {
@@ -40,16 +115,28 @@ type bucketData struct {
 	deleteMarker bool
 	body         []byte
 	hash         []byte
+	etag         string
 	metadata     map[string]string
 }
 
-func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest) *gofakes3.Object {
+func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBody bool) *gofakes3.Object {
 	sz := int64(len(bi.body))
 	data := bi.body
 
-	rnge := rangeRequest.Range(sz)
-	if rnge != nil {
-		data = data[rnge.Start : rnge.Start+rnge.Length]
+	var contents io.ReadCloser
+	var rnge *gofakes3.ObjectRange
+
+	if withBody {
+		rnge = rangeRequest.Range(sz)
+		if rnge != nil {
+			data = data[rnge.Start : rnge.Start+rnge.Length]
+		}
+		// The data slice should be completely replaced if the bucket item is edited, so
+		// it should be safe to return the data slice directly.
+		contents = readerWithDummyCloser{bytes.NewReader(data)}
+
+	} else {
+		contents = noOpReadCloser{}
 	}
 
 	return &gofakes3.Object{
@@ -60,10 +147,7 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest) *gofak
 		Range:          rnge,
 		IsDeleteMarker: bi.deleteMarker,
 		VersionID:      bi.versionID,
-
-		// The data slice should be completely replaced if the bucket item is edited, so
-		// it should be safe to return the data slice directly.
-		Contents: readerWithDummyCloser{bytes.NewReader(data)},
+		Contents:       contents,
 	}
 }
 
@@ -80,22 +164,44 @@ func (b *bucket) object(objectName string) (obj *bucketObject) {
 	return obj
 }
 
+func (b *bucket) objectVersion(objectName string, versionID gofakes3.VersionID) (*bucketData, error) {
+	obj := b.object(objectName)
+	if obj == nil {
+		return nil, gofakes3.KeyNotFound(objectName)
+	}
+
+	if obj.data != nil && obj.data.versionID == versionID {
+		return obj.data, nil
+	}
+	if obj.versions == nil {
+		return nil, gofakes3.ErrNoSuchVersion
+	}
+	versionIface, _ := obj.versions.Get(versionID)
+	if versionIface == nil {
+		return nil, gofakes3.ErrNoSuchVersion
+	}
+
+	return versionIface.(*bucketData), nil
+}
+
 func (b *bucket) put(name string, item *bucketData) {
 	// Always generate a version for convenience; we can just mask it on return.
 	item.versionID = b.versionGen()
 
 	object := b.object(name)
 	if object == nil {
-		object = &bucketObject{}
+		object = &bucketObject{name: name}
 		b.objects.Set(name, object)
 	}
 
 	if b.versioning {
 		if object.data != nil {
 			if object.versions == nil {
-				object.versions = skiplist.NewStringMap()
+				object.versions = skiplist.NewCustomMap(func(l, r interface{}) bool {
+					return l.(gofakes3.VersionID) < r.(gofakes3.VersionID)
+				})
 			}
-			object.versions.Set(item.versionID, item)
+			object.versions.Set(object.data.versionID, object.data)
 		}
 	}
 

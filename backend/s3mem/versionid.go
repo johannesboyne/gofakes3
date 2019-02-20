@@ -55,13 +55,13 @@ func (v *versionGenerator) Next(scratch []byte) (gofakes3.VersionID, []byte) {
 
 	v.mu.Unlock()
 
-	// The version IDs appear to start with '3/' and follow with a base64-URL
-	// encoded blast of god knows what. There didn't appear to be any
-	// explanation of the format beyond that.
-
+	// The version IDs that come out of S3 appear to start with '3/' and follow
+	// with a base64-URL encoded blast of god knows what. There didn't appear
+	// to be any explanation of the format beyond that, but let's copy it anyway.
+	//
 	// Base64 is not sortable though, and we need our versions to be lexicographically
 	// sortable for the SkipList key, so we have to encode it as base32hex, which _is_
-	// sortable, and just pretend that it's "Base64".
+	// sortable, and just pretend that it's "Base64". Phew!
 
 	return gofakes3.VersionID(fmt.Sprintf("3/%s", base32.HexEncoding.EncodeToString(scratch))), scratch
 }

@@ -211,6 +211,7 @@ func (b *ListBucketResult) AddPrefix(prefix string) {
 type DeleteMarker struct {
 	XMLName      xml.Name    `xml:"DeleteMarker"`
 	Key          string      `xml:"Key"`
+	VersionID    VersionID   `xml:"VersionId"`
 	IsLatest     bool        `xml:"IsLatest"`
 	LastModified ContentTime `xml:"LastModified,omitempty"`
 	Owner        *UserInfo   `xml:"Owner,omitempty"`
@@ -221,6 +222,7 @@ func (d DeleteMarker) isVersionItem() {}
 type Version struct {
 	XMLName      xml.Name    `xml:"Version"`
 	Key          string      `xml:"Key"`
+	VersionID    VersionID   `xml:"VersionId"`
 	IsLatest     bool        `xml:"IsLatest"`
 	LastModified ContentTime `xml:"LastModified,omitempty"`
 	Size         int64       `xml:"Size"`
@@ -242,10 +244,11 @@ type ListBucketVersionsResult struct {
 	XMLName        xml.Name       `xml:"ListBucketVersionsResult"`
 	Xmlns          string         `xml:"xmlns,attr"`
 	Name           string         `xml:"Name"`
-	Prefix         string         `xml:"Prefix"`
+	Delimiter      string         `xml:"Delimiter,omitempty"`
+	Prefix         string         `xml:"Prefix,omitempty"`
 	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
 	IsTruncated    bool           `xml:"IsTruncated"`
-	MaxKeys        int            `xml:"MaxKeys"`
+	MaxKeys        int64          `xml:"MaxKeys"`
 
 	// Marks the last Key returned in a truncated response.
 	KeyMarker string `xml:"KeyMarker,omitempty"`
@@ -257,13 +260,13 @@ type ListBucketVersionsResult struct {
 	NextKeyMarker string `xml:"NextKeyMarker,omitempty"`
 
 	// Marks the last version of the Key returned in a truncated response.
-	VersionIDMarker string `xml:"VersionIdMarker,omitempty"`
+	VersionIDMarker VersionID `xml:"VersionIdMarker,omitempty"`
 
 	// When the number of responses exceeds the value of MaxKeys,
 	// NextVersionIdMarker specifies the first object version not returned that
 	// satisfies the search criteria. Use this value for the version-id-marker
 	// request parameter in a subsequent request.
-	NextVersionIDMarker string `xml:"NextVersionIdMarker,omitempty"`
+	NextVersionIDMarker VersionID `xml:"NextVersionIdMarker,omitempty"`
 
 	// AWS responds with a list of either <Version> or <DeleteMarker> objects. The order
 	// needs to be preserved and they need to be direct of ListBucketVersionsResult:
@@ -281,10 +284,19 @@ type ListBucketVersionsResult struct {
 	prefixes map[string]bool
 }
 
-func NewListBucketVersionsResult(bucketName string) *ListBucketVersionsResult {
+func NewListBucketVersionsResult(
+	bucketName string,
+	prefix Prefix,
+	page ListBucketVersionsPage,
+) *ListBucketVersionsResult {
 	return &ListBucketVersionsResult{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:  bucketName,
+		Xmlns:           "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:            bucketName,
+		Prefix:          prefix.Prefix,
+		Delimiter:       prefix.Delimiter,
+		MaxKeys:         page.MaxKeys,
+		KeyMarker:       page.KeyMarker,
+		VersionIDMarker: page.VersionIDMarker,
 	}
 }
 
@@ -404,7 +416,7 @@ func (s StorageClass) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if s == "" {
 		s = StorageStandard
 	}
-	return e.EncodeElement("Enabled", start)
+	return e.EncodeElement(string(s), start)
 }
 
 const (
