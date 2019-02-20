@@ -12,6 +12,7 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -40,7 +41,7 @@ func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRang
 		Name:     objectName,
 		Metadata: b.Metadata,
 		Size:     b.Size,
-		Contents: readerWithDummyCloser{bytes.NewReader(data)},
+		Contents: s3io.ReaderWithDummyCloser{bytes.NewReader(data)},
 		Range:    rnge,
 		Hash:     b.Hash,
 	}

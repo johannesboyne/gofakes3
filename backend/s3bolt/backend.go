@@ -10,6 +10,7 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -138,11 +139,11 @@ func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Li
 
 		c := b.Cursor()
 		bucket = gofakes3.NewListBucketResult(name)
+		var match gofakes3.PrefixMatch
 
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			key := string(k)
-			match := prefix.Match(key)
-			if match == nil {
+			if !prefix.Match(key, &match) {
 				continue
 
 			} else if match.CommonPrefix {
@@ -244,7 +245,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	if err != nil {
 		return nil, err
 	}
-	obj.Contents = noOpReadCloser{}
+	obj.Contents = s3io.NoOpReadCloser{}
 	return obj, nil
 }
 
@@ -350,13 +351,3 @@ func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gof
 
 	return result, err
 }
-
-type readerWithDummyCloser struct{ io.Reader }
-
-func (d readerWithDummyCloser) Close() error { return nil }
-
-type noOpReadCloser struct{}
-
-func (d noOpReadCloser) Read(b []byte) (n int, err error) { return 0, io.EOF }
-
-func (d noOpReadCloser) Close() error { return nil }

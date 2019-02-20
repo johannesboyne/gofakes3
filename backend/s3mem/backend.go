@@ -80,11 +80,12 @@ func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Li
 	response := gofakes3.NewListBucketResult(name)
 	iter := storedBucket.objects.Iterator()
 
+	var match gofakes3.PrefixMatch
+
 	for iter.Next() {
 		item := iter.Value().(*bucketObject)
 
-		match := prefix.Match(item.data.name)
-		if match == nil {
+		if !prefix.Match(item.data.name, &match) {
 			continue
 
 		} else if match.CommonPrefix {
@@ -364,9 +365,11 @@ func (db *Backend) ListBucketVersions(
 		return result, gofakes3.ErrNotImplemented
 	}
 
-	var iter = goskipiter.NewIterator(bucket.objects.Iterator())
+	var iter = goskipiter.New(bucket.objects.Iterator())
+	var match gofakes3.PrefixMatch
+
 	if page.KeyMarker != "" {
-		if prefix.Match(page.KeyMarker) == nil {
+		if !prefix.Match(page.KeyMarker, &match) {
 			// FIXME: NO idea what S3 would do here.
 			return result, gofakes3.ErrInternal
 		}
@@ -391,13 +394,12 @@ func (db *Backend) ListBucketVersions(
 	for iter.Next() {
 		object := iter.Value().(*bucketObject)
 
-		prefixMatch := prefix.Match(object.name)
-		if prefixMatch == nil {
+		if !prefix.Match(object.name, &match) {
 			continue
 		}
 
-		if prefixMatch.CommonPrefix {
-			result.AddPrefix(prefixMatch.MatchedPart)
+		if match.CommonPrefix {
+			result.AddPrefix(match.MatchedPart)
 			continue
 		}
 
@@ -454,13 +456,3 @@ func (db *Backend) nextVersion() gofakes3.VersionID {
 	db.versionScratch = scr
 	return v
 }
-
-type readerWithDummyCloser struct{ io.Reader }
-
-func (d readerWithDummyCloser) Close() error { return nil }
-
-type noOpReadCloser struct{}
-
-func (d noOpReadCloser) Read(b []byte) (n int, err error) { return 0, io.EOF }
-
-func (d noOpReadCloser) Close() error { return nil }

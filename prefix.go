@@ -65,19 +65,25 @@ func (p Prefix) FilePrefix() (path, remaining string, ok bool) {
 // To check whether the key belongs in Contents or CommonPrefixes, compare the
 // result to key.
 //
-func (p Prefix) Match(key string) (match *PrefixMatch) {
+func (p Prefix) Match(key string, match *PrefixMatch) (ok bool) {
 	if !p.HasPrefix {
 		// If there is no prefix, in the search, the match is the prefix:
-		return &PrefixMatch{Key: key, MatchedPart: key}
+		if match != nil {
+			*match = PrefixMatch{Key: key, MatchedPart: key}
+		}
+		return true
 	}
 
 	if !p.HasDelimiter {
 		// If the request does not contain a delimiter, prefix matching is a
 		// simple string prefix:
 		if strings.HasPrefix(key, p.Prefix) {
-			return &PrefixMatch{Key: key, MatchedPart: p.Prefix}
+			if match != nil {
+				*match = PrefixMatch{Key: key, MatchedPart: p.Prefix}
+			}
+			return true
 		}
-		return nil
+		return false
 	}
 
 	// Delimited + Prefix matches, for example:
@@ -94,7 +100,7 @@ func (p Prefix) Match(key string) (match *PrefixMatch) {
 	preParts := strings.Split(strings.TrimLeft(p.Prefix, p.Delimiter), p.Delimiter)
 
 	if len(keyParts) < len(preParts) {
-		return nil
+		return false
 	}
 
 	// If the key exactly matches the prefix, but only up to a delimiter,
@@ -108,19 +114,19 @@ func (p Prefix) Match(key string) (match *PrefixMatch) {
 	for i := 0; i < len(preParts); i++ {
 		if i == last {
 			if !strings.HasPrefix(keyParts[i], preParts[i]) {
-				return nil
+				return false
 			}
 
 		} else {
 			if keyParts[i] != preParts[i] {
-				return nil
+				return false
 			}
 		}
 		matched++
 	}
 
 	if matched == 0 {
-		return nil
+		return false
 	}
 
 	out := strings.Join(keyParts[:matched], p.Delimiter)
@@ -128,7 +134,10 @@ func (p Prefix) Match(key string) (match *PrefixMatch) {
 		out += p.Delimiter
 	}
 
-	return &PrefixMatch{Key: key, CommonPrefix: out != key, MatchedPart: out}
+	if match != nil {
+		*match = PrefixMatch{Key: key, CommonPrefix: out != key, MatchedPart: out}
+	}
+	return true
 }
 
 func (p Prefix) String() string {

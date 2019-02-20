@@ -13,7 +13,7 @@ type Iterator struct {
 	seekWasOK bool
 }
 
-func NewIterator(inner skiplist.Iterator) *Iterator {
+func New(inner skiplist.Iterator) *Iterator {
 	return &Iterator{inner: inner}
 }
 

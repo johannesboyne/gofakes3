@@ -163,8 +163,7 @@ func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string,
 		}
 		objectName := parts[1]
 
-		match := prefix.Match(objectName)
-		if match == nil {
+		if !prefix.Match(objectName, nil) {
 			return nil
 		}
 

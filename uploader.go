@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/johannesboyne/gofakes3/internal/goskipiter"
 	"github.com/ryszard/goskiplist/skiplist"
 )
 
@@ -250,16 +251,9 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 	// supplied, otherwise assume we can start from the start of the iterator:
 	var firstFound = true
 
-	// the goskiplist iterator is a bit janky; seeking doesn't play nice with
-	// the iteration idiom. If you seek, then iterate using the examples
-	// provided in the godoc, your iteration will always skip the first result.
-	// It would be less error prone and astonishing if Seek meant that the next
-	// call to Next() would give you what you expect.
-	var seek bool
-
-	var iter = bucketUploads.objectIndex.Iterator()
+	var iter = goskipiter.New(bucketUploads.objectIndex.Iterator())
 	if marker != nil {
-		seek = iter.Seek(marker.Object)
+		iter.Seek(marker.Object)
 		firstFound = marker.UploadID == ""
 		result.UploadIDMarker = marker.UploadID
 		result.KeyMarker = marker.Object
@@ -276,20 +270,15 @@ func (u *uploader) List(bucket string, marker *UploadListMarker, prefix Prefix, 
 
 	var cnt int64
 	var seenPrefixes = map[string]bool{}
+	var match PrefixMatch
 
-	for {
-		if seek {
-			seek = false
-		} else if !iter.Next() {
-			break
-		}
-
+	for iter.Next() {
 		object := iter.Key().(string)
 		uploads := iter.Value().([]*multipartUpload)
 
 	retry:
-		match := prefix.Match(object)
-		if match == nil {
+		matched := prefix.Match(object, &match)
+		if !matched {
 			continue
 		}
 
@@ -338,7 +327,7 @@ done:
 	if !truncated {
 		for iter.Next() {
 			object := iter.Key().(string)
-			if match := prefix.Match(object); match != nil && !match.CommonPrefix {
+			if matched := prefix.Match(object, &match); matched && !match.CommonPrefix {
 				truncated = true
 
 				// This is not especially defensive; it assumes the rest of the code works
