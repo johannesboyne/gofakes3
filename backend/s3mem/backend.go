@@ -17,7 +17,7 @@ type Backend struct {
 	versionSeed      int64
 	versionSeedSet   bool
 	versionScratch   []byte
-	lock             sync.Mutex
+	lock             sync.RWMutex
 }
 
 var _ gofakes3.Backend = &Backend{}
@@ -54,8 +54,8 @@ func New(opts ...Option) *Backend {
 }
 
 func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	var buckets = make([]gofakes3.BucketInfo, 0, len(db.buckets))
 	for _, bucket := range db.buckets {
@@ -69,8 +69,8 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 }
 
 func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	storedBucket := db.buckets[name]
 	if storedBucket == nil {
@@ -134,14 +134,14 @@ func (db *Backend) DeleteBucket(name string) error {
 }
 
 func (db *Backend) BucketExists(name string) (exists bool, err error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 	return db.buckets[name] != nil, nil
 }
 
 func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
@@ -157,8 +157,8 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 }
 
 func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
@@ -258,8 +258,8 @@ func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gof
 }
 
 func (db *Backend) VersioningConfiguration(bucketName string) (versioning gofakes3.VersioningConfiguration, rerr error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
@@ -298,8 +298,8 @@ func (db *Backend) GetObjectVersion(
 	// For now, let's presume it will return the version if it exists, even
 	// if versioning is suspended.
 
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
@@ -315,8 +315,8 @@ func (db *Backend) GetObjectVersion(
 }
 
 func (db *Backend) HeadObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (*gofakes3.Object, error) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
@@ -349,8 +349,8 @@ func (db *Backend) ListBucketVersions(
 	page gofakes3.ListBucketVersionsPage,
 ) (*gofakes3.ListBucketVersionsResult, error) {
 
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	result := gofakes3.NewListBucketVersionsResult(bucketName, prefix, page)
 
