@@ -31,6 +31,9 @@ func newHashingReader(inner io.Reader, expectedMD5Base64 string) (*hashingReader
 			return nil, ErrInvalidDigest
 		}
 	}
+	if len(md5Bytes) != 16 {
+		return nil, ErrInvalidDigest
+	}
 
 	return &hashingReader{
 		inner:    inner,
