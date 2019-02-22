@@ -13,20 +13,22 @@ import (
 type versionGenFunc func() gofakes3.VersionID
 
 type bucket struct {
-	name         string
-	versioning   bool
-	versionGen   versionGenFunc
-	creationDate gofakes3.ContentTime
+	name           string
+	neverVersioned bool
+	versioning     bool
+	versionGen     versionGenFunc
+	creationDate   gofakes3.ContentTime
 
 	objects *skiplist.SkipList
 }
 
 func newBucket(name string, at time.Time, versionGen versionGenFunc) *bucket {
 	return &bucket{
-		name:         name,
-		creationDate: gofakes3.NewContentTime(at),
-		versionGen:   versionGen,
-		objects:      skiplist.NewStringMap(),
+		neverVersioned: true,
+		name:           name,
+		creationDate:   gofakes3.NewContentTime(at),
+		versionGen:     versionGen,
+		objects:        skiplist.NewStringMap(),
 	}
 }
 
@@ -153,6 +155,9 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 }
 
 func (b *bucket) setVersioning(enabled bool) {
+	if enabled {
+		b.neverVersioned = false
+	}
 	b.versioning = enabled
 }
 

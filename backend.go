@@ -173,6 +173,9 @@ type Backend interface {
 type VersionedBackend interface {
 	// VersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
+	//
+	// If the bucket has never had versioning enabled, VersioningConfiguration MUST return
+	// empty strings (S300001).
 	VersioningConfiguration(bucket string) (VersioningConfiguration, error)
 
 	// SetVersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
@@ -189,6 +192,9 @@ type VersionedBackend interface {
 	//
 	// GetObject must return gofakes3.ErrNoSuchVersion if the version does not
 	// exist.
+	//
+	// If versioning has been enabled on a bucket, but subsequently suspended,
+	// GetObjectVersion should still return the object version (S300001).
 	GetObjectVersion(
 		bucketName, objectName string,
 		versionID VersionID,

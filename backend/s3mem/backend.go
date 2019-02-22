@@ -272,12 +272,14 @@ func (db *Backend) VersioningConfiguration(bucketName string) (versioning gofake
 		return versioning, gofakes3.BucketNotFound(bucketName)
 	}
 
-	versioning.SetEnabled(bucket.versioning)
+	if !bucket.neverVersioned {
+		versioning.SetEnabled(bucket.versioning)
+	}
 	return versioning, nil
 }
 
 func (db *Backend) SetVersioningConfiguration(bucketName string, v gofakes3.VersioningConfiguration) error {
-	if v.MFADelete {
+	if v.MFADelete.Enabled() {
 		return gofakes3.ErrNotImplemented
 	}
 
@@ -298,11 +300,6 @@ func (db *Backend) GetObjectVersion(
 	bucketName, objectName string,
 	versionID gofakes3.VersionID,
 	rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
-
-	// FIXME: It's not clear from the docs what S3 does when versioning has
-	// been enabled, then suspended, then you request a version ID that exists.
-	// For now, let's presume it will return the version if it exists, even
-	// if versioning is suspended.
 
 	db.lock.RLock()
 	defer db.lock.RUnlock()

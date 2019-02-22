@@ -376,7 +376,9 @@ type ListMultipartUploadPartItem struct {
 }
 
 // MFADeleteStatus is used by VersioningConfiguration.
-type MFADeleteStatus bool
+type MFADeleteStatus string
+
+func (v MFADeleteStatus) Enabled() bool { return v == MFADeleteEnabled }
 
 func (v *MFADeleteStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	var s string
@@ -386,22 +388,20 @@ func (v *MFADeleteStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	}
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "enabled" {
-		*v = true
+		*v = MFADeleteEnabled
 	} else if s == "disabled" {
-		*v = false
+		*v = MFADeleteDisabled
 	} else {
 		return ErrorMessagef(ErrIllegalVersioningConfiguration, "unexpected value %q for MFADeleteStatus, expected 'Enabled' or 'Disabled'", s)
 	}
 	return nil
 }
 
-func (v MFADeleteStatus) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if v {
-		return e.EncodeElement("Enabled", start)
-	} else {
-		return e.EncodeElement("Disabled", start)
-	}
-}
+const (
+	MFADeleteNone     MFADeleteStatus = ""
+	MFADeleteEnabled  MFADeleteStatus = "Enabled"
+	MFADeleteDisabled MFADeleteStatus = "Disabled"
+)
 
 type ObjectID struct {
 	Key string `xml:"Key"`
@@ -472,6 +472,7 @@ func (v *VersioningStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 }
 
 const (
+	VersioningNone      VersioningStatus = ""
 	VersioningEnabled   VersioningStatus = "Enabled"
 	VersioningSuspended VersioningStatus = "Suspended"
 )
