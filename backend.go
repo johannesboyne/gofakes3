@@ -59,6 +59,13 @@ type ListBucketVersionsPage struct {
 	MaxKeys int64
 }
 
+type PutObjectResult struct {
+	// If versioning is enabled on the bucket, this should be set to the
+	// created version ID. If versioning is not enabled, this should be
+	// empty.
+	VersionID VersionID
+}
+
 // Backend provides a set of operations to be implemented in order to support
 // gofakes3.
 //
@@ -152,7 +159,7 @@ type Backend interface {
 	//
 	// The size can be used if the backend needs to read the whole reader; use
 	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
-	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) error
+	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
 }

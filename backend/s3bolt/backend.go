@@ -279,15 +279,20 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 	return t.Object(objectName, rangeRequest), nil
 }
 
-func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
+func (db *Backend) PutObject(
+	bucketName, objectName string,
+	meta map[string]string,
+	input io.Reader, size int64,
+) (result gofakes3.PutObjectResult, err error) {
+
 	bts, err := gofakes3.ReadAll(input, size)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	hash := md5.Sum(bts)
 
-	return db.bolt.Update(func(tx *bolt.Tx) error {
+	return result, db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)

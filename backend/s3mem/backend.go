@@ -177,39 +177,45 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 	}
 
 	result := obj.data.toObject(rangeRequest, true)
-	if bucket.versioning {
+	if !bucket.versioning {
 		result.VersionID = ""
 	}
 
 	return result, nil
 }
 
-func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
+func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) (result gofakes3.PutObjectResult, err error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
 	bts, err := gofakes3.ReadAll(input, size)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	hash := md5.Sum(bts)
 
-	bucket.put(objectName, &bucketData{
+	item := &bucketData{
 		name:         objectName,
 		body:         bts,
 		hash:         hash[:],
 		etag:         `"` + hex.EncodeToString(hash[:]) + `"`,
 		metadata:     meta,
 		lastModified: db.timeSource.Now(),
-	})
+	}
+	bucket.put(objectName, item)
 
-	return nil
+	if bucket.versioning {
+		// versionID is assigned in bucket.put()
+		result.VersionID = item.versionID
+	}
+
+	return result, nil
 }
 
 func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {

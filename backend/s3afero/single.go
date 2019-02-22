@@ -267,9 +267,14 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	}, nil
 }
 
-func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
+func (db *SingleBucketBackend) PutObject(
+	bucketName, objectName string,
+	meta map[string]string,
+	input io.Reader, size int64,
+) (result gofakes3.PutObjectResult, err error) {
+
 	if bucketName != db.name {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
 	db.lock.Lock()
@@ -280,13 +285,13 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 
 	if objectDir != "." {
 		if err := db.fs.MkdirAll(objectDir, 0777); err != nil {
-			return err
+			return result, err
 		}
 	}
 
 	f, err := db.fs.Create(objectFilePath)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	var closed bool
@@ -301,20 +306,20 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 	hasher := md5.New()
 	w := io.MultiWriter(f, hasher)
 	if _, err := io.Copy(w, input); err != nil {
-		return err
+		return result, err
 	}
 
 	// We have to close here before we stat the file as some filesystems don't update the
 	// mtime until after close:
 	if err := f.Close(); err != nil {
-		return err
+		return result, err
 	}
 
 	closed = true
 
 	stat, err := db.fs.Stat(objectFilePath)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	storedMeta := &Metadata{
@@ -325,10 +330,10 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 		ModTime: stat.ModTime(),
 	}
 	if err := db.metaStore.saveMeta(db.metaStore.metaPath(bucketName, objectName), storedMeta); err != nil {
-		return err
+		return result, err
 	}
 
-	return nil
+	return result, nil
 }
 
 func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, rerr error) {

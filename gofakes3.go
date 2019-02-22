@@ -375,12 +375,12 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 
 	// FIXME: how does Content-MD5 get sent when using the browser? does it?
 	rdr, err := newHashingReader(infile, "")
+	result, err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size)
 	if err != nil {
 		return err
 	}
-
-	if err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size); err != nil {
-		return err
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 
 	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
@@ -414,15 +414,17 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	// is set to false:
 	rdr, err := newHashingReader(r.Body, md5Base64)
 	defer r.Body.Close()
+
+	result, err := g.storage.PutObject(bucket, object, meta, rdr, size)
 	if err != nil {
 		return err
 	}
 
-	if err := g.storage.PutObject(bucket, object, meta, rdr, size); err != nil {
-		return err
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
-
 	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
+
 	return nil
 }
 
@@ -599,8 +601,12 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	if err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody))); err != nil {
+	result, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
+	if err != nil {
 		return err
+	}
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 
 	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
