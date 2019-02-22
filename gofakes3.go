@@ -205,7 +205,11 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 // contains no items.
 func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "DELETE BUCKET:", bucket)
-	return g.storage.DeleteBucket(bucket)
+	if err := g.storage.DeleteBucket(bucket); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 // HeadBucket checks whether a bucket exists.
@@ -445,6 +449,7 @@ func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r 
 		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
@@ -467,6 +472,7 @@ func (g *GoFakeS3) deleteObjectVersion(bucket, object string, version VersionID,
 		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
@@ -579,8 +585,11 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "abort multipart upload", bucket, object, uploadID)
-	_, err := g.uploader.Complete(bucket, object, uploadID)
-	return err
+	if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
