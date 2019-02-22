@@ -18,38 +18,16 @@ import (
 //
 // This script also revealed that a bucket that has never had versioning will
 // return empty strings for Status and MFADelete.
-type S300001GetVersionAfterVersioningSuspended struct {
-}
+type S300001GetVersionAfterVersioningSuspended struct{}
 
-func (t *S300001GetVersionAfterVersioningSuspended) Run(ctx Context) error {
+func (t *S300001GetVersionAfterVersioningSuspended) Run(ctx *Context) error {
 	client := ctx.S3Client()
 	config := ctx.Config()
 
 	bucket := aws.String(config.S3TestBucket)
 
-	vers, err := client.GetBucketVersioning(&s3.GetBucketVersioningInput{Bucket: bucket})
-	if err != nil {
+	if err := ctx.EnsureVersioningEnabled(client, config.S3TestBucket); err != nil {
 		return err
-	}
-
-	status := aws.StringValue(vers.Status)
-	if status != "" && status != "Enabled" && status != "Suspended" {
-		return fmt.Errorf("unexpected status %q", status)
-	}
-	mfaDelete := aws.StringValue(vers.MFADelete)
-	if mfaDelete != "" && mfaDelete != "Disabled" {
-		return fmt.Errorf("unexpected MFADelete %q", aws.StringValue(vers.MFADelete))
-	}
-
-	if status != "Enabled" {
-		if _, err := client.PutBucketVersioning(&s3.PutBucketVersioningInput{
-			Bucket: bucket,
-			VersioningConfiguration: &s3.VersioningConfiguration{
-				Status: aws.String("Enabled"),
-			},
-		}); err != nil {
-			return err
-		}
 	}
 
 	// FIXME: defer delete object

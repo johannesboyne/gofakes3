@@ -11,34 +11,23 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 )
 
-type Context interface {
-	context.Context
-	S3Client() *s3.S3
-	Config() Config
-	Rand() *rand.Rand
-	RandString(sz int) string
-	RandBytes(sz int) []byte
-}
-
-type testContext struct {
+type Context struct {
 	context.Context
 	config Config
 	rand   *rand.Rand
 }
 
-var _ Context = &testContext{}
+func (c *Context) Config() Config           { return c.config }
+func (c *Context) Rand() *rand.Rand         { return c.rand }
+func (c *Context) RandString(sz int) string { return hex.EncodeToString(c.RandBytes(sz)[:sz]) }
 
-func (c *testContext) Config() Config           { return c.config }
-func (c *testContext) Rand() *rand.Rand         { return c.rand }
-func (c *testContext) RandString(sz int) string { return hex.EncodeToString(c.RandBytes(sz)[:sz]) }
-
-func (c *testContext) RandBytes(sz int) []byte {
+func (c *Context) RandBytes(sz int) []byte {
 	out := make([]byte, sz)
 	c.rand.Read(out)
 	return out
 }
 
-func (c *testContext) S3Client() *s3.S3 {
+func (c *Context) S3Client() *s3.S3 {
 	config := aws.NewConfig()
 	if c.config.S3Endpoint != "" {
 		config.WithEndpoint(c.config.S3Endpoint)
@@ -50,13 +39,43 @@ func (c *testContext) S3Client() *s3.S3 {
 		config.WithRegion(c.config.S3Region)
 	}
 
-	var logger Logger
-
-	config.WithLogLevel(aws.LogDebugWithHTTPBody)
-	config.WithLogger(logger)
+	if c.config.Verbose {
+		var logger Logger
+		config.WithLogLevel(aws.LogDebugWithHTTPBody)
+		config.WithLogger(logger)
+	}
 
 	svc := s3.New(session.New(), config)
 	return svc
+}
+
+func (c *Context) EnsureVersioningEnabled(client *s3.S3, bucket string) error {
+	vers, err := client.GetBucketVersioning(&s3.GetBucketVersioningInput{Bucket: aws.String(bucket)})
+	if err != nil {
+		return err
+	}
+
+	status := aws.StringValue(vers.Status)
+	if status != "" && status != "Enabled" && status != "Suspended" {
+		return fmt.Errorf("unexpected status %q", status)
+	}
+	mfaDelete := aws.StringValue(vers.MFADelete)
+	if mfaDelete != "" && mfaDelete != "Disabled" {
+		return fmt.Errorf("unexpected MFADelete %q", aws.StringValue(vers.MFADelete))
+	}
+
+	if status != "Enabled" {
+		if _, err := client.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(bucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String("Enabled"),
+			},
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 type Logger struct{}

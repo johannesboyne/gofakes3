@@ -216,11 +216,9 @@ type VersionedBackend interface {
 	// DeleteObjectVersion must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
 	//
-	// FIXME: It is not clear from the docs at
-	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectDELETE.html
-	// what happens if the version does not exist. The implication is that no
-	// error is returned; this is consistent with DeleteObject. Need to confirm
-	// exactly what happens in this scenario against S3.
+	// If the bucket exists and either the object does not exist (S300003) or
+	// the version does not exist (S300002), you MUST return an empty
+	// ObjectDeleteResult and a nil error.
 	DeleteObjectVersion(bucketName, objectName string, versionID VersionID) (ObjectDeleteResult, error)
 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGETVersion.html

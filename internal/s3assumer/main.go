@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"regexp"
 	"time"
 )
 
@@ -22,10 +23,14 @@ func run() error {
 
 	fs := flag.NewFlagSet("", 0)
 
+	var patternRaw string
+
 	var config Config
 	fs.StringVar(&config.S3Region, "region", "", "S3 region")
 	fs.StringVar(&config.S3Endpoint, "endpoint", "", "S3 endpoint")
 	fs.StringVar(&config.S3TestBucket, "bucket", "", "S3 test bucket")
+	fs.StringVar(&patternRaw, "run", "", "Limit tests to this pattern")
+	fs.BoolVar(&config.Verbose, "verbose", false, "Verbose")
 	fs.BoolVar(&config.S3PathStyle, "pathstyle", false, "S3 use path style")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -35,13 +40,30 @@ func run() error {
 		return fmt.Errorf("--bucket flag required")
 	}
 
+	var pattern *regexp.Regexp
+
+	if patternRaw != "" {
+		var err error
+		pattern, err = regexp.Compile(patternRaw)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, test := range tests {
-		testCtx := &testContext{
+		name := testName(test)
+		if pattern != nil && !pattern.MatchString(name) {
+			continue
+		}
+
+		fmt.Println(name)
+		testCtx := &Context{
 			config:  config,
 			rand:    rng,
 			Context: ctx,
 		}
-		name := testName(test)
+
+		fmt.Println(name)
 		if err := test.Run(testCtx); err != nil {
 			fmt.Println("FAIL", name, err)
 		}

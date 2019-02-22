@@ -1,11 +1,17 @@
 package main
 
-import "reflect"
+import (
+	"reflect"
+)
 
 func testName(test Test) string {
-	return reflect.TypeOf(test).Name()
+	v := reflect.ValueOf(test)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v.Type().Name()
 }
 
 type Test interface {
-	Run(ctx Context) error
+	Run(ctx *Context) error
 }

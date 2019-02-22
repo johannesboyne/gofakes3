@@ -5,4 +5,5 @@ type Config struct {
 	S3Region     string
 	S3PathStyle  bool
 	S3TestBucket string
+	Verbose      bool
 }
