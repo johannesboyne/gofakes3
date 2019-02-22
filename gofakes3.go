@@ -178,6 +178,20 @@ func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, 
 		return err
 	}
 
+	// S300004:
+	if page.HasVersionIDMarker {
+		if page.VersionIDMarker == "" {
+			return ErrorInvalidArgument("version-id-marker", "", "A version-id marker cannot be empty.")
+		} else if !page.HasKeyMarker {
+			return ErrorInvalidArgument("version-id-marker", "", "A version-id marker cannot be specified without a key marker.")
+		}
+
+	} else if page.HasKeyMarker && page.KeyMarker == "" {
+		// S300004: S3 ignores everything if you pass an empty key marker so
+		// let's hide that bit of ugliness from Backend.
+		page = ListBucketVersionsPage{}
+	}
+
 	bucket, err := g.versioned.ListBucketVersions(bucketName, prefix, page)
 	if err != nil {
 		return err
@@ -766,5 +780,8 @@ func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsP
 	page.MaxKeys = maxKeys
 	page.KeyMarker = query.Get("key-marker")
 	page.VersionIDMarker = VersionID(query.Get("version-id-marker"))
+	_, page.HasKeyMarker = query["key-marker"]
+	_, page.HasVersionIDMarker = query["version-id-marker"]
+
 	return page, nil
 }

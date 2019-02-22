@@ -40,6 +40,8 @@ const (
 	// only for reference.
 	ErrInlineDataTooLarge ErrorCode = "InlineDataTooLarge"
 
+	ErrInvalidArgument ErrorCode = "InvalidArgument"
+
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html#bucketnamingrules
 	ErrInvalidBucketName ErrorCode = "InvalidBucketName"
 
@@ -151,6 +153,7 @@ type ErrorResponse struct {
 	Code      ErrorCode
 	Message   string `xml:",omitempty"`
 	RequestID string `xml:"RequestId,omitempty"`
+	HostID    string `xml:"HostId,omitempty"`
 }
 
 func (e *ErrorResponse) ErrorCode() ErrorCode { return e.Code }
@@ -169,6 +172,19 @@ func ErrorMessage(code ErrorCode, message string) error {
 
 func ErrorMessagef(code ErrorCode, message string, args ...interface{}) error {
 	return &ErrorResponse{Code: code, Message: fmt.Sprintf(message, args...)}
+}
+
+type ErrorInvalidArgumentResponse struct {
+	ErrorResponse
+
+	ArgumentName  string `xml:"ArgumentName"`
+	ArgumentValue string `xml:"ArgumentValue"`
+}
+
+func ErrorInvalidArgument(name, value, message string) error {
+	return &ErrorInvalidArgumentResponse{
+		ErrorResponse: ErrorResponse{Code: ErrInvalidArgument, Message: message},
+		ArgumentName:  name, ArgumentValue: value}
 }
 
 // ErrorCode represents an S3 error code, documented here:
@@ -206,6 +222,7 @@ func (e ErrorCode) Status() int {
 		ErrIncompleteBody,
 		ErrIncorrectNumberOfFilesInPostRequest,
 		ErrInlineDataTooLarge,
+		ErrInvalidArgument,
 		ErrInvalidBucketName,
 		ErrInvalidDigest,
 		ErrInvalidPart,

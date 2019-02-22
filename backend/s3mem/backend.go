@@ -362,12 +362,6 @@ func (db *Backend) ListBucketVersions(
 		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
-	if page.KeyMarker == "" && page.VersionIDMarker != "" {
-		// FIXME: what does S3 do if you pass a version ID marker but not a key marker?
-		// If it works just fine, that's a bit of a pain to implement.
-		return result, gofakes3.ErrNotImplemented
-	}
-
 	var iter = goskipiter.New(bucket.objects.Iterator())
 	var match gofakes3.PrefixMatch
 

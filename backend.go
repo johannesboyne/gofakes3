@@ -43,10 +43,16 @@ type ObjectDeleteResult struct {
 
 type ListBucketVersionsPage struct {
 	// Specifies the key in the bucket that you want to start listing from.
+	// If HasKeyMarker is true, this must be non-empty.
 	KeyMarker string
 
-	// Specifies the object version you want to start listing from.
+	HasKeyMarker bool
+
+	// Specifies the object version you want to start listing from. If
+	// HasVersionIDMarker is true, this must be non-empty.
 	VersionIDMarker VersionID
+
+	HasVersionIDMarker bool
 
 	// Sets the maximum number of keys returned in the response body. The
 	// response might contain fewer keys, but will never contain more. If
@@ -221,6 +227,10 @@ type VersionedBackend interface {
 	// ObjectDeleteResult and a nil error.
 	DeleteObjectVersion(bucketName, objectName string, versionID VersionID) (ObjectDeleteResult, error)
 
+	// Backend implementers can assume the ListBucketVersionsPage is valid:
+	// KeyMarker and VersionIDMarker will either both be set, or both be unset. No
+	// other combination will be present (S300004).
+	//
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGETVersion.html
 	ListBucketVersions(bucketName string, prefix Prefix, page ListBucketVersionsPage) (*ListBucketVersionsResult, error)
 }
