@@ -158,8 +158,8 @@ func TestCreateObjectMD5(t *testing.T) {
 			Body:       bytes.NewReader([]byte("hello")),
 			ContentMD5: aws.String("bnVwCg=="),
 		})
-		if !s3HasErrorCode(err, gofakes3.ErrBadDigest) {
-			t.Fatal("expected BadDigest error, found", err)
+		if !s3HasErrorCode(err, gofakes3.ErrInvalidDigest) {
+			t.Fatal("expected InvalidDigest error, found", err)
 		}
 	}
 
