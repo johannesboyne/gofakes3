@@ -393,6 +393,10 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 
 	// FIXME: how does Content-MD5 get sent when using the browser? does it?
 	rdr, err := newHashingReader(infile, "")
+	if err != nil {
+		return err
+	}
+
 	result, err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size)
 	if err != nil {
 		return err
@@ -432,6 +436,9 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	// is set to false:
 	rdr, err := newHashingReader(r.Body, md5Base64)
 	defer r.Body.Close()
+	if err != nil {
+		return err
+	}
 
 	result, err := g.storage.PutObject(bucket, object, meta, rdr, size)
 	if err != nil {
