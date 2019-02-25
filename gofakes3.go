@@ -299,14 +299,17 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 		return ResourceError(ErrKeyTooLong, key)
 	}
 
-	if err := g.storage.PutObject(bucket, key, meta, infile, fileHeader.Size); err != nil {
+	// FIXME: how does Content-MD5 get sent when using the browser? does it?
+	rdr, err := newHashingReader(infile, "")
+	if err != nil {
 		return err
 	}
 
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
-	w.Write([]byte{})
+	if err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size); err != nil {
+		return err
+	}
 
+	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
 	return nil
 }
 
@@ -328,27 +331,24 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return ResourceError(ErrKeyTooLong, object)
 	}
 
-	defer r.Body.Close()
-	var rdr io.Reader = r.Body
-
+	var md5Base64 string
 	if g.integrityCheck {
-		md5Base64 := r.Header.Get("Content-MD5")
-		if md5Base64 != "" {
-			rdr, err = newHashingReader(rdr, md5Base64)
-			if err != nil {
-				return err
-			}
-		}
+		md5Base64 = r.Header.Get("Content-MD5")
+	}
+
+	// hashingReader is still needed to get the ETag even if integrityCheck
+	// is set to false:
+	rdr, err := newHashingReader(r.Body, md5Base64)
+	defer r.Body.Close()
+	if err != nil {
+		return err
 	}
 
 	if err := g.storage.PutObject(bucket, object, meta, rdr, size); err != nil {
 		return err
 	}
 
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("ETag", "\"fbacf535f27731c9771645a39863328\"")
-	w.Write([]byte{})
-
+	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
 	return nil
 }
 
