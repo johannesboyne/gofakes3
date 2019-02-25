@@ -12,23 +12,23 @@ import (
 
 type versionGenFunc func() gofakes3.VersionID
 
+type versioningStatus int
+
 type bucket struct {
-	name           string
-	neverVersioned bool
-	versioning     bool
-	versionGen     versionGenFunc
-	creationDate   gofakes3.ContentTime
+	name         string
+	versioning   gofakes3.VersioningStatus
+	versionGen   versionGenFunc
+	creationDate gofakes3.ContentTime
 
 	objects *skiplist.SkipList
 }
 
 func newBucket(name string, at time.Time, versionGen versionGenFunc) *bucket {
 	return &bucket{
-		neverVersioned: true,
-		name:           name,
-		creationDate:   gofakes3.NewContentTime(at),
-		versionGen:     versionGen,
-		objects:        skiplist.NewStringMap(),
+		name:         name,
+		creationDate: gofakes3.NewContentTime(at),
+		versionGen:   versionGen,
+		objects:      skiplist.NewStringMap(),
 	}
 }
 
@@ -156,9 +156,10 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 
 func (b *bucket) setVersioning(enabled bool) {
 	if enabled {
-		b.neverVersioned = false
+		b.versioning = gofakes3.VersioningEnabled
+	} else if b.versioning == gofakes3.VersioningEnabled {
+		b.versioning = gofakes3.VersioningSuspended
 	}
-	b.versioning = enabled
 }
 
 func (b *bucket) object(objectName string) (obj *bucketObject) {
@@ -200,7 +201,7 @@ func (b *bucket) put(name string, item *bucketData) {
 		b.objects.Set(name, object)
 	}
 
-	if b.versioning {
+	if b.versioning == gofakes3.VersioningEnabled {
 		if object.data != nil {
 			if object.versions == nil {
 				object.versions = skiplist.NewCustomMap(func(l, r interface{}) bool {
@@ -221,7 +222,7 @@ func (b *bucket) rm(name string, at time.Time) (result gofakes3.ObjectDeleteResu
 		return result, nil
 	}
 
-	if b.versioning {
+	if b.versioning == gofakes3.VersioningEnabled {
 		item := &bucketData{lastModified: at, name: name, deleteMarker: true}
 		b.put(name, item)
 		result.IsDeleteMarker = true
@@ -239,26 +240,29 @@ func (b *bucket) rm(name string, at time.Time) (result gofakes3.ObjectDeleteResu
 
 func (b *bucket) rmVersion(name string, versionID gofakes3.VersionID, at time.Time) (result gofakes3.ObjectDeleteResult, rerr error) {
 	object := b.object(name)
-	if object.data != nil && object.data.versionID == versionID {
+	if object == nil {
+		return result, nil
+
+	} else if object.data != nil && object.data.versionID == versionID {
 		result.VersionID = versionID
 		result.IsDeleteMarker = object.data.deleteMarker
 		object.data = nil
-		return
+
+	} else if object.versions != nil {
+		versionIface, ok := object.versions.Delete(versionID)
+		if !ok {
+			// S3 does not report an error when attemping to delete a key that does not exist
+			return result, nil
+		}
+
+		version := versionIface.(*bucketData)
+		result.VersionID = version.versionID
+		result.IsDeleteMarker = version.deleteMarker
 	}
 
-	if object.versions == nil {
-		return result, nil
+	if object.data == nil && (object.versions == nil || object.versions.Len() == 0) {
+		b.objects.Delete(name)
 	}
-
-	versionIface, ok := object.versions.Delete(versionID)
-	if !ok {
-		// S3 does not report an error when attemping to delete a key that does not exist
-		return result, nil
-	}
-
-	version := versionIface.(*bucketData)
-	result.VersionID = version.versionID
-	result.IsDeleteMarker = version.deleteMarker
 
 	return result, nil
 }

@@ -28,7 +28,7 @@ func run() error {
 	var config Config
 	fs.StringVar(&config.S3Region, "region", "", "S3 region")
 	fs.StringVar(&config.S3Endpoint, "endpoint", "", "S3 endpoint")
-	fs.StringVar(&config.S3TestBucket, "bucket", "", "S3 test bucket")
+	fs.StringVar(&config.S3TestBucketPrefix, "bucketprefix", "", "S3 test bucket prefix")
 	fs.StringVar(&patternRaw, "run", "", "Limit tests to this pattern")
 	fs.BoolVar(&config.Verbose, "verbose", false, "Verbose")
 	fs.BoolVar(&config.S3PathStyle, "pathstyle", false, "S3 use path style")
@@ -36,8 +36,8 @@ func run() error {
 		return err
 	}
 
-	if config.S3TestBucket == "" {
-		return fmt.Errorf("--bucket flag required")
+	if config.S3TestBucketPrefix == "" {
+		return fmt.Errorf("--bucketprefix flag required")
 	}
 
 	var pattern *regexp.Regexp

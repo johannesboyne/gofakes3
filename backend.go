@@ -232,5 +232,8 @@ type VersionedBackend interface {
 	// other combination will be present (S300004).
 	//
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGETVersion.html
+	//
+	// This MUST return the list of current versions with an empty VersionID
+	// even if versioning has never been enabled for the bucket (S300005).
 	ListBucketVersions(bucketName string, prefix Prefix, page ListBucketVersionsPage) (*ListBucketVersionsResult, error)
 }

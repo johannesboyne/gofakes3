@@ -177,7 +177,7 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 	}
 
 	result := obj.data.toObject(rangeRequest, true)
-	if !bucket.versioning {
+	if bucket.versioning != gofakes3.VersioningEnabled {
 		result.VersionID = ""
 	}
 
@@ -210,7 +210,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 	}
 	bucket.put(objectName, item)
 
-	if bucket.versioning {
+	if bucket.versioning == gofakes3.VersioningEnabled {
 		// versionID is assigned in bucket.put()
 		result.VersionID = item.versionID
 	}
@@ -272,9 +272,8 @@ func (db *Backend) VersioningConfiguration(bucketName string) (versioning gofake
 		return versioning, gofakes3.BucketNotFound(bucketName)
 	}
 
-	if !bucket.neverVersioned {
-		versioning.SetEnabled(bucket.versioning)
-	}
+	versioning.Status = bucket.versioning
+
 	return versioning, nil
 }
 

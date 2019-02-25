@@ -23,11 +23,11 @@ type S300002DeleteNonexistentVersion struct{}
 func (s S300002DeleteNonexistentVersion) Run(ctx *Context) error {
 	client := ctx.S3Client()
 	config := ctx.Config()
-	bucket := aws.String(config.S3TestBucket)
+	bucket := aws.String(config.BucketStandard())
 
 	key := fmt.Sprintf("%d/%s", time.Now().UnixNano(), ctx.RandString(32))
 
-	if err := ctx.EnsureVersioningEnabled(client, config.S3TestBucket); err != nil {
+	if err := ctx.EnsureVersioningEnabled(client, config.BucketStandard()); err != nil {
 		return err
 	}
 

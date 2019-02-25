@@ -36,9 +36,9 @@ type S300004ListVersionsWithVersionMarkerButNoKeyMarker struct{}
 func (s S300004ListVersionsWithVersionMarkerButNoKeyMarker) Run(ctx *Context) error {
 	client := ctx.S3Client()
 	config := ctx.Config()
-	bucket := aws.String(config.S3TestBucket)
+	bucket := aws.String(config.BucketStandard())
 
-	if err := ctx.EnsureVersioningEnabled(client, config.S3TestBucket); err != nil {
+	if err := ctx.EnsureVersioningEnabled(client, config.BucketStandard()); err != nil {
 		return err
 	}
 

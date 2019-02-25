@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -430,6 +431,10 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	var md5Base64 string
 	if g.integrityCheck {
 		md5Base64 = r.Header.Get("Content-MD5")
+
+		if _, ok := r.Header[textproto.CanonicalMIMEHeaderKey("Content-MD5")]; ok && md5Base64 == "" {
+			return ErrInvalidDigest // Satisfies s3tests
+		}
 	}
 
 	// hashingReader is still needed to get the ETag even if integrityCheck
@@ -446,6 +451,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	}
 
 	if result.VersionID != "" {
+		g.log.Print(LogInfo, "CREATED VERSION:", bucket, object, result.VersionID)
 		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
@@ -478,10 +484,13 @@ func (g *GoFakeS3) deleteObjectVersion(bucket, object string, version VersionID,
 	if g.versioned == nil {
 		return ErrNotImplemented
 	}
+
+	g.log.Print(LogInfo, "DELETE VERSION:", bucket, object, version)
 	result, err := g.versioned.DeleteObjectVersion(bucket, object, version)
 	if err != nil {
 		return err
 	}
+	g.log.Print(LogInfo, "DELETED VERSION:", bucket, object, version)
 
 	if result.IsDeleteMarker {
 		w.Header().Set("x-amz-delete-marker", "true")
@@ -577,6 +586,10 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 	if g.integrityCheck {
 		md5Base64 := r.Header.Get("Content-MD5")
+		if _, ok := r.Header[textproto.CanonicalMIMEHeaderKey("Content-MD5")]; ok && md5Base64 == "" {
+			return ErrInvalidDigest // Satisfies s3tests
+		}
+
 		if md5Base64 != "" {
 			var err error
 			rdr, err = newHashingReader(rdr, md5Base64)
@@ -708,6 +721,7 @@ func (g *GoFakeS3) putBucketVersioning(bucket string, w http.ResponseWriter, r *
 	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
 		return err
 	}
+	g.log.Print(LogInfo, "PUT VERSIONING:", in.Status)
 	return g.versioned.SetVersioningConfiguration(bucket, in)
 }
 

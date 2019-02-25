@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
+	"net/http/httputil"
 	"reflect"
 	"sort"
 	"strings"
@@ -381,7 +382,7 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 		res, err := upload(ts, bucket, w, body)
 		ts.OK(err)
 		if res.StatusCode != http.StatusOK {
-			ts.Fatal("bad status", res.StatusCode)
+			ts.Fatal("bad status", res.StatusCode, tryDumpResponse(res, true))
 		}
 		if etag != "" && res.Header.Get("ETag") != etag {
 			ts.Fatal("bad etag", res.Header.Get("ETag"), etag)
@@ -439,4 +440,9 @@ func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
 		return code == gofakes3.ErrorCode(err.Code())
 	}
 	return false
+}
+
+func tryDumpResponse(rs *http.Response, body bool) string {
+	b, _ := httputil.DumpResponse(rs, body)
+	return string(b)
 }
