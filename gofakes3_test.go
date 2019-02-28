@@ -435,6 +435,46 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 	})
 }
 
+func TestVersioning(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	assertVersioning := func(mfa string, status string) {
+		bv, err := svc.GetBucketVersioning(&s3.GetBucketVersioningInput{Bucket: aws.String(defaultBucket)})
+		ts.OK(err)
+		if aws.StringValue(bv.MFADelete) != mfa {
+			t.Fatal("unexpected MFADelete")
+		}
+		if aws.StringValue(bv.Status) != status {
+			t.Fatal("unexpected Status")
+		}
+	}
+
+	// Bucket that has never been versioned should return empty strings:
+	assertVersioning("", "")
+
+	{ // Enable versioning:
+		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String("Enabled"),
+			},
+		}))
+		assertVersioning("", "Enabled")
+	}
+
+	{ // Suspend versioning:
+		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String("Suspended"),
+			},
+		}))
+		assertVersioning("", "Suspended")
+	}
+}
+
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
 	if err, ok := err.(awserr.Error); ok {
 		return code == gofakes3.ErrorCode(err.Code())
