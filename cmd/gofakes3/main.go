@@ -183,7 +183,7 @@ func run() error {
 		gofakes3.WithTimeSkewLimit(timeSkewLimit),
 		gofakes3.WithTimeSource(timeSource),
 		gofakes3.WithLogger(gofakes3.GlobalLog()),
-		gofakes3.WithHostBucket(hostBucket),
+		gofakes3.WithHostBucket(values.hostBucket),
 	)
 
 	return listenAndServe(values.host, faker.Server())
