@@ -477,7 +477,7 @@ func TestVersioning(t *testing.T) {
 }
 
 func TestObjectVersions(t *testing.T) {
-	assertCreate := func(ts *testServer, name string, contents []byte, version string) {
+	create := func(ts *testServer, name string, contents []byte, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		out, err := svc.PutObject(&s3.PutObjectInput{
@@ -491,7 +491,7 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	assertGet := func(ts *testServer, name string, contents []byte, version string) {
+	get := func(ts *testServer, name string, contents []byte, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		input := &s3.GetObjectInput{
@@ -511,7 +511,7 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	assertDeleteVersion := func(ts *testServer, name string, version string) {
+	deleteVersion := func(ts *testServer, name string, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		input := &s3.DeleteObjectInput{
@@ -524,7 +524,7 @@ func TestObjectVersions(t *testing.T) {
 		ts.OKAll(svc.DeleteObject(input))
 	}
 
-	assertDeleteDirect := func(ts *testServer, name string, version string) {
+	deleteDirect := func(ts *testServer, name string, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		input := &s3.DeleteObjectInput{
@@ -538,7 +538,7 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	assertList := func(ts *testServer, name string, versions ...string) {
+	list := func(ts *testServer, name string, versions ...string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		out, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{Bucket: aws.String(defaultBucket)})
@@ -572,44 +572,44 @@ func TestObjectVersions(t *testing.T) {
 		ts := newTestServer(t, withVersioning())
 		defer ts.Close()
 
-		assertCreate(ts, "object", []byte("body 1"), v1)
-		assertGet(ts, "object", []byte("body 1"), "")
-		assertList(ts, "object", v1)
+		create(ts, "object", []byte("body 1"), v1)
+		get(ts, "object", []byte("body 1"), "")
+		list(ts, "object", v1)
 
-		assertCreate(ts, "object", []byte("body 2"), v2)
-		assertGet(ts, "object", []byte("body 2"), "")
-		assertList(ts, "object", v1, v2)
+		create(ts, "object", []byte("body 2"), v2)
+		get(ts, "object", []byte("body 2"), "")
+		list(ts, "object", v1, v2)
 
-		assertCreate(ts, "object", []byte("body 3"), v3)
-		assertGet(ts, "object", []byte("body 3"), "")
-		assertList(ts, "object", v1, v2, v3)
+		create(ts, "object", []byte("body 3"), v3)
+		get(ts, "object", []byte("body 3"), "")
+		list(ts, "object", v1, v2, v3)
 
-		assertGet(ts, "object", []byte("body 1"), v1)
-		assertGet(ts, "object", []byte("body 2"), v2)
-		assertGet(ts, "object", []byte("body 3"), v3)
-		assertGet(ts, "object", []byte("body 3"), "")
+		get(ts, "object", []byte("body 1"), v1)
+		get(ts, "object", []byte("body 2"), v2)
+		get(ts, "object", []byte("body 3"), v3)
+		get(ts, "object", []byte("body 3"), "")
 
-		assertDeleteVersion(ts, "object", v1)
-		assertList(ts, "object", v2, v3)
-		assertDeleteVersion(ts, "object", v2)
-		assertList(ts, "object", v3)
-		assertDeleteVersion(ts, "object", v3)
-		assertList(ts, "object")
+		deleteVersion(ts, "object", v1)
+		list(ts, "object", v2, v3)
+		deleteVersion(ts, "object", v2)
+		list(ts, "object", v3)
+		deleteVersion(ts, "object", v3)
+		list(ts, "object")
 	})
 
 	t.Run("delete-direct", func(t *testing.T) {
 		ts := newTestServer(t, withVersioning())
 		defer ts.Close()
 
-		assertCreate(ts, "object", []byte("body 1"), v1)
-		assertList(ts, "object", v1)
-		assertCreate(ts, "object", []byte("body 2"), v2)
-		assertList(ts, "object", v1, v2)
+		create(ts, "object", []byte("body 1"), v1)
+		list(ts, "object", v1)
+		create(ts, "object", []byte("body 2"), v2)
+		list(ts, "object", v1, v2)
 
-		assertGet(ts, "object", []byte("body 2"), "")
+		get(ts, "object", []byte("body 2"), "")
 
-		assertDeleteDirect(ts, "object", v3)
-		assertList(ts, "object", v1, v2, v3)
+		deleteDirect(ts, "object", v3)
+		list(ts, "object", v1, v2, v3)
 
 		svc := ts.s3Client()
 		_, err := svc.GetObject(&s3.GetObjectInput{

@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,12 +29,17 @@ func Cover() {
 
 	var files []string
 
-	for idx, pkg := range pkgs {
-		// FIXME: temp files
-		covFile := fmt.Sprintf("cover-%d.out", idx)
-		files = append(files, covFile)
+	for _, pkg := range pkgs {
+		covFile, err := ioutil.TempFile("", "")
+		if err != nil {
+			panic(err)
+		}
+		covFile.Close()
+		defer os.Remove(covFile.Name())
+
+		files = append(files, covFile.Name())
 		cmd := exec.Command("go", "test",
-			fmt.Sprintf("-coverprofile=%s", covFile),
+			fmt.Sprintf("-coverprofile=%s", covFile.Name()),
 			fmt.Sprintf("-coverpkg=%s", strings.Join(pkgs, ",")),
 			pkg,
 		)
@@ -51,7 +57,6 @@ func Cover() {
 		for _, p := range profiles {
 			merged = gocovmerge.AddProfile(merged, p)
 		}
-		os.Remove(file)
 	}
 
 	gocovmerge.DumpProfiles(merged, os.Stdout)
