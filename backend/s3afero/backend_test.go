@@ -266,7 +266,7 @@ func TestPutDeleteMulti(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			deleteResult, err := backend.DeleteMulti("test", "foo/bar", "foo/baz")
+			deleteResult, err := backend.(gofakes3.DeleteMultiBackend).DeleteMulti("test", "foo/bar", "foo/baz")
 			if err != nil {
 				t.Fatal(err)
 			}

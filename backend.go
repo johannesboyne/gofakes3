@@ -227,7 +227,13 @@ type Backend interface {
 	// The size can be used if the backend needs to read the whole reader; use
 	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
+}
 
+// DeleteMultiBackend may be optionally implemented by a Backend in order to support
+// multi-delete operations directly. If this is not implemented, GoFakeS3 will
+// attempt to emulate it, which may be suboptimal or insufficiently well
+// controlled for your needs.
+type DeleteMultiBackend interface {
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
 }
 

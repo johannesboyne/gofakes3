@@ -37,6 +37,7 @@ type SingleBucketBackend struct {
 }
 
 var _ gofakes3.Backend = &SingleBucketBackend{}
+var _ gofakes3.DeleteMultiBackend = &SingleBucketBackend{}
 
 func SingleBucket(name string, fs afero.Fs, metaFs afero.Fs, opts ...SingleOption) (*SingleBucketBackend, error) {
 	if err := ensureNoOsFs("fs", fs); err != nil {

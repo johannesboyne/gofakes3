@@ -26,6 +26,7 @@ type Backend struct {
 }
 
 var _ gofakes3.Backend = &Backend{}
+var _ gofakes3.DeleteMultiBackend = &Backend{}
 var _ gofakes3.VersionedBackend = &Backend{}
 
 type Option func(b *Backend)

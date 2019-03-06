@@ -80,3 +80,14 @@ func WithoutVersioning() Option {
 func WithUnimplementedPageError() Option {
 	return func(g *GoFakeS3) { g.failOnUnimplementedPage = true }
 }
+
+// WithoutSimulatedDeleteMulti prevents DeleteMultiBackend from being simulated
+// if it is not implemented by the chosen backend. DeleteMulti will return
+// ErrNotImplemented instead.
+func WithoutSimulatedDeleteMulti() Option {
+	return func(g *GoFakeS3) {
+		if _, ok := g.deleteMultiBackend.(*deleteMultiSimulator); ok {
+			g.deleteMultiBackend = &deleteMultiDisabled{}
+		}
+	}
+}

@@ -41,6 +41,7 @@ type MultiBucketBackend struct {
 }
 
 var _ gofakes3.Backend = &MultiBucketBackend{}
+var _ gofakes3.DeleteMultiBackend = &MultiBucketBackend{}
 
 func MultiBucket(fs afero.Fs, opts ...MultiOption) (*MultiBucketBackend, error) {
 	if err := ensureNoOsFs("fs", fs); err != nil {

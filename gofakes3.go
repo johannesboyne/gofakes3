@@ -23,8 +23,9 @@ import (
 //
 // Logic is delegated to other components, like Backend or uploader.
 type GoFakeS3 struct {
-	storage   Backend
-	versioned VersionedBackend
+	storage            Backend
+	versioned          VersionedBackend
+	deleteMultiBackend DeleteMultiBackend
 
 	timeSource              TimeSource
 	timeSkew                time.Duration
@@ -52,6 +53,11 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 
 	// versioned MUST be set before options as one of the options disables it:
 	s3.versioned, _ = backend.(VersionedBackend)
+
+	s3.deleteMultiBackend, _ = backend.(DeleteMultiBackend)
+	if s3.deleteMultiBackend == nil {
+		s3.deleteMultiBackend = &deleteMultiSimulator{s3}
+	}
 
 	for _, opt := range options {
 		opt(s3)
@@ -634,7 +640,7 @@ func (g *GoFakeS3) deleteMulti(bucket string, w http.ResponseWriter, r *http.Req
 		keys[i] = o.Key
 	}
 
-	out, err := g.storage.DeleteMulti(bucket, keys...)
+	out, err := g.deleteMultiBackend.DeleteMulti(bucket, keys...)
 	if err != nil {
 		return err
 	}
@@ -964,4 +970,36 @@ func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsP
 	_, page.HasVersionIDMarker = query["version-id-marker"]
 
 	return page, nil
+}
+
+type deleteMultiSimulator struct {
+	faker *GoFakeS3
+}
+
+func (dm *deleteMultiSimulator) DeleteMulti(bucketName string, objects ...string) (result MultiDeleteResult, err error) {
+	for _, object := range objects {
+		delResult, err := dm.faker.storage.DeleteObject(bucketName, object)
+		_ = delResult // FIXME: where does the info in delResult go in the response?
+
+		if err != nil {
+			errres := ErrorResultFromError(err)
+			if errres.Code == ErrInternal {
+				dm.faker.log.Print(LogErr, err)
+			}
+			result.Error = append(result.Error, errres)
+
+		} else {
+			result.Deleted = append(result.Deleted, ObjectID{
+				Key: object,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+type deleteMultiDisabled struct{}
+
+func (dm *deleteMultiDisabled) DeleteMulti(bucketName string, objects ...string) (result MultiDeleteResult, err error) {
+	return result, ErrNotImplemented
 }
