@@ -1,5 +1,10 @@
 //+build mage
 
+// Run using mage: https://github.com/magefile/mage
+//
+// Example invocation:
+//   mage cover
+//
 package main
 
 import (
@@ -14,12 +19,17 @@ import (
 	"golang.org/x/tools/cover"
 )
 
+// Cover collects true code coverage for all packages in gofakes3.
+// It does so by running 'go test' for each child package (enumerated by
+// 'go list ./...') with the '-coverpkg' flag, populated with the same
+// 'go list'.
 func Cover() {
 	pkgs := goList()
 
 	var files []string
 
 	for idx, pkg := range pkgs {
+		// FIXME: temp files
 		covFile := fmt.Sprintf("cover-%d.out", idx)
 		files = append(files, covFile)
 		cmd := exec.Command("go", "test",
