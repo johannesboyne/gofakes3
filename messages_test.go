@@ -2,6 +2,8 @@ package gofakes3
 
 import (
 	"encoding/xml"
+	"fmt"
+	"io"
 	"testing"
 	"time"
 )
@@ -66,5 +68,69 @@ func TestContentTimeOmitEmpty(t *testing.T) {
 	}
 	if string(out) != expected {
 		t.Fatalf("unexpected XML output: %s", string(out))
+	}
+}
+
+func TestErrorResultFromError(t *testing.T) {
+	t.Run("any-old-junk", func(t *testing.T) {
+		er := ErrorResultFromError(io.EOF)
+		if er.Code != ErrInternal {
+			t.Fatal()
+		}
+	})
+
+	t.Run("direct-code", func(t *testing.T) {
+		er := ErrorResultFromError(ErrBadDigest)
+		if er.Code != ErrBadDigest {
+			t.Fatal()
+		}
+	})
+
+	t.Run("wrapped-code", func(t *testing.T) {
+		er := ErrorResultFromError(&ErrorResponse{Code: ErrBadDigest})
+		if er.Code != ErrBadDigest {
+			t.Fatal()
+		}
+	})
+
+	t.Run("wrapped-code", func(t *testing.T) {
+		er := ErrorResultFromError(KeyNotFound("nup"))
+		if er.Code != ErrNoSuchKey {
+			t.Fatal()
+		}
+	})
+}
+
+func TestMFADeleteStatus(t *testing.T) {
+	type testMsg struct {
+		Foo    string
+		Status MFADeleteStatus
+	}
+	const inputTpl = "" +
+		"<testMsg>" +
+		"<Foo>bar</Foo>" +
+		"<Status>%s</Status>" +
+		"</testMsg>"
+
+	for _, tc := range []struct {
+		in, out string
+	}{
+		{"Enabled", "Enabled"},
+		{"enabled", "Enabled"},
+		{"ENABLED", "Enabled"},
+		{"Disabled", "Disabled"},
+	} {
+		var msg testMsg
+		if err := xml.Unmarshal([]byte(fmt.Sprintf(inputTpl, tc.in)), &msg); err != nil {
+			t.Fatal(err)
+		}
+		if string(msg.Status) != tc.out {
+			t.Fatal()
+		}
+	}
+
+	var msg testMsg
+	if err := xml.Unmarshal([]byte(fmt.Sprintf(inputTpl, "QUACK QUACK")), &msg); err == nil {
+		t.Fatal()
 	}
 }
