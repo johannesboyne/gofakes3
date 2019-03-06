@@ -429,22 +429,28 @@ func (db *Backend) ListBucketVersions(
 			version := versions.Value()
 
 			if version.deleteMarker {
-				result.Versions = append(result.Versions, gofakes3.DeleteMarker{
+				marker := &gofakes3.DeleteMarker{
 					Key:          version.name,
-					VersionID:    version.versionID,
 					IsLatest:     version == object.data,
 					LastModified: gofakes3.NewContentTime(version.lastModified),
-				})
+				}
+				if bucket.versioning != gofakes3.VersioningNone { // S300005
+					marker.VersionID = version.versionID
+				}
+				result.Versions = append(result.Versions, marker)
 
 			} else {
-				result.Versions = append(result.Versions, gofakes3.Version{
+				resultVer := &gofakes3.Version{
 					Key:          version.name,
-					VersionID:    version.versionID,
 					IsLatest:     version == object.data,
 					LastModified: gofakes3.NewContentTime(version.lastModified),
 					Size:         int64(len(version.body)),
 					ETag:         version.etag,
-				})
+				}
+				if bucket.versioning != gofakes3.VersioningNone { // S300005
+					resultVer.VersionID = version.versionID
+				}
+				result.Versions = append(result.Versions, resultVer)
 			}
 
 			cnt++

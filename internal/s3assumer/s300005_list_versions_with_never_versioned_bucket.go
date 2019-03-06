@@ -18,10 +18,10 @@ import (
 //   normal bucket listing API when the backend does not implement versioning,
 //   but this will probably need to wait until we implement proper pagination.
 //
-// - The API returns the 'null' for the version ID, which the Go SDK happily
-//   returns as the *string* value 'null' (yecch!). GoFakeS3 backend implementers
-//   should be able to simply return the empty string; GoFakeS3 itself should
-//   handle this particular bit of jank once and once only.
+// - The API returns the _string_ 'null' for the version ID, which the Go SDK
+//   happily returns as the *string* value 'null' (yecch!). GoFakeS3 backend
+//   implementers should be able to simply return the empty string; GoFakeS3
+//   itself should handle this particular bit of jank once and once only.
 //
 type S300005ListVersionsWithNeverVersionedBucket struct{}
 

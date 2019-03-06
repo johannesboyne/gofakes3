@@ -477,12 +477,12 @@ func TestVersioning(t *testing.T) {
 }
 
 func TestObjectVersions(t *testing.T) {
-	create := func(ts *testServer, name string, contents []byte, version string) {
+	create := func(ts *testServer, bucket, key string, contents []byte, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		out, err := svc.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(defaultBucket),
-			Key:    aws.String(name),
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
 			Body:   bytes.NewReader(contents),
 		})
 		ts.OK(err)
@@ -491,12 +491,12 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	get := func(ts *testServer, name string, contents []byte, version string) {
+	get := func(ts *testServer, bucket, key string, contents []byte, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		input := &s3.GetObjectInput{
-			Bucket: aws.String(defaultBucket),
-			Key:    aws.String(name),
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
 		}
 		if version != "" {
 			input.VersionId = aws.String(version)
@@ -511,12 +511,12 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	deleteVersion := func(ts *testServer, name string, version string) {
+	deleteVersion := func(ts *testServer, bucket, key, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		input := &s3.DeleteObjectInput{
-			Bucket: aws.String(defaultBucket),
-			Key:    aws.String(name),
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
 		}
 		if version != "" {
 			input.VersionId = aws.String(version)
@@ -524,12 +524,12 @@ func TestObjectVersions(t *testing.T) {
 		ts.OKAll(svc.DeleteObject(input))
 	}
 
-	deleteDirect := func(ts *testServer, name string, version string) {
+	deleteDirect := func(ts *testServer, bucket, key, version string) {
 		ts.Helper()
 		svc := ts.s3Client()
 		input := &s3.DeleteObjectInput{
-			Bucket: aws.String(defaultBucket),
-			Key:    aws.String(name),
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
 		}
 		out, err := svc.DeleteObject(input)
 		ts.OK(err)
@@ -538,10 +538,10 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	list := func(ts *testServer, name string, versions ...string) {
+	list := func(ts *testServer, bucket string, versions ...string) {
 		ts.Helper()
 		svc := ts.s3Client()
-		out, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{Bucket: aws.String(defaultBucket)})
+		out, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
 		ts.OK(err)
 
 		var found []string
@@ -572,44 +572,44 @@ func TestObjectVersions(t *testing.T) {
 		ts := newTestServer(t, withVersioning())
 		defer ts.Close()
 
-		create(ts, "object", []byte("body 1"), v1)
-		get(ts, "object", []byte("body 1"), "")
-		list(ts, "object", v1)
+		create(ts, defaultBucket, "object", []byte("body 1"), v1)
+		get(ts, defaultBucket, "object", []byte("body 1"), "")
+		list(ts, defaultBucket, v1)
 
-		create(ts, "object", []byte("body 2"), v2)
-		get(ts, "object", []byte("body 2"), "")
-		list(ts, "object", v1, v2)
+		create(ts, defaultBucket, "object", []byte("body 2"), v2)
+		get(ts, defaultBucket, "object", []byte("body 2"), "")
+		list(ts, defaultBucket, v1, v2)
 
-		create(ts, "object", []byte("body 3"), v3)
-		get(ts, "object", []byte("body 3"), "")
-		list(ts, "object", v1, v2, v3)
+		create(ts, defaultBucket, "object", []byte("body 3"), v3)
+		get(ts, defaultBucket, "object", []byte("body 3"), "")
+		list(ts, defaultBucket, v1, v2, v3)
 
-		get(ts, "object", []byte("body 1"), v1)
-		get(ts, "object", []byte("body 2"), v2)
-		get(ts, "object", []byte("body 3"), v3)
-		get(ts, "object", []byte("body 3"), "")
+		get(ts, defaultBucket, "object", []byte("body 1"), v1)
+		get(ts, defaultBucket, "object", []byte("body 2"), v2)
+		get(ts, defaultBucket, "object", []byte("body 3"), v3)
+		get(ts, defaultBucket, "object", []byte("body 3"), "")
 
-		deleteVersion(ts, "object", v1)
-		list(ts, "object", v2, v3)
-		deleteVersion(ts, "object", v2)
-		list(ts, "object", v3)
-		deleteVersion(ts, "object", v3)
-		list(ts, "object")
+		deleteVersion(ts, defaultBucket, "object", v1)
+		list(ts, defaultBucket, v2, v3)
+		deleteVersion(ts, defaultBucket, "object", v2)
+		list(ts, defaultBucket, v3)
+		deleteVersion(ts, defaultBucket, "object", v3)
+		list(ts, defaultBucket)
 	})
 
 	t.Run("delete-direct", func(t *testing.T) {
 		ts := newTestServer(t, withVersioning())
 		defer ts.Close()
 
-		create(ts, "object", []byte("body 1"), v1)
-		list(ts, "object", v1)
-		create(ts, "object", []byte("body 2"), v2)
-		list(ts, "object", v1, v2)
+		create(ts, defaultBucket, "object", []byte("body 1"), v1)
+		list(ts, defaultBucket, v1)
+		create(ts, defaultBucket, "object", []byte("body 2"), v2)
+		list(ts, defaultBucket, v1, v2)
 
-		get(ts, "object", []byte("body 2"), "")
+		get(ts, defaultBucket, "object", []byte("body 2"), "")
 
-		deleteDirect(ts, "object", v3)
-		list(ts, "object", v1, v2, v3)
+		deleteDirect(ts, defaultBucket, "object", v3)
+		list(ts, defaultBucket, v1, v2, v3)
 
 		svc := ts.s3Client()
 		_, err := svc.GetObject(&s3.GetObjectInput{
@@ -619,6 +619,17 @@ func TestObjectVersions(t *testing.T) {
 		if !hasErrorCode(err, gofakes3.ErrNoSuchKey) {
 			ts.Fatal("expected ErrNoSuchKey, found", err)
 		}
+	})
+
+	t.Run("list-never-versioned", func(t *testing.T) {
+		ts := newTestServer(t, withVersioning())
+		defer ts.Close()
+
+		const neverVerBucket = "neverver"
+		ts.backendCreateBucket(neverVerBucket)
+
+		ts.backendPutString(neverVerBucket, "object", nil, "body 1")
+		list(ts, neverVerBucket, "null") // S300005
 	})
 }
 

@@ -197,6 +197,18 @@ func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, 
 	if err != nil {
 		return err
 	}
+
+	for _, ver := range bucket.Versions {
+		// S300005: S3 returns the _string_ 'null' for the version ID if the
+		// bucket has never had versioning enabled. GoFakeS3 backend
+		// implementers should be able to simply return the empty string;
+		// GoFakeS3 itself should handle this particular bit of jank once and
+		// once only.
+		if ver.GetVersionID() == "" {
+			ver.setVersionID("null")
+		}
+	}
+
 	return g.xmlEncoder(w).Encode(bucket)
 }
 

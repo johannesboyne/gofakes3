@@ -217,7 +217,10 @@ type DeleteMarker struct {
 	Owner        *UserInfo   `xml:"Owner,omitempty"`
 }
 
-func (d DeleteMarker) isVersionItem() {}
+var _ VersionItem = &DeleteMarker{}
+
+func (d DeleteMarker) GetVersionID() VersionID   { return d.VersionID }
+func (d *DeleteMarker) setVersionID(i VersionID) { d.VersionID = i }
 
 type Version struct {
 	XMLName      xml.Name    `xml:"Version"`
@@ -234,10 +237,14 @@ type Version struct {
 	Owner *UserInfo `xml:"Owner,omitempty"`
 }
 
-func (v Version) isVersionItem() {}
+var _ VersionItem = &Version{}
+
+func (v Version) GetVersionID() VersionID   { return v.VersionID }
+func (v *Version) setVersionID(i VersionID) { v.VersionID = i }
 
 type VersionItem interface {
-	isVersionItem()
+	GetVersionID() VersionID
+	setVersionID(v VersionID)
 }
 
 type ListBucketVersionsResult struct {
