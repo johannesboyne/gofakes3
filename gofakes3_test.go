@@ -477,12 +477,9 @@ func TestVersioning(t *testing.T) {
 }
 
 func TestObjectVersions(t *testing.T) {
-	ts := newTestServer(t, withVersioning())
-	defer ts.Close()
-	svc := ts.s3Client()
-
-	assertCreate := func(name string, contents []byte, version string) {
-		t.Helper()
+	assertCreate := func(ts *testServer, name string, contents []byte, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
 		out, err := svc.PutObject(&s3.PutObjectInput{
 			Bucket: aws.String(defaultBucket),
 			Key:    aws.String(name),
@@ -494,34 +491,56 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	assertGet := func(name string, contents []byte, version string) {
-		t.Helper()
-		out, err := svc.GetObject(&s3.GetObjectInput{
-			Bucket:    aws.String(defaultBucket),
-			Key:       aws.String(name),
-			VersionId: aws.String(version),
-		})
+	assertGet := func(ts *testServer, name string, contents []byte, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		input := &s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(name),
+		}
+		if version != "" {
+			input.VersionId = aws.String(version)
+		}
+		out, err := svc.GetObject(input)
 		ts.OK(err)
 		defer out.Body.Close()
 		bts, err := ioutil.ReadAll(out.Body)
 		ts.OK(err)
 		if !bytes.Equal(bts, contents) {
-			t.Fatal("body mismatch. found:", string(bts), "expected:", string(contents))
+			ts.Fatal("body mismatch. found:", string(bts), "expected:", string(contents))
 		}
 	}
 
-	assertDelete := func(name string, version string) {
-		t.Helper()
-		_, err := svc.DeleteObject(&s3.DeleteObjectInput{
-			Bucket:    aws.String(defaultBucket),
-			Key:       aws.String(name),
-			VersionId: aws.String(version),
-		})
-		ts.OK(err)
+	assertDeleteVersion := func(ts *testServer, name string, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(name),
+		}
+		if version != "" {
+			input.VersionId = aws.String(version)
+		}
+		ts.OKAll(svc.DeleteObject(input))
 	}
 
-	assertList := func(name string, versions ...string) {
-		t.Helper()
+	assertDeleteDirect := func(ts *testServer, name string, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(name),
+		}
+		out, err := svc.DeleteObject(input)
+		ts.OK(err)
+		if aws.StringValue(out.VersionId) != version {
+			t.Fatal("version ID mismatch. found:", aws.StringValue(out.VersionId), "expected:", version)
+		}
+	}
+
+	assertList := func(ts *testServer, name string, versions ...string) {
+		ts.Helper()
+		svc := ts.s3Client()
 		out, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{Bucket: aws.String(defaultBucket)})
 		ts.OK(err)
 
@@ -529,8 +548,17 @@ func TestObjectVersions(t *testing.T) {
 		for _, ver := range out.Versions {
 			found = append(found, aws.StringValue(ver.VersionId))
 		}
+		for _, ver := range out.DeleteMarkers {
+			found = append(found, aws.StringValue(ver.VersionId))
+		}
+
+		// Unfortunately, the S3 client API destroys the order of Versions and
+		// DeleteMarkers, which are sibling elements in the XML body but separated
+		// into different lists by the client:
+		sort.Strings(found)
+		sort.Strings(versions)
 		if !reflect.DeepEqual(found, versions) {
-			t.Fatal("versions mismatch. found:", found, "expected:", versions)
+			ts.Fatal("versions mismatch. found:", found, "expected:", versions)
 		}
 	}
 
@@ -540,23 +568,58 @@ func TestObjectVersions(t *testing.T) {
 	const v2 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG="
 	const v3 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G="
 
-	assertCreate("object", []byte("body 1"), v1)
-	assertList("object", v1)
-	assertCreate("object", []byte("body 2"), v2)
-	assertList("object", v1, v2)
-	assertCreate("object", []byte("body 3"), v3)
-	assertList("object", v1, v2, v3)
+	t.Run("put-list-delete-versions", func(t *testing.T) {
+		ts := newTestServer(t, withVersioning())
+		defer ts.Close()
 
-	assertGet("object", []byte("body 1"), v1)
-	assertGet("object", []byte("body 2"), v2)
-	assertGet("object", []byte("body 3"), v3)
+		assertCreate(ts, "object", []byte("body 1"), v1)
+		assertGet(ts, "object", []byte("body 1"), "")
+		assertList(ts, "object", v1)
 
-	assertDelete("object", v1)
-	assertList("object", v2, v3)
-	assertDelete("object", v2)
-	assertList("object", v3)
-	assertDelete("object", v3)
-	assertList("object")
+		assertCreate(ts, "object", []byte("body 2"), v2)
+		assertGet(ts, "object", []byte("body 2"), "")
+		assertList(ts, "object", v1, v2)
+
+		assertCreate(ts, "object", []byte("body 3"), v3)
+		assertGet(ts, "object", []byte("body 3"), "")
+		assertList(ts, "object", v1, v2, v3)
+
+		assertGet(ts, "object", []byte("body 1"), v1)
+		assertGet(ts, "object", []byte("body 2"), v2)
+		assertGet(ts, "object", []byte("body 3"), v3)
+		assertGet(ts, "object", []byte("body 3"), "")
+
+		assertDeleteVersion(ts, "object", v1)
+		assertList(ts, "object", v2, v3)
+		assertDeleteVersion(ts, "object", v2)
+		assertList(ts, "object", v3)
+		assertDeleteVersion(ts, "object", v3)
+		assertList(ts, "object")
+	})
+
+	t.Run("delete-direct", func(t *testing.T) {
+		ts := newTestServer(t, withVersioning())
+		defer ts.Close()
+
+		assertCreate(ts, "object", []byte("body 1"), v1)
+		assertList(ts, "object", v1)
+		assertCreate(ts, "object", []byte("body 2"), v2)
+		assertList(ts, "object", v1, v2)
+
+		assertGet(ts, "object", []byte("body 2"), "")
+
+		assertDeleteDirect(ts, "object", v3)
+		assertList(ts, "object", v1, v2, v3)
+
+		svc := ts.s3Client()
+		_, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String("object"),
+		})
+		if !hasErrorCode(err, gofakes3.ErrNoSuchKey) {
+			ts.Fatal("expected ErrNoSuchKey, found", err)
+		}
+	})
 }
 
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
