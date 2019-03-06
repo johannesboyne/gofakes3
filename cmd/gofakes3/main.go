@@ -31,6 +31,7 @@ type fakeS3Flags struct {
 	initialBucket string
 	fixedTimeStr  string
 	noIntegrity   bool
+	hostBucket    bool
 
 	boltDb         string
 	directFsPath   string
@@ -45,6 +46,7 @@ func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.fixedTimeStr, "time", "", "RFC3339 format. If passed, the server's clock will always see this time; does not affect existing stored dates.")
 	flagSet.StringVar(&f.initialBucket, "initialbucket", "", "If passed, this bucket will be created on startup if it does not already exist.")
 	flagSet.BoolVar(&f.noIntegrity, "no-integrity", false, "Pass this flag to disable Content-MD5 validation when uploading.")
+	flagSet.BoolVar(&f.hostBucket, "hostbucket", false, "If passed, the bucket name will be extracted from the first segment of the hostname, rather than the first part of the URL path.")
 
 	// Backend specific:
 	flagSet.StringVar(&f.backendKind, "backend", "", "Backend to use to store data (memory, bolt, directfs, fs)")
@@ -181,6 +183,7 @@ func run() error {
 		gofakes3.WithTimeSkewLimit(timeSkewLimit),
 		gofakes3.WithTimeSource(timeSource),
 		gofakes3.WithLogger(gofakes3.GlobalLog()),
+		gofakes3.WithHostBucket(values.hostBucket),
 	)
 
 	return listenAndServe(values.host, faker.Server())
