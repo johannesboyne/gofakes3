@@ -441,6 +441,7 @@ func TestVersioning(t *testing.T) {
 	svc := ts.s3Client()
 
 	assertVersioning := func(mfa string, status string) {
+		t.Helper()
 		bv, err := svc.GetBucketVersioning(&s3.GetBucketVersioningInput{Bucket: aws.String(defaultBucket)})
 		ts.OK(err)
 		if aws.StringValue(bv.MFADelete) != mfa {
@@ -473,6 +474,51 @@ func TestVersioning(t *testing.T) {
 		}))
 		assertVersioning("", "Suspended")
 	}
+}
+
+func TestObjectVersions(t *testing.T) {
+	ts := newTestServer(t, withVersioning())
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	assertCreateVersion := func(name string, contents []byte, version string) {
+		t.Helper()
+		out, err := svc.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(name),
+			Body:   bytes.NewReader(contents),
+		})
+		ts.OK(err)
+		if aws.StringValue(out.VersionId) != version {
+			t.Fatal("version ID mismatch. found:", aws.StringValue(out.VersionId), "expected:", version)
+		}
+	}
+
+	assertGetVersion := func(name string, contents []byte, version string) {
+		t.Helper()
+		out, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket:    aws.String(defaultBucket),
+			Key:       aws.String(name),
+			VersionId: aws.String(version),
+		})
+		ts.OK(err)
+		defer out.Body.Close()
+		bts, err := ioutil.ReadAll(out.Body)
+		ts.OK(err)
+		if !bytes.Equal(bts, contents) {
+			t.Fatal("body mismatch. found:", string(bts), "expected:", string(contents))
+		}
+	}
+
+	// XXX: version IDs are brittle; we control the seed, but the format may
+	// change at any time.
+	assertCreateVersion("object", []byte("v1"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1H03F9QN5V72K21OG=")
+	assertCreateVersion("object", []byte("v2"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG=")
+	assertCreateVersion("object", []byte("v3"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G=")
+
+	assertGetVersion("object", []byte("v1"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1H03F9QN5V72K21OG=")
+	assertGetVersion("object", []byte("v2"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG=")
+	assertGetVersion("object", []byte("v3"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G=")
 }
 
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {

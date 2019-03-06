@@ -137,13 +137,15 @@ type testServer struct {
 	gofakes3.TimeSourceAdvancer
 	*gofakes3.GoFakeS3
 
-	backend gofakes3.Backend
-	server  *httptest.Server
-	options []gofakes3.Option
+	backend   gofakes3.Backend
+	versioned gofakes3.VersionedBackend
+	server    *httptest.Server
+	options   []gofakes3.Option
 
 	// if this is nil, no buckets are created. by default, a starting bucket is
 	// created using the value of the 'defaultBucket' constant.
 	initialBuckets []string
+	versioning     bool
 }
 
 type testServerOption func(ts *testServer)
@@ -151,6 +153,9 @@ type testServerOption func(ts *testServer)
 func withoutInitialBuckets() testServerOption { return func(ts *testServer) { ts.initialBuckets = nil } }
 func withInitialBuckets(buckets ...string) testServerOption {
 	return func(ts *testServer) { ts.initialBuckets = buckets }
+}
+func withVersioning() testServerOption {
+	return func(ts *testServer) { ts.versioning = true }
 }
 func withFakerOptions(opts ...gofakes3.Option) testServerOption {
 	return func(ts *testServer) { ts.options = opts }
@@ -170,7 +175,9 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 		if ts.TimeSourceAdvancer == nil {
 			ts.TimeSourceAdvancer = gofakes3.FixedTimeSource(defaultDate)
 		}
-		ts.backend = s3mem.New(s3mem.WithTimeSource(ts.TimeSourceAdvancer))
+		ts.backend = s3mem.New(
+			s3mem.WithTimeSource(ts.TimeSourceAdvancer),
+			s3mem.WithVersionSeed(0))
 	}
 
 	fakerOpts := []gofakes3.Option{
@@ -188,6 +195,19 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 
 	for _, bucket := range ts.initialBuckets {
 		ts.TT.OK(ts.backend.CreateBucket(bucket))
+	}
+
+	if ts.versioning {
+		mem, ok := ts.backend.(*s3mem.Backend)
+		if !ok {
+			panic("backend is not a versioned backend")
+		}
+		ts.versioned = mem
+		for _, bucket := range ts.initialBuckets {
+			ts.TT.OK(ts.versioned.SetVersioningConfiguration(bucket, gofakes3.VersioningConfiguration{
+				Status: gofakes3.VersioningEnabled,
+			}))
+		}
 	}
 
 	return &ts
