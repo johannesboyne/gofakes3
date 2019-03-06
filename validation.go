@@ -48,15 +48,6 @@ func ValidateBucketName(name string) error {
 	return nil
 }
 
-func validNumericString(v string) bool {
-	for _, c := range v {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 var etagPattern = regexp.MustCompile(`^"[a-z0-9]+"$`)
 
 func validETag(v string) bool {
