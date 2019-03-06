@@ -286,18 +286,24 @@ type ListBucketVersionsResult struct {
 
 func NewListBucketVersionsResult(
 	bucketName string,
-	prefix Prefix,
-	page ListBucketVersionsPage,
+	prefix *Prefix,
+	page *ListBucketVersionsPage,
 ) *ListBucketVersionsResult {
-	return &ListBucketVersionsResult{
-		Xmlns:           "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:            bucketName,
-		Prefix:          prefix.Prefix,
-		Delimiter:       prefix.Delimiter,
-		MaxKeys:         page.MaxKeys,
-		KeyMarker:       page.KeyMarker,
-		VersionIDMarker: page.VersionIDMarker,
+
+	result := &ListBucketVersionsResult{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:  bucketName,
 	}
+	if prefix != nil {
+		result.Prefix = prefix.Prefix
+		result.Delimiter = prefix.Delimiter
+	}
+	if page != nil {
+		result.MaxKeys = page.MaxKeys
+		result.KeyMarker = page.KeyMarker
+		result.VersionIDMarker = page.VersionIDMarker
+	}
+	return result
 }
 
 func (b *ListBucketVersionsResult) AddPrefix(prefix string) {

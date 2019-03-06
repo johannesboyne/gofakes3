@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"github.com/spf13/afero"
 )
 
@@ -94,7 +95,11 @@ func (db *MultiBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *MultiBucketBackend) ListBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *MultiBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	if prefix == nil {
+		prefix = emptyPrefix
+	}
+
 	if err := gofakes3.ValidateBucketName(bucket); err != nil {
 		return nil, gofakes3.BucketNotFound(bucket)
 	}
@@ -156,7 +161,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 	return response, nil
 }
 
-func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	stat, err := db.bucketFs.Stat(filepath.FromSlash(bucket))
 	if os.IsNotExist(err) {
 		return nil, gofakes3.BucketNotFound(bucket)
@@ -293,7 +298,7 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
-		Contents: noOpReadCloser{},
+		Contents: s3io.NoOpReadCloser{},
 	}, nil
 }
 

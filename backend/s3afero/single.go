@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"github.com/spf13/afero"
 )
 
@@ -90,9 +91,12 @@ func (db *SingleBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	}, nil
 }
 
-func (db *SingleBucketBackend) ListBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	if bucket != db.name {
 		return nil, gofakes3.BucketNotFound(bucket)
+	}
+	if prefix == nil {
+		prefix = emptyPrefix
 	}
 
 	db.lock.Lock()
@@ -148,7 +152,7 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 	return response, nil
 }
 
-func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	response := gofakes3.NewListBucketResult(bucket)
 
 	if err := afero.Walk(db.fs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
@@ -217,7 +221,7 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
-		Contents: noOpReadCloser{},
+		Contents: s3io.NoOpReadCloser{},
 	}, nil
 }
 

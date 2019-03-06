@@ -142,7 +142,7 @@ func TestPutListRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			result, err := backend.ListBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			result, err := backend.ListBucket("test", &gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -187,7 +187,7 @@ func TestPutListDir(t *testing.T) {
 			}
 
 			{
-				result, err := backend.ListBucket("test", gofakes3.Prefix{Prefix: "foo/", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+				result, err := backend.ListBucket("test", &gofakes3.Prefix{Prefix: "foo/", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -197,7 +197,7 @@ func TestPutListDir(t *testing.T) {
 			}
 
 			{
-				result, err := backend.ListBucket("test", gofakes3.Prefix{Prefix: "foo/bar", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+				result, err := backend.ListBucket("test", &gofakes3.Prefix{Prefix: "foo/bar", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -227,7 +227,7 @@ func TestPutDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			result, err := backend.ListBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			result, err := backend.ListBucket("test", &gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +266,7 @@ func TestPutDeleteMulti(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			bucketContents, err := backend.ListBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			bucketContents, err := backend.ListBucket("test", &gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
 				t.Fatal(err)
 			}

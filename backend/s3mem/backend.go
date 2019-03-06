@@ -10,6 +10,11 @@ import (
 	"github.com/johannesboyne/gofakes3/internal/goskipiter"
 )
 
+var (
+	emptyPrefix       = &gofakes3.Prefix{}
+	emptyVersionsPage = &gofakes3.ListBucketVersionsPage{}
+)
+
 type Backend struct {
 	buckets          map[string]*bucket
 	timeSource       gofakes3.TimeSource
@@ -68,7 +73,11 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	if prefix == nil {
+		prefix = emptyPrefix
+	}
+
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
@@ -347,9 +356,15 @@ func (db *Backend) DeleteObjectVersion(bucketName, objectName string, versionID 
 
 func (db *Backend) ListBucketVersions(
 	bucketName string,
-	prefix gofakes3.Prefix,
-	page gofakes3.ListBucketVersionsPage,
+	prefix *gofakes3.Prefix,
+	page *gofakes3.ListBucketVersionsPage,
 ) (*gofakes3.ListBucketVersionsResult, error) {
+	if prefix == nil {
+		prefix = emptyPrefix
+	}
+	if page == nil {
+		page = emptyVersionsPage
+	}
 
 	db.lock.RLock()
 	defer db.lock.RUnlock()

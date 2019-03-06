@@ -481,7 +481,7 @@ func TestObjectVersions(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	assertCreateVersion := func(name string, contents []byte, version string) {
+	assertCreate := func(name string, contents []byte, version string) {
 		t.Helper()
 		out, err := svc.PutObject(&s3.PutObjectInput{
 			Bucket: aws.String(defaultBucket),
@@ -494,7 +494,7 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
-	assertGetVersion := func(name string, contents []byte, version string) {
+	assertGet := func(name string, contents []byte, version string) {
 		t.Helper()
 		out, err := svc.GetObject(&s3.GetObjectInput{
 			Bucket:    aws.String(defaultBucket),
@@ -510,15 +510,53 @@ func TestObjectVersions(t *testing.T) {
 		}
 	}
 
+	assertDelete := func(name string, version string) {
+		t.Helper()
+		_, err := svc.DeleteObject(&s3.DeleteObjectInput{
+			Bucket:    aws.String(defaultBucket),
+			Key:       aws.String(name),
+			VersionId: aws.String(version),
+		})
+		ts.OK(err)
+	}
+
+	assertList := func(name string, versions ...string) {
+		t.Helper()
+		out, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{Bucket: aws.String(defaultBucket)})
+		ts.OK(err)
+
+		var found []string
+		for _, ver := range out.Versions {
+			found = append(found, aws.StringValue(ver.VersionId))
+		}
+		if !reflect.DeepEqual(found, versions) {
+			t.Fatal("versions mismatch. found:", found, "expected:", versions)
+		}
+	}
+
 	// XXX: version IDs are brittle; we control the seed, but the format may
 	// change at any time.
-	assertCreateVersion("object", []byte("v1"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1H03F9QN5V72K21OG=")
-	assertCreateVersion("object", []byte("v2"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG=")
-	assertCreateVersion("object", []byte("v3"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G=")
+	const v1 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1H03F9QN5V72K21OG="
+	const v2 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG="
+	const v3 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G="
 
-	assertGetVersion("object", []byte("v1"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1H03F9QN5V72K21OG=")
-	assertGetVersion("object", []byte("v2"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG=")
-	assertGetVersion("object", []byte("v3"), "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G=")
+	assertCreate("object", []byte("body 1"), v1)
+	assertList("object", v1)
+	assertCreate("object", []byte("body 2"), v2)
+	assertList("object", v1, v2)
+	assertCreate("object", []byte("body 3"), v3)
+	assertList("object", v1, v2, v3)
+
+	assertGet("object", []byte("body 1"), v1)
+	assertGet("object", []byte("body 2"), v2)
+	assertGet("object", []byte("body 3"), v3)
+
+	assertDelete("object", v1)
+	assertList("object", v2, v3)
+	assertDelete("object", v2)
+	assertList("object", v3)
+	assertDelete("object", v3)
+	assertList("object")
 }
 
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {

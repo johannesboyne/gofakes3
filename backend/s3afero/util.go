@@ -7,14 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/johannesboyne/gofakes3"
 	"github.com/spf13/afero"
 )
 
-type noOpReadCloser struct{}
-
-func (d noOpReadCloser) Read(b []byte) (n int, err error) { return 0, io.EOF }
-
-func (d noOpReadCloser) Close() error { return nil }
+var emptyPrefix = &gofakes3.Prefix{}
 
 type readerWithCloser struct {
 	io.Reader

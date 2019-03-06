@@ -160,7 +160,7 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 	g.log.Print(LogInfo, "bucketname:", bucketName)
 	g.log.Print(LogInfo, "prefix    :", prefix)
 
-	bucket, err := g.storage.ListBucket(bucketName, prefix)
+	bucket, err := g.storage.ListBucket(bucketName, &prefix)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, 
 		page = ListBucketVersionsPage{}
 	}
 
-	bucket, err := g.versioned.ListBucketVersions(bucketName, prefix, page)
+	bucket, err := g.versioned.ListBucketVersions(bucketName, &prefix, &page)
 	if err != nil {
 		return err
 	}

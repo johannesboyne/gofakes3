@@ -14,6 +14,10 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
+var (
+	emptyPrefix = &gofakes3.Prefix{}
+)
+
 type Backend struct {
 	bolt           *bolt.DB
 	timeSource     gofakes3.TimeSource
@@ -126,7 +130,11 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, err
 }
 
-func (db *Backend) ListBucket(name string, prefix gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	if prefix == nil {
+		prefix = emptyPrefix
+	}
+
 	var bucket *gofakes3.ListBucketResult
 
 	mod := gofakes3.NewContentTime(db.timeSource.Now())

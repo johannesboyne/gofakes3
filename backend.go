@@ -93,7 +93,9 @@ type Backend interface {
 	//
 	// WARNING: this API does not yet support pagination; it will change when
 	// this is implemented.
-	ListBucket(name string, prefix Prefix) (*ListBucketResult, error)
+	//
+	// The Backend MUST treat a nil prefix identically to a zero prefix.
+	ListBucket(name string, prefix *Prefix) (*ListBucketResult, error)
 
 	// CreateBucket creates the bucket if it does not already exist. The name
 	// should be assumed to be a valid name.
@@ -235,5 +237,8 @@ type VersionedBackend interface {
 	//
 	// This MUST return the list of current versions with an empty VersionID
 	// even if versioning has never been enabled for the bucket (S300005).
-	ListBucketVersions(bucketName string, prefix Prefix, page ListBucketVersionsPage) (*ListBucketVersionsResult, error)
+	//
+	// The Backend MUST treat a nil prefix identically to a zero prefix, and a
+	// nil page identically to a zero page.
+	ListBucketVersions(bucketName string, prefix *Prefix, page *ListBucketVersionsPage) (*ListBucketVersionsResult, error)
 }
