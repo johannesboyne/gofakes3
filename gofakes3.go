@@ -714,25 +714,37 @@ func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID Uplo
 }
 
 func (g *GoFakeS3) getBucketVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
-	if g.versioned == nil {
-		return ErrNotImplemented
-	}
-	out, err := g.versioned.VersioningConfiguration(bucket)
-	if err != nil {
-		return err
+	var config VersioningConfiguration
+
+	if g.versioned != nil {
+		var err error
+		config, err = g.versioned.VersioningConfiguration(bucket)
+		if err != nil {
+			return err
+		}
 	}
 
-	return g.xmlEncoder(w).Encode(out)
+	return g.xmlEncoder(w).Encode(config)
 }
 
 func (g *GoFakeS3) putBucketVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
-	if g.versioned == nil {
-		return ErrNotImplemented
-	}
 	var in VersioningConfiguration
 	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
 		return err
 	}
+
+	if g.versioned == nil {
+		if in.MFADelete == MFADeleteEnabled || in.Status == VersioningEnabled {
+			// We only need to respond that this is not implemented if there's an
+			// attempt to enable it. If we receive a request to disable it, or an
+			// empty request, that matches the current state and has no effect so
+			// we can accept it.
+			return ErrNotImplemented
+		} else {
+			return nil
+		}
+	}
+
 	g.log.Print(LogInfo, "PUT VERSIONING:", in.Status)
 	return g.versioned.SetVersioningConfiguration(bucket, in)
 }

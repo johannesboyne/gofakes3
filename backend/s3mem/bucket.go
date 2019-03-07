@@ -130,10 +130,12 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 	var rnge *gofakes3.ObjectRange
 
 	if withBody {
+		// In case of a range request the correct part of the slice is extracted:
 		rnge = rangeRequest.Range(sz)
 		if rnge != nil {
 			data = data[rnge.Start : rnge.Start+rnge.Length]
 		}
+
 		// The data slice should be completely replaced if the bucket item is edited, so
 		// it should be safe to return the data slice directly.
 		contents = s3io.ReaderWithDummyCloser{bytes.NewReader(data)}

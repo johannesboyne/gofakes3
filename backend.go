@@ -203,6 +203,9 @@ type VersionedBackend interface {
 	//
 	// If versioning has been enabled on a bucket, but subsequently suspended,
 	// GetObjectVersion should still return the object version (S300001).
+	//
+	// FIXME: s3assumer test; what happens when versionID is empty? Does it
+	// return the latest?
 	GetObjectVersion(
 		bucketName, objectName string,
 		versionID VersionID,
