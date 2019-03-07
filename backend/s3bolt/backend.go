@@ -130,13 +130,15 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, err
 }
 
-func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	if prefix == nil {
 		prefix = emptyPrefix
 	}
+	if !page.IsEmpty() {
+		return nil, gofakes3.ErrInternalPageNotImplemented
+	}
 
-	var bucket *gofakes3.ListBucketResult
-
+	objects := gofakes3.NewObjectList()
 	mod := gofakes3.NewContentTime(db.timeSource.Now())
 
 	err := db.bolt.View(func(tx *bolt.Tx) error {
@@ -146,7 +148,6 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 		}
 
 		c := b.Cursor()
-		bucket = gofakes3.NewListBucketResult(name)
 		var match gofakes3.PrefixMatch
 
 		for k, v := c.First(); k != nil; k, v = c.Next() {
@@ -155,7 +156,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 				continue
 
 			} else if match.CommonPrefix {
-				bucket.AddPrefix(match.MatchedPart)
+				objects.AddPrefix(match.MatchedPart)
 
 			} else {
 				hash := md5.Sum(v)
@@ -165,14 +166,14 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 					ETag:         `"` + hex.EncodeToString(hash[:]) + `"`,
 					Size:         int64(len(v)),
 				}
-				bucket.Add(item)
+				objects.Add(item)
 			}
 		}
 
 		return nil
 	})
 
-	return bucket, err
+	return objects, err
 }
 
 func (db *Backend) CreateBucket(name string) error {

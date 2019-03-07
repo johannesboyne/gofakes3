@@ -73,9 +73,12 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	if prefix == nil {
 		prefix = emptyPrefix
+	}
+	if !page.IsEmpty() {
+		return nil, gofakes3.ErrInternalPageNotImplemented
 	}
 
 	db.lock.RLock()
@@ -86,7 +89,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 		return nil, gofakes3.BucketNotFound(name)
 	}
 
-	response := gofakes3.NewListBucketResult(name)
+	response := gofakes3.NewObjectList()
 	iter := storedBucket.objects.Iterator()
 
 	var match gofakes3.PrefixMatch

@@ -91,12 +91,15 @@ func (db *SingleBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	}, nil
 }
 
-func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	if bucket != db.name {
 		return nil, gofakes3.BucketNotFound(bucket)
 	}
 	if prefix == nil {
 		prefix = emptyPrefix
+	}
+	if !page.IsEmpty() {
+		return nil, gofakes3.ErrInternalPageNotImplemented
 	}
 
 	db.lock.Lock()
@@ -110,13 +113,13 @@ func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix
 	}
 }
 
-func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ListBucketResult, error) {
+func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ObjectList, error) {
 	dirEntries, err := afero.ReadDir(db.fs, filepath.FromSlash(prefixPath))
 	if err != nil {
 		return nil, err
 	}
 
-	response := gofakes3.NewListBucketResult(bucket)
+	response := gofakes3.NewObjectList()
 
 	for _, entry := range dirEntries {
 		object := entry.Name()
@@ -152,8 +155,8 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 	return response, nil
 }
 
-func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
-	response := gofakes3.NewListBucketResult(bucket)
+func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ObjectList, error) {
+	response := gofakes3.NewObjectList()
 
 	if err := afero.Walk(db.fs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {

@@ -70,3 +70,7 @@ func WithHostBucket(enabled bool) Option {
 func WithoutVersioning() Option {
 	return func(g *GoFakeS3) { g.versioned = nil }
 }
+
+func WithUnimplementedPageError(enabled bool) Option {
+	return func(g *GoFakeS3) { g.failOnUnimplementedPage = enabled }
+}

@@ -28,6 +28,36 @@ type Object struct {
 	IsDeleteMarker bool
 }
 
+type ObjectList struct {
+	CommonPrefixes []CommonPrefix
+	Contents       []*Content
+	IsTruncated    bool
+	NextMarker     string
+
+	// prefixes maintains an index of prefixes that have already been seen.
+	// This is a convenience for backend implementers like s3bolt and s3mem,
+	// which operate on a full, flat list of keys.
+	prefixes map[string]bool
+}
+
+func NewObjectList() *ObjectList {
+	return &ObjectList{}
+}
+
+func (b *ObjectList) Add(item *Content) {
+	b.Contents = append(b.Contents, item)
+}
+
+func (b *ObjectList) AddPrefix(prefix string) {
+	if b.prefixes == nil {
+		b.prefixes = map[string]bool{}
+	} else if b.prefixes[prefix] {
+		return
+	}
+	b.prefixes[prefix] = true
+	b.CommonPrefixes = append(b.CommonPrefixes, CommonPrefix{Prefix: prefix})
+}
+
 type ObjectDeleteResult struct {
 	// Specifies whether the versioned object that was permanently deleted was
 	// (true) or was not (false) a delete marker. In a simple DELETE, this
@@ -44,14 +74,12 @@ type ObjectDeleteResult struct {
 type ListBucketVersionsPage struct {
 	// Specifies the key in the bucket that you want to start listing from.
 	// If HasKeyMarker is true, this must be non-empty.
-	KeyMarker string
-
+	KeyMarker    string
 	HasKeyMarker bool
 
 	// Specifies the object version you want to start listing from. If
 	// HasVersionIDMarker is true, this must be non-empty.
-	VersionIDMarker VersionID
-
+	VersionIDMarker    VersionID
 	HasVersionIDMarker bool
 
 	// Sets the maximum number of keys returned in the response body. The
@@ -63,6 +91,28 @@ type ListBucketVersionsPage struct {
 	//
 	// MaxKeys MUST be > 0.
 	MaxKeys int64
+}
+
+type ListBucketPage struct {
+	// Specifies the key in the bucket that represents the first item on
+	// the first page in the set.
+	// If HasStartAfter is true, this must be non-empty.
+	StartAfter    string
+	HasStartAfter bool
+
+	// Sets the maximum number of keys returned in the response body. The
+	// response might contain fewer keys, but will never contain more. If
+	// additional keys satisfy the search criteria, but were not returned
+	// because max-keys was exceeded, the response contains
+	// <isTruncated>true</isTruncated>. To return the additional keys, see
+	// key-marker and version-id-marker.
+	//
+	// MaxKeys MUST be > 0.
+	MaxKeys int64
+}
+
+func (p ListBucketPage) IsEmpty() bool {
+	return p == ListBucketPage{}
 }
 
 type PutObjectResult struct {
@@ -91,11 +141,19 @@ type Backend interface {
 	// ListBucket must return a gofakes3.ErrNoSuchBucket error if the bucket
 	// does not exist. See gofakes3.BucketNotFound() for a convenient way to create one.
 	//
-	// WARNING: this API does not yet support pagination; it will change when
-	// this is implemented.
+	// The prefix MUST be correctly handled for the backend to be valid. Each
+	// item you consider returning should be checked using prefix.Match(name),
+	// even if the prefix is empty. The Backend MUST treat a nil prefix
+	// identically to a zero prefix.
 	//
-	// The Backend MUST treat a nil prefix identically to a zero prefix.
-	ListBucket(name string, prefix *Prefix) (*ListBucketResult, error)
+	// At this stage, implementers MAY return gofakes3.ErrInternalPageNotImplemented
+	// if the page argument is non-empty. In this case, gofakes3 may or may
+	// not, depending on how it was configured, retry the same request with no page.
+	// We have observed (though not yet confirmed) that simple clients tend to
+	// work fine if you ignore the pagination request, but this may not suit
+	// your application. Not all backends bundled with gofakes3 correctly
+	// support this pagination yet, but that will change.
+	ListBucket(name string, prefix *Prefix, page ListBucketPage) (*ObjectList, error)
 
 	// CreateBucket creates the bucket if it does not already exist. The name
 	// should be assumed to be a valid name.

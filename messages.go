@@ -81,7 +81,8 @@ type Content struct {
 	LastModified ContentTime  `xml:"LastModified"`
 	ETag         string       `xml:"ETag"`
 	Size         int64        `xml:"Size"`
-	StorageClass StorageClass `xml:"StorageClass"`
+	StorageClass StorageClass `xml:"StorageClass,omitempty"`
+	Owner        *UserInfo    `xml:"Owner,omitempty"`
 }
 
 type ContentTime struct {
@@ -172,40 +173,73 @@ type InitiateMultipartUpload struct {
 	UploadID UploadID `xml:"UploadId"`
 }
 
-type ListBucketResult struct {
-	XMLName        xml.Name       `xml:"ListBucketResult"`
-	Xmlns          string         `xml:"xmlns,attr"`
-	Name           string         `xml:"Name"`
-	Prefix         string         `xml:"Prefix"`
-	Marker         string         `xml:"Marker"`
+type ListBucketResultBase struct {
+	XMLName xml.Name `xml:"ListBucketResult"`
+	Xmlns   string   `xml:"xmlns,attr"`
+
+	// Name of the bucket.
+	Name string `xml:"Name"`
+
+	// Specifies whether (true) or not (false) all of the results were
+	// returned. If the number of results exceeds that specified by MaxKeys,
+	// all of the results might not be returned.
+	IsTruncated bool `xml:"IsTruncated,omitempty"`
+
+	// Causes keys that contain the same string between the prefix and the
+	// first occurrence of the delimiter to be rolled up into a single result
+	// element in the CommonPrefixes collection. These rolled-up keys are not
+	// returned elsewhere in the response.
+	//
+	// NOTE: Each rolled-up result in CommonPrefixes counts as only one return
+	// against the MaxKeys value. (BW: been waiting to find some confirmation of
+	// that for a while!)
+	Delimiter string `xml:"Delimiter,omitempty"`
+
+	Prefix string `xml:"Prefix"`
+
+	MaxKeys int64 `xml:"MaxKeys,omitempty"`
+
 	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
 	Contents       []*Content     `xml:"Contents"`
-
-	// prefixes maintains an index of prefixes that have already been seen.
-	// This is a convenience for backend implementers like s3bolt and s3mem,
-	// which operate on a full, flat list of keys.
-	prefixes map[string]bool
 }
 
-func NewListBucketResult(name string) *ListBucketResult {
-	return &ListBucketResult{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:  name,
-	}
+type ListBucketResult struct {
+	ListBucketResultBase
+
+	// Indicates where in the bucket listing begins. Marker is included in the
+	// response if it was sent with the request.
+	Marker string `xml:"Marker,omitempty"`
+
+	// When the response is truncated (that is, the IsTruncated element value
+	// in the response is true), you can use the key name in this field as a
+	// marker in the subsequent request to get next set of objects. Amazon S3
+	// lists objects in UTF-8 character encoding in lexicographical order.
+	//
+	// NOTE: This element is returned only if you specify a delimiter request
+	// parameter. If the response does not include the NextMarker and it is
+	// truncated, you can use the value of the last Key in the response as the
+	// marker in the subsequent request to get the next set of object keys.
+	NextMarker string `xml:"NextMarker,omitempty"`
 }
 
-func (b *ListBucketResult) Add(item *Content) {
-	b.Contents = append(b.Contents, item)
-}
+type ListBucketResultV2 struct {
+	ListBucketResultBase
 
-func (b *ListBucketResult) AddPrefix(prefix string) {
-	if b.prefixes == nil {
-		b.prefixes = map[string]bool{}
-	} else if b.prefixes[prefix] {
-		return
-	}
-	b.prefixes[prefix] = true
-	b.CommonPrefixes = append(b.CommonPrefixes, CommonPrefix{Prefix: prefix})
+	// If ContinuationToken was sent with the request, it is included in the
+	// response.
+	ContinuationToken string `xml:"ContinuationToken,omitempty"`
+
+	// Returns the number of keys included in the response. The value is always
+	// less than or equal to the MaxKeys value.
+	KeyCount int64 `xml:"KeyCount,omitempty"`
+
+	// If the response is truncated, Amazon S3 returns this parameter with a
+	// continuation token. You can specify the token as the continuation-token
+	// in your next request to retrieve the next set of keys.
+	NextContinuationToken string `xml:"NextContinuationToken,omitempty"`
+
+	// If StartAfter was sent with the request, it is included in the response.
+	StartAfter string `xml:"StartAfter,omitempty"`
 }
 
 type DeleteMarker struct {
