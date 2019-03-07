@@ -436,44 +436,88 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 }
 
 func TestVersioning(t *testing.T) {
-	ts := newTestServer(t)
-	defer ts.Close()
-	svc := ts.s3Client()
-
-	assertVersioning := func(mfa string, status string) {
-		t.Helper()
+	assertVersioning := func(ts *testServer, mfa string, status string) {
+		ts.Helper()
+		svc := ts.s3Client()
 		bv, err := svc.GetBucketVersioning(&s3.GetBucketVersioningInput{Bucket: aws.String(defaultBucket)})
 		ts.OK(err)
 		if aws.StringValue(bv.MFADelete) != mfa {
-			t.Fatal("unexpected MFADelete")
+			ts.Fatal("unexpected MFADelete")
 		}
 		if aws.StringValue(bv.Status) != status {
-			t.Fatal("unexpected Status")
+			ts.Fatal("unexpected Status")
 		}
 	}
 
-	// Bucket that has never been versioned should return empty strings:
-	assertVersioning("", "")
+	t.Run("", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
 
-	{ // Enable versioning:
+		// Bucket that has never been versioned should return empty strings:
+		assertVersioning(ts, "", "")
+	})
+
+	t.Run("enable", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+
+		svc := ts.s3Client()
 		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
 			Bucket: aws.String(defaultBucket),
 			VersioningConfiguration: &s3.VersioningConfiguration{
 				Status: aws.String("Enabled"),
 			},
 		}))
-		assertVersioning("", "Enabled")
-	}
+		assertVersioning(ts, "", "Enabled")
+	})
 
-	{ // Suspend versioning:
+	t.Run("suspend", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+
+		svc := ts.s3Client()
 		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
 			Bucket: aws.String(defaultBucket),
 			VersioningConfiguration: &s3.VersioningConfiguration{
 				Status: aws.String("Suspended"),
 			},
 		}))
-		assertVersioning("", "Suspended")
-	}
+		assertVersioning(ts, "", "Suspended")
+	})
+
+	t.Run("no-versioning-suspend", func(t *testing.T) {
+		ts := newTestServer(t, withFakerOptions(
+			gofakes3.WithoutVersioning(),
+		))
+		defer ts.Close()
+
+		svc := ts.s3Client()
+		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String("Suspended"),
+			},
+		}))
+		assertVersioning(ts, "", "")
+	})
+
+	t.Run("no-versioning-enable", func(t *testing.T) {
+		ts := newTestServer(t, withFakerOptions(
+			gofakes3.WithoutVersioning(),
+		))
+		defer ts.Close()
+
+		svc := ts.s3Client()
+		_, err := svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String("Enabled"),
+			},
+		})
+		if !hasErrorCode(err, gofakes3.ErrNotImplemented) {
+			ts.Fatal("expected ErrNotImplemented, found", err)
+		}
+	})
 }
 
 func TestObjectVersions(t *testing.T) {

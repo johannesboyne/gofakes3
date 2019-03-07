@@ -47,6 +47,8 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		uploader:          newUploader(),
 		requestID:         0,
 	}
+
+	// versioned MUST be set before options as one of the options disables it:
 	s3.versioned, _ = backend.(VersionedBackend)
 
 	for _, opt := range options {
