@@ -170,6 +170,8 @@ func (er ErrorResult) String() string {
 }
 
 type InitiateMultipartUpload struct {
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
 	UploadID UploadID `xml:"UploadId"`
 }
 

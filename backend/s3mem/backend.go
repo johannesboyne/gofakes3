@@ -95,9 +95,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 	if page.Marker != "" {
 		iter.Seek(page.Marker)
-		if page.StartAfterMarker {
-			iter.Next()
-		}
+		iter.Next() // Move to the next item after the Marker
 	}
 
 	var cnt int64 = 0
@@ -122,13 +120,10 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 		cnt++
 		if cnt >= page.MaxKeys {
+			response.NextMarker = item.data.name
 			response.IsTruncated = iter.Next()
 			break
 		}
-	}
-
-	if response.IsTruncated {
-		response.NextMarker = iter.Value().(*bucketObject).name
 	}
 
 	return response, nil

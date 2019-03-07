@@ -218,7 +218,12 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 		var result = &ListBucketResult{
 			ListBucketResultBase: base,
 			Marker:               page.Marker,
-			NextMarker:           objects.NextMarker,
+		}
+		if base.Delimiter != "" {
+			// From the S3 docs: "This element is returned only if you specify
+			// a delimiter request parameter." Dunno why. This hack has been moved
+			// into GoFakeS3 to spare backend implementers the trouble.
+			result.NextMarker = objects.NextMarker
 		}
 		return g.xmlEncoder(w).Encode(result)
 
@@ -651,7 +656,11 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 	}
 
 	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
-	out := InitiateMultipartUpload{UploadID: upload.ID}
+	out := InitiateMultipartUpload{
+		UploadID: upload.ID,
+		Bucket:   bucket,
+		Key:      object,
+	}
 	return g.xmlEncoder(w).Encode(out)
 }
 
@@ -933,10 +942,8 @@ func listBucketPageFromQuery(query url.Values) (page ListBucketPage, rerr error)
 		page.Marker = string(tok)
 
 	} else if _, page.HasMarker = query["start-after"]; page.HasMarker {
-		// List Objects V2 uses start-after if continuation-token is missing, but
-		// slightly differently from the V1 marker:
+		// List Objects V2 uses start-after if continuation-token is missing:
 		page.Marker = query.Get("start-after")
-		page.StartAfterMarker = true
 	}
 
 	return page, nil

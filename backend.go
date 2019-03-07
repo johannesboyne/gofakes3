@@ -94,21 +94,12 @@ type ListBucketVersionsPage struct {
 }
 
 type ListBucketPage struct {
-	// Specifies the key in the bucket that represents the first item on
-	// the first page in the set.
+	// Specifies the key in the bucket that represents the last item in
+	// the previous page. The first key in the returned page will be the
+	// next lexicographically (UTF-8 binary) sorted key after Marker.
 	// If HasMarker is true, this must be non-empty.
 	Marker    string
 	HasMarker bool
-
-	// Marker indicates the key directly before the first item on the first
-	// page in the set, rather than the first item itself.
-	//
-	// Backend implementers only have to handle this one corner case and get
-	// support for both of S3's bucket listing endpoints in exchange. Seems
-	// like a fair swap, but it'd still be great to get rid of it somehow if we
-	// can. If a Backend fails to implement this, the results will include the
-	// start-after key rather than skipping it.
-	StartAfterMarker bool
 
 	// Sets the maximum number of keys returned in the response body. The
 	// response might contain fewer keys, but will never contain more. If
