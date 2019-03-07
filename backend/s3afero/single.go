@@ -18,8 +18,9 @@ import (
 	"github.com/spf13/afero"
 )
 
-// SingleBucketBackend is a gofakes3.Backend that allows you to treat an existing
-// filesystem as an S3 bucket directly. It does not support multiple buckets.
+// SingleBucketBackend is a gofakes3.Backend that allows you to treat an
+// existing filesystem as an S3 bucket directly. It does not implement
+// gofakes3.BucketManagerBackend and does not support multiple buckets.
 //
 // A second afero.Fs, metaFs, may be passed; if this is nil,
 // afero.NewMemMapFs() is used and the metadata will not persist between
@@ -403,18 +404,6 @@ func (db *SingleBucketBackend) deleteObjectLocked(bucketName, objectName string)
 	}
 
 	return nil
-}
-
-// CreateBucket cannot be implemented by this backend. See MultiBucketBackend if you
-// need a backend that supports it.
-func (db *SingleBucketBackend) CreateBucket(name string) error {
-	return gofakes3.ErrNotImplemented
-}
-
-// DeleteBucket cannot be implemented by this backend. See MultiBucketBackend if you
-// need a backend that supports it.
-func (db *SingleBucketBackend) DeleteBucket(name string) error {
-	return gofakes3.ErrNotImplemented
 }
 
 func (db *SingleBucketBackend) BucketExists(name string) (exists bool, err error) {

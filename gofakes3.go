@@ -26,6 +26,7 @@ type GoFakeS3 struct {
 	storage            Backend
 	versioned          VersionedBackend
 	deleteMultiBackend DeleteMultiBackend
+	bucketManager      BucketManagerBackend
 
 	timeSource              TimeSource
 	timeSkew                time.Duration
@@ -53,6 +54,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 
 	// versioned MUST be set before options as one of the options disables it:
 	s3.versioned, _ = backend.(VersionedBackend)
+	s3.bucketManager, _ = backend.(BucketManagerBackend)
 
 	s3.deleteMultiBackend, _ = backend.(DeleteMultiBackend)
 	if s3.deleteMultiBackend == nil {
@@ -318,12 +320,15 @@ func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, 
 
 // CreateBucket creates a new S3 bucket in the BoltDB storage.
 func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
-	g.log.Print(LogInfo, "CREATE BUCKET:", bucket)
+	if g.bucketManager == nil {
+		return ErrNotImplemented
+	}
 
+	g.log.Print(LogInfo, "CREATE BUCKET:", bucket)
 	if err := ValidateBucketName(bucket); err != nil {
 		return err
 	}
-	if err := g.storage.CreateBucket(bucket); err != nil {
+	if err := g.bucketManager.CreateBucket(bucket); err != nil {
 		return err
 	}
 
@@ -335,8 +340,12 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 // DeleteBucket deletes the bucket in the underlying backend, if and only if it
 // contains no items.
 func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
+	if g.bucketManager == nil {
+		return ErrNotImplemented
+	}
+
 	g.log.Print(LogInfo, "DELETE BUCKET:", bucket)
-	if err := g.storage.DeleteBucket(bucket); err != nil {
+	if err := g.bucketManager.DeleteBucket(bucket); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

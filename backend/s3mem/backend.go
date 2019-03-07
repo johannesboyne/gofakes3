@@ -25,9 +25,7 @@ type Backend struct {
 	lock             sync.RWMutex
 }
 
-var _ gofakes3.Backend = &Backend{}
-var _ gofakes3.DeleteMultiBackend = &Backend{}
-var _ gofakes3.VersionedBackend = &Backend{}
+var _ gofakes3.CompleteBackend = &Backend{}
 
 type Option func(b *Backend)
 

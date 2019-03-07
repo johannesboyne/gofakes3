@@ -123,11 +123,21 @@ type PutObjectResult struct {
 	VersionID VersionID
 }
 
-// Backend provides a set of operations to be implemented in order to support
-// gofakes3.
+type CompleteBackend interface {
+	Backend
+	BucketManagerBackend
+	DeleteMultiBackend
+	VersionedBackend
+}
+
+// Backend provides the core set of operations to be implemented in order to
+// support a basic subset of object operations using gofakes3.
 //
 // The Backend API is not yet stable; if you create your own Backend, breakage
 // is likely until this notice is removed.
+//
+// If you don't wish to support the BucketManagementBackend, your Backend
+// MUST provide preconfigured access to at least one existing bucket name.
 //
 type Backend interface {
 	// ListBuckets returns a list of all buckets owned by the authenticated
@@ -155,27 +165,6 @@ type Backend interface {
 	// your application. Not all backends bundled with gofakes3 correctly
 	// support this pagination yet, but that will change.
 	ListBucket(name string, prefix *Prefix, page ListBucketPage) (*ObjectList, error)
-
-	// CreateBucket creates the bucket if it does not already exist. The name
-	// should be assumed to be a valid name.
-	//
-	// If the bucket already exists, a gofakes3.ResourceError with
-	// gofakes3.ErrBucketAlreadyExists MUST be returned.
-	CreateBucket(name string) error
-
-	// BucketExists should return a boolean indicating the bucket existence, or
-	// an error if the backend was unable to determine existence.
-	BucketExists(name string) (exists bool, err error)
-
-	// DeleteBucket deletes a bucket if and only if it is empty.
-	//
-	// If the bucket is not empty, gofakes3.ResourceError with
-	// gofakes3.ErrBucketNotEmpty MUST be returned.
-	//
-	// If the bucket does not exist, gofakes3.ErrNoSuchBucket MUST be returned.
-	//
-	// AWS does not validate the bucket's name for anything other than existence.
-	DeleteBucket(name string) error
 
 	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does
 	// not exist. See gofakes3.KeyNotFound() for a convenient way to create
@@ -227,12 +216,38 @@ type Backend interface {
 	// The size can be used if the backend needs to read the whole reader; use
 	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
+
+	// BucketExists should return a boolean indicating the bucket existence, or
+	// an error if the backend was unable to determine existence.
+	BucketExists(name string) (exists bool, err error)
 }
 
-// DeleteMultiBackend may be optionally implemented by a Backend in order to support
-// multi-delete operations directly. If this is not implemented, GoFakeS3 will
-// attempt to emulate it, which may be suboptimal or insufficiently well
-// controlled for your needs.
+type BucketManagerBackend interface {
+	// CreateBucket creates the bucket if it does not already exist. The name
+	// should be assumed to be a valid name.
+	//
+	// If the bucket already exists, a gofakes3.ResourceError with
+	// gofakes3.ErrBucketAlreadyExists MUST be returned.
+	CreateBucket(name string) error
+
+	// DeleteBucket deletes a bucket if and only if it is empty.
+	//
+	// If the bucket is not empty, gofakes3.ResourceError with
+	// gofakes3.ErrBucketNotEmpty MUST be returned.
+	//
+	// If the bucket does not exist, gofakes3.ErrNoSuchBucket MUST be returned.
+	//
+	// AWS does not validate the bucket's name for anything other than existence.
+	DeleteBucket(name string) error
+}
+
+// DeleteMultiBackend may be optionally implemented by a Backend in order to
+// support multi-delete operations directly.
+//
+// If this interface, is not implemented, GoFakeS3 will attempt to emulate it,
+// which may be suboptimal or insufficiently well controlled for your needs. If
+// you wish to disable this, you can pass the WithoutSimulatedDeleteMulti()
+// option to gofakes3.New().
 type DeleteMultiBackend interface {
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
 }

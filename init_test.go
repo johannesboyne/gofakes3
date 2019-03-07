@@ -137,10 +137,12 @@ type testServer struct {
 	gofakes3.TimeSourceAdvancer
 	*gofakes3.GoFakeS3
 
-	backend   gofakes3.Backend
-	versioned gofakes3.VersionedBackend
-	server    *httptest.Server
-	options   []gofakes3.Option
+	backend       gofakes3.Backend
+	bucketManager gofakes3.BucketManagerBackend
+	versioned     gofakes3.VersionedBackend
+
+	server  *httptest.Server
+	options []gofakes3.Option
 
 	// if this is nil, no buckets are created. by default, a starting bucket is
 	// created using the value of the 'defaultBucket' constant.
@@ -195,9 +197,10 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 
 	ts.GoFakeS3 = gofakes3.New(ts.backend, fakerOpts...)
 	ts.server = httptest.NewServer(ts.GoFakeS3.Server())
+	ts.bucketManager, _ = ts.backend.(gofakes3.BucketManagerBackend)
 
 	for _, bucket := range ts.initialBuckets {
-		ts.TT.OK(ts.backend.CreateBucket(bucket))
+		ts.TT.OK(ts.bucketManager.CreateBucket(bucket))
 	}
 
 	if ts.versioning {
@@ -222,7 +225,7 @@ func (ts *testServer) url(url string) string {
 
 func (ts *testServer) backendCreateBucket(bucket string) {
 	ts.Helper()
-	if err := ts.backend.CreateBucket(bucket); err != nil {
+	if err := ts.bucketManager.CreateBucket(bucket); err != nil {
 		ts.Fatal("create bucket failed", err)
 	}
 }

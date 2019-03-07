@@ -209,7 +209,11 @@ func run() error {
 	}
 
 	if values.initialBucket != "" {
-		if err := backend.CreateBucket(values.initialBucket); err != nil && !gofakes3.IsAlreadyExists(err) {
+		bucketmgr, ok := backend.(gofakes3.BucketManagerBackend)
+		if !ok {
+			return fmt.Errorf("gofakes3: configured backend type %T does not support bucket creation", backend)
+		}
+		if err := bucketmgr.CreateBucket(values.initialBucket); err != nil && !gofakes3.IsAlreadyExists(err) {
 			return fmt.Errorf("gofakes3: could not create initial bucket %q: %v", values.initialBucket, err)
 		}
 		log.Println("created -initialbucket", values.initialBucket)
