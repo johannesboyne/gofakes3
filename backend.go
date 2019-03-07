@@ -176,7 +176,8 @@ type Backend interface {
 // operations on S3 object versions.
 //
 // If you don't implement VersionedBackend, requests to GoFakeS3 that attempt to
-// make use of versions will return ErrNotImplemented.
+// make use of versions will return ErrNotImplemented if GoFakesS3 is unable to
+// find another way to satisfy the request.
 //
 type VersionedBackend interface {
 	// VersioningConfiguration must return a gofakes3.ErrNoSuchBucket error if the bucket
