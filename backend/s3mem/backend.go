@@ -89,10 +89,18 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 		return nil, gofakes3.BucketNotFound(name)
 	}
 
-	response := gofakes3.NewObjectList()
-	iter := storedBucket.objects.Iterator()
-
+	var response = gofakes3.NewObjectList()
+	var iter = goskipiter.New(storedBucket.objects.Iterator())
 	var match gofakes3.PrefixMatch
+
+	if page.Marker != "" {
+		iter.Seek(page.Marker)
+		if page.StartAfterMarker {
+			iter.Next()
+		}
+	}
+
+	var cnt int64 = 0
 
 	for iter.Next() {
 		item := iter.Value().(*bucketObject)
@@ -111,6 +119,16 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 				Size:         int64(len(item.data.body)),
 			})
 		}
+
+		cnt++
+		if cnt >= page.MaxKeys {
+			response.IsTruncated = iter.Next()
+			break
+		}
+	}
+
+	if response.IsTruncated {
+		response.NextMarker = iter.Value().(*bucketObject).name
 	}
 
 	return response, nil

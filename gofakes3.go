@@ -217,7 +217,7 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 	if !isVersion2 {
 		var result = &ListBucketResult{
 			ListBucketResultBase: base,
-			Marker:               page.StartAfter,
+			Marker:               page.Marker,
 			NextMarker:           objects.NextMarker,
 		}
 		return g.xmlEncoder(w).Encode(result)
@@ -226,7 +226,7 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 		var result = &ListBucketResultV2{
 			ListBucketResultBase: base,
 			KeyCount:             int64(len(objects.CommonPrefixes) + len(objects.Contents)),
-			StartAfter:           page.StartAfter,
+			StartAfter:           q.Get("start-after"),
 			ContinuationToken:    q.Get("continuation-token"),
 		}
 		if objects.NextMarker != "" {
@@ -908,18 +908,18 @@ func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (
 }
 
 func listBucketPageFromQuery(query url.Values) (page ListBucketPage, rerr error) {
-	maxKeys, err := parseClampedInt(query.Get("max-keys"), DefaultMaxBucketVersionKeys, 0, MaxBucketVersionKeys)
+	maxKeys, err := parseClampedInt(query.Get("max-keys"), DefaultMaxBucketKeys, 0, MaxBucketKeys)
 	if err != nil {
 		return page, err
 	}
 
 	page.MaxKeys = maxKeys
 
-	if _, page.HasStartAfter = query["marker"]; page.HasStartAfter {
+	if _, page.HasMarker = query["marker"]; page.HasMarker {
 		// List Objects V1 uses marker only:
-		page.StartAfter = query.Get("marker")
+		page.Marker = query.Get("marker")
 
-	} else if _, page.HasStartAfter = query["continuation-token"]; page.HasStartAfter {
+	} else if _, page.HasMarker = query["continuation-token"]; page.HasMarker {
 		// List Objects V2 uses continuation-token preferentially, or
 		// start-after if continuation-token is missing. continuation-token is
 		// an opaque value that looks like this: 1ueGcxLPRx1Tr/XYExHnhbYLgveDs2J/wm36Hy4vbOwM=.
@@ -930,11 +930,13 @@ func listBucketPageFromQuery(query url.Values) (page ListBucketPage, rerr error)
 			// FIXME: log
 			return page, ErrInvalidToken // FIXME: confirm for sure what AWS does here
 		}
-		page.StartAfter = string(tok)
+		page.Marker = string(tok)
 
-	} else if _, page.HasStartAfter = query["start-after"]; page.HasStartAfter {
-		// List Objects V2 uses start-after if continuation-token is missing:
-		page.StartAfter = query.Get("start-after")
+	} else if _, page.HasMarker = query["start-after"]; page.HasMarker {
+		// List Objects V2 uses start-after if continuation-token is missing, but
+		// slightly differently from the V1 marker:
+		page.Marker = query.Get("start-after")
+		page.StartAfterMarker = true
 	}
 
 	return page, nil
