@@ -4,6 +4,8 @@
 version: 2
 jobs:
   build:
+    environment:
+      GO111MODULE=on
     docker:
     - image: circleci/golang:1.9
     working_directory: /go/src/github.com/johannesboyne/gofakes3
