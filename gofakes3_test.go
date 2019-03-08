@@ -445,8 +445,19 @@ func TestVersioning(t *testing.T) {
 			ts.Fatal("unexpected MFADelete")
 		}
 		if aws.StringValue(bv.Status) != status {
-			ts.Fatal("unexpected Status")
+			ts.Fatalf("unexpected Status %q, expected %q", aws.StringValue(bv.Status), status)
 		}
+	}
+
+	setVersioning := func(ts *testServer, status gofakes3.VersioningStatus) {
+		ts.Helper()
+		svc := ts.s3Client()
+		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String(string(status)),
+			},
+		}))
 	}
 
 	t.Run("", func(t *testing.T) {
@@ -461,13 +472,7 @@ func TestVersioning(t *testing.T) {
 		ts := newTestServer(t)
 		defer ts.Close()
 
-		svc := ts.s3Client()
-		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
-			Bucket: aws.String(defaultBucket),
-			VersioningConfiguration: &s3.VersioningConfiguration{
-				Status: aws.String("Enabled"),
-			},
-		}))
+		setVersioning(ts, "Enabled")
 		assertVersioning(ts, "", "Enabled")
 	})
 
@@ -475,13 +480,11 @@ func TestVersioning(t *testing.T) {
 		ts := newTestServer(t)
 		defer ts.Close()
 
-		svc := ts.s3Client()
-		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
-			Bucket: aws.String(defaultBucket),
-			VersioningConfiguration: &s3.VersioningConfiguration{
-				Status: aws.String("Suspended"),
-			},
-		}))
+		setVersioning(ts, gofakes3.VersioningSuspended)
+		assertVersioning(ts, "", "")
+
+		setVersioning(ts, gofakes3.VersioningEnabled)
+		setVersioning(ts, gofakes3.VersioningSuspended)
 		assertVersioning(ts, "", "Suspended")
 	})
 
@@ -491,13 +494,7 @@ func TestVersioning(t *testing.T) {
 		))
 		defer ts.Close()
 
-		svc := ts.s3Client()
-		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
-			Bucket: aws.String(defaultBucket),
-			VersioningConfiguration: &s3.VersioningConfiguration{
-				Status: aws.String("Suspended"),
-			},
-		}))
+		setVersioning(ts, "Suspended")
 		assertVersioning(ts, "", "")
 	})
 
