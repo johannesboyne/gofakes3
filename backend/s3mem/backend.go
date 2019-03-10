@@ -100,6 +100,8 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 	var cnt int64 = 0
 
+	var lastMatchedPart string
+
 	for iter.Next() {
 		item := iter.Value().(*bucketObject)
 
@@ -107,7 +109,11 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 			continue
 
 		} else if match.CommonPrefix {
+			if match.MatchedPart == lastMatchedPart {
+				continue // Should not count towards keys
+			}
 			response.AddPrefix(match.MatchedPart)
+			lastMatchedPart = match.MatchedPart
 
 		} else {
 			response.Add(&gofakes3.Content{

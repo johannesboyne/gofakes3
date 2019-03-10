@@ -34,6 +34,12 @@ func NewPrefix(prefix, delim *string) (p Prefix) {
 	return p
 }
 
+func NewFolderPrefix(prefix string) (p Prefix) {
+	p.HasPrefix, p.Prefix = true, prefix
+	p.HasDelimiter, p.Delimiter = true, "/"
+	return p
+}
+
 // FilePrefix returns the path portion, then the remaining portion of the
 // Prefix if the Delimiter is "/". If the Delimiter is not set, or not "/",
 // ok will be false.

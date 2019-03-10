@@ -699,6 +699,7 @@ func TestListBucketPages(t *testing.T) {
 	for idx, tc := range []struct {
 		keys, pageKeys int64
 	}{
+		{9, 2},
 		{8, 3},
 		{7, 4},
 		{6, 5},
@@ -746,6 +747,34 @@ func TestListBucketPages(t *testing.T) {
 				t.Fatal()
 			}
 			assertKeys(ts, rs, keys...)
+		})
+
+		t.Run(fmt.Sprintf("list-page-prefix-delim/%d", idx), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			// junk keys with no prefix to ensure that we are actually limiting the output.
+			// these should not show up in the output.
+			createData(ts, "", tc.keys)
+
+			// these are the actual keys we expect to see:
+			keys := createData(ts, "test/", tc.keys)
+
+			// add some common prefixes:
+			createData(ts, "test/prefix1/", 2)
+			createData(ts, "test/prefix2/", 2)
+
+			prefix := gofakes3.NewFolderPrefix("test/")
+
+			rs := ts.mustListBucketV1Pages(&prefix, tc.pageKeys, "")
+			assertKeys(ts, rs, keys...)
+
+			rs = ts.mustListBucketV2Pages(&prefix, tc.pageKeys, "")
+			assertKeys(ts, rs, keys...)
+
+			// FIXME: there are some unanswered questions for the assumer about
+			// how CommonPrefixes interacts with paging; CommonPrefixes should be
+			// checked once we've established how S3 actually behaves.
 		})
 	}
 }
