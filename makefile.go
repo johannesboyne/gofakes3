@@ -40,8 +40,81 @@ func run() error {
 	switch command {
 	case "cover":
 		return runCover(args)
+	case "builddocker":
+		return runBuildDocker()
+	case "buildrelease":
+		return runBuildRelease()
+	case "release":
+		return runRelease(args)
 	default:
 		return fmt.Errorf("unknown command %v: expected %s", command, commandNames)
+	}
+
+	return nil
+}
+
+func runBuildDocker() error {
+	cmd := command(
+		"go", "build", "-a",
+		"-installsuffix", "cgo",
+		"-o", "./build/main",
+		"./cmd/gofakes3",
+	)
+	cmd.Env = append(cmd.Env, "GO111MODULE=on", "CGO_ENABLED=0", "GOOS=linux")
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	cmd = command("docker", "build", "-t", "johannesboyne/gofakes3", ".")
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runRelease(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("missing <version> argument")
+	}
+
+	version := args[0]
+	fmt.Printf("[+] releasing %s\n", version)
+	fmt.Println("[+] re-generating")
+
+	fmt.Println("[+] building")
+	if err := runBuildRelease(); err != nil {
+		return err
+	}
+
+	fmt.Println("[+] comitting")
+	if err := command("git", "tag", version).Run(); err != nil {
+		return err
+	}
+
+	fmt.Println("[+] complete")
+	return nil
+}
+
+func runBuildRelease() error {
+	var builds = map[string][]string{
+		"linux_amd64":       {"GOOS=linux", "GOARCH=amd64"},
+		"linux_arm7":        {"GOOS=linux", "GOARCH=arm", "GOARM=7"},
+		"darwin_amd64":      {"GOOS=darwin", "GOARCH=amd64"},
+		"windows_amd64.exe": {"GOOS=windows", "GOARCH=amd64"},
+	}
+
+	for suffix, build := range builds {
+		cmd := command(
+			"go", "build",
+			"-o", fmt.Sprintf("./build/gofakes3_%s", suffix),
+			"./cmd/gofakes3",
+		)
+		cmd.Env = append(cmd.Env, "GO111MODULE=on")
+		cmd.Env = append(cmd.Env, build...)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -98,6 +171,14 @@ func runCover(args []string) error {
 	defer out.Close()
 
 	return gocovmerge.DumpProfiles(merged, out)
+}
+
+func command(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append([]string{}, os.Environ()...)
+	return cmd
 }
 
 func goList() (pkgs []string) {

@@ -6,3 +6,4 @@ logs/
 s3f_*
 *.test
 *.out
+build/
