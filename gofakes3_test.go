@@ -674,6 +674,55 @@ func TestObjectVersions(t *testing.T) {
 	})
 }
 
+func TestListBucketPages(t *testing.T) {
+	createData := func(ts *testServer, prefix string, n int64) []string {
+		keys := make([]string, n)
+		for i := int64(0); i < n; i++ {
+			key := fmt.Sprintf("%s%d", prefix, i)
+			ts.backendPutString(defaultBucket, key, nil, fmt.Sprintf("body-%d", i))
+			keys[i] = key
+		}
+		return keys
+	}
+
+	assertKeys := func(ts *testServer, rs *listBucketResult, keys ...string) {
+		found := make([]string, len(rs.Contents))
+		for i := 0; i < len(rs.Contents); i++ {
+			found[i] = aws.StringValue(rs.Contents[i].Key)
+		}
+		if !reflect.DeepEqual(found, keys) {
+			t.Fatal("key mismatch:", keys, "!=", found)
+		}
+	}
+
+	for idx, tc := range []struct {
+		keys, pageKeys int64
+	}{
+		{8, 3},
+		{7, 4},
+		{6, 5},
+		{5, 6},
+	} {
+		t.Run(fmt.Sprintf("list-page-sizes/%d", idx), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+			keys := createData(ts, "", tc.keys)
+
+			rs := ts.mustListBucketV1Pages(nil, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+
+			rs = ts.mustListBucketV2Pages(nil, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+		})
+	}
+}
+
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
 	if err, ok := err.(awserr.Error); ok {
 		return code == gofakes3.ErrorCode(err.Code())
