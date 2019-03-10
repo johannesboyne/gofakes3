@@ -184,6 +184,7 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 	g.log.Print(LogInfo, "prefix    :", prefix)
 
 	objects, err := g.storage.ListBucket(bucketName, &prefix, page)
+
 	if err != nil {
 		if err == ErrInternalPageNotImplemented && !g.failOnUnimplementedPage {
 			// We have observed (though not yet confirmed) that simple clients

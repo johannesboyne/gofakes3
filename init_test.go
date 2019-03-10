@@ -160,6 +160,9 @@ func withVersioning() testServerOption {
 func withFakerOptions(opts ...gofakes3.Option) testServerOption {
 	return func(ts *testServer) { ts.options = opts }
 }
+func withBackend(backend gofakes3.Backend) testServerOption {
+	return func(ts *testServer) { ts.backend = backend }
+}
 
 func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 	t.Helper()
@@ -795,4 +798,15 @@ func httpClient() *http.Client {
 	return &http.Client{
 		Timeout: 2 * time.Second,
 	}
+}
+
+type backendWithUnimplementedPaging struct {
+	gofakes3.Backend
+}
+
+func (b *backendWithUnimplementedPaging) ListBucket(name string, prefix gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
+	if !page.IsEmpty() {
+		return nil, gofakes3.ErrInternalPageNotImplemented
+	}
+	return b.Backend.ListBucket(name, prefix, page)
 }

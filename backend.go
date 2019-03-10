@@ -89,7 +89,7 @@ type ListBucketVersionsPage struct {
 	// <isTruncated>true</isTruncated>. To return the additional keys, see
 	// key-marker and version-id-marker.
 	//
-	// MaxKeys MUST be > 0.
+	// MaxKeys MUST be > 0, otherwise it is ignored.
 	MaxKeys int64
 }
 
@@ -108,7 +108,7 @@ type ListBucketPage struct {
 	// <isTruncated>true</isTruncated>. To return the additional keys, see
 	// key-marker and version-id-marker.
 	//
-	// MaxKeys MUST be > 0.
+	// MaxKeys MUST be > 0, otherwise it is ignored.
 	MaxKeys int64
 }
 

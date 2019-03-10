@@ -119,7 +119,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 		}
 
 		cnt++
-		if cnt >= page.MaxKeys {
+		if page.MaxKeys > 0 && cnt >= page.MaxKeys {
 			response.NextMarker = item.data.name
 			response.IsTruncated = iter.Next()
 			break
@@ -470,7 +470,7 @@ func (db *Backend) ListBucketVersions(
 			}
 
 			cnt++
-			if cnt >= page.MaxKeys {
+			if page.MaxKeys > 0 && cnt >= page.MaxKeys {
 				truncated = versions.Next()
 				goto done
 			}

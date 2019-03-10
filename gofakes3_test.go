@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
 func TestCreateBucket(t *testing.T) {
@@ -721,6 +722,44 @@ func TestListBucketPages(t *testing.T) {
 			assertKeys(ts, rs, keys...)
 		})
 	}
+}
+
+// Ensure that a backend that does not support pagination can use the fallback if enabled:
+func TestListBucketPagesFallback(t *testing.T) {
+	createData := func(ts *testServer, prefix string, n int64) []string {
+		keys := make([]string, n)
+		for i := int64(0); i < n; i++ {
+			key := fmt.Sprintf("%s%d", prefix, i)
+			ts.backendPutString(defaultBucket, key, nil, fmt.Sprintf("body-%d", i))
+			keys[i] = key
+		}
+		return keys
+	}
+
+	t.Run("fallback-disabled", func(t *testing.T) {
+		ts := newTestServer(t,
+			withBackend(&backendWithUnimplementedPaging{s3mem.New()}),
+			withFakerOptions(gofakes3.WithUnimplementedPageError(true)),
+		)
+		defer ts.Close()
+		createData(ts, "", 5)
+		_, err := ts.listBucketV1Pages(nil, 2, "")
+		if !hasErrorCode(err, gofakes3.ErrNotImplemented) {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("fallback-enabled", func(t *testing.T) {
+		ts := newTestServer(t, withBackend(&backendWithUnimplementedPaging{s3mem.New()}))
+		defer ts.Close()
+		createData(ts, "", 5)
+		r := ts.mustListBucketV1Pages(nil, 2, "")
+
+		// Without pagination, should just fall back to returning all keys:
+		if len(r.Contents) != 5 {
+			t.Fatal()
+		}
+	})
 }
 
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
