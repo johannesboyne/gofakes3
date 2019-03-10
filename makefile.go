@@ -1,4 +1,4 @@
-//+build ignore
+//+build tools
 
 // Run this script like so:
 //
