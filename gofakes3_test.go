@@ -704,7 +704,7 @@ func TestListBucketPages(t *testing.T) {
 		{6, 5},
 		{5, 6},
 	} {
-		t.Run(fmt.Sprintf("list-page-sizes/%d", idx), func(t *testing.T) {
+		t.Run(fmt.Sprintf("list-page-basic/%d", idx), func(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
 			keys := createData(ts, "", tc.keys)
@@ -716,6 +716,32 @@ func TestListBucketPages(t *testing.T) {
 			assertKeys(ts, rs, keys...)
 
 			rs = ts.mustListBucketV2Pages(nil, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+		})
+
+		t.Run(fmt.Sprintf("list-page-prefix/%d", idx), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			// junk keys with no prefix to ensure that we are actually limiting the output.
+			// these should not show up in the output.
+			createData(ts, "", tc.keys)
+
+			// these are the actual keys we expect to see:
+			keys := createData(ts, "test", tc.keys)
+
+			prefix := gofakes3.NewPrefix(aws.String("test"), nil)
+
+			rs := ts.mustListBucketV1Pages(&prefix, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+
+			rs = ts.mustListBucketV2Pages(&prefix, tc.pageKeys, "")
 			if len(rs.CommonPrefixes) > 0 {
 				t.Fatal()
 			}
