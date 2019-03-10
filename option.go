@@ -65,3 +65,8 @@ func WithRequestID(id uint64) Option {
 func WithHostBucket(enabled bool) Option {
 	return func(g *GoFakeS3) { g.hostBucket = enabled }
 }
+
+// WithoutVersioning disables versioning on the passed backend, if it supported it.
+func WithoutVersioning() Option {
+	return func(g *GoFakeS3) { g.versioned = nil }
+}

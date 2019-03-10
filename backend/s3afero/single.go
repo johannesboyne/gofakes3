@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"github.com/spf13/afero"
 )
 
@@ -90,9 +91,12 @@ func (db *SingleBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	}, nil
 }
 
-func (db *SingleBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
+func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
 	if bucket != db.name {
 		return nil, gofakes3.BucketNotFound(bucket)
+	}
+	if prefix == nil {
+		prefix = emptyPrefix
 	}
 
 	db.lock.Lock()
@@ -106,13 +110,13 @@ func (db *SingleBucketBackend) GetBucket(bucket string, prefix gofakes3.Prefix) 
 	}
 }
 
-func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.Bucket, error) {
+func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ListBucketResult, error) {
 	dirEntries, err := afero.ReadDir(db.fs, filepath.FromSlash(prefixPath))
 	if err != nil {
 		return nil, err
 	}
 
-	response := gofakes3.NewBucket(bucket)
+	response := gofakes3.NewListBucketResult(bucket)
 
 	for _, entry := range dirEntries {
 		object := entry.Name()
@@ -148,8 +152,8 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 	return response, nil
 }
 
-func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
-	response := gofakes3.NewBucket(bucket)
+func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	response := gofakes3.NewListBucketResult(bucket)
 
 	if err := afero.Walk(db.fs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -163,8 +167,7 @@ func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string,
 		}
 		objectName := parts[1]
 
-		match := prefix.Match(objectName)
-		if match == nil {
+		if !prefix.Match(objectName, nil) {
 			return nil
 		}
 
@@ -214,10 +217,11 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
-		Contents: noOpReadCloser{},
+		Contents: s3io.NoOpReadCloser{},
 	}, nil
 }
 
@@ -258,6 +262,7 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
@@ -266,9 +271,14 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	}, nil
 }
 
-func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
+func (db *SingleBucketBackend) PutObject(
+	bucketName, objectName string,
+	meta map[string]string,
+	input io.Reader, size int64,
+) (result gofakes3.PutObjectResult, err error) {
+
 	if bucketName != db.name {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
 	db.lock.Lock()
@@ -279,13 +289,13 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 
 	if objectDir != "." {
 		if err := db.fs.MkdirAll(objectDir, 0777); err != nil {
-			return err
+			return result, err
 		}
 	}
 
 	f, err := db.fs.Create(objectFilePath)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	var closed bool
@@ -300,20 +310,20 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 	hasher := md5.New()
 	w := io.MultiWriter(f, hasher)
 	if _, err := io.Copy(w, input); err != nil {
-		return err
+		return result, err
 	}
 
 	// We have to close here before we stat the file as some filesystems don't update the
 	// mtime until after close:
 	if err := f.Close(); err != nil {
-		return err
+		return result, err
 	}
 
 	closed = true
 
 	stat, err := db.fs.Stat(objectFilePath)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	storedMeta := &Metadata{
@@ -324,13 +334,13 @@ func (db *SingleBucketBackend) PutObject(bucketName, objectName string, meta map
 		ModTime: stat.ModTime(),
 	}
 	if err := db.metaStore.saveMeta(db.metaStore.metaPath(bucketName, objectName), storedMeta); err != nil {
-		return err
+		return result, err
 	}
 
-	return nil
+	return result, nil
 }
 
-func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, rerr error) {
+func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, rerr error) {
 	if bucketName != db.name {
 		return result, gofakes3.BucketNotFound(bucketName)
 	}
@@ -356,15 +366,15 @@ func (db *SingleBucketBackend) DeleteMulti(bucketName string, objects ...string)
 	return result, nil
 }
 
-func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) error {
+func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
 	if bucketName != db.name {
-		return gofakes3.BucketNotFound(bucketName)
+		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	return db.deleteObjectLocked(bucketName, objectName)
+	return result, db.deleteObjectLocked(bucketName, objectName)
 }
 
 func (db *SingleBucketBackend) deleteObjectLocked(bucketName, objectName string) error {

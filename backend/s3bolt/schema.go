@@ -12,6 +12,7 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -20,6 +21,7 @@ type boltBucket struct {
 }
 
 type boltObject struct {
+	Name         string
 	Metadata     map[string]string
 	LastModified time.Time
 	Size         int64
@@ -27,7 +29,7 @@ type boltObject struct {
 	Hash         []byte
 }
 
-func (b *boltObject) Object(rangeRequest *gofakes3.ObjectRangeRequest) *gofakes3.Object {
+func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRangeRequest) *gofakes3.Object {
 	data := b.Contents
 
 	rnge := rangeRequest.Range(b.Size)
@@ -36,9 +38,10 @@ func (b *boltObject) Object(rangeRequest *gofakes3.ObjectRangeRequest) *gofakes3
 	}
 
 	return &gofakes3.Object{
+		Name:     objectName,
 		Metadata: b.Metadata,
 		Size:     b.Size,
-		Contents: readerWithDummyCloser{bytes.NewReader(data)},
+		Contents: s3io.ReaderWithDummyCloser{bytes.NewReader(data)},
 		Range:    rnge,
 		Hash:     b.Hash,
 	}

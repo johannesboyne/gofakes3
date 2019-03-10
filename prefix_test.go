@@ -45,8 +45,10 @@ func TestPrefixMatch(t *testing.T) {
 				Prefix:       unwrapStr(tc.p),
 				Delimiter:    unwrapStr(tc.d),
 			}
-			match := prefix.Match(tc.key)
-			if (tc.out == nil) != (match == nil) {
+
+			var match PrefixMatch
+			matched := prefix.Match(tc.key, &match)
+			if (tc.out == nil) != (!matched) {
 				t.Fatal("prefix match failed at index", idx)
 			}
 			if tc.out != nil {

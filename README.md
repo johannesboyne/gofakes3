@@ -6,7 +6,8 @@
 
 AWS S3 fake server.
 
-A _poor man's_ object storage based on an In-Memory KV db or [BoltDB](https://github.com/boltdb/bolt) (Pluggable).
+A _poor man's_ object storage based on an In-Memory KV db or
+[BoltDB](https://github.com/boltdb/bolt) (Pluggable).
 
 ```
   s3client -> [gofakes3:9000] -- Get    Bucket (List)
@@ -35,9 +36,27 @@ A _poor man's_ object storage based on an In-Memory KV db or [BoltDB](https://gi
                          XXXXXXXXX
 ```
 
+
 ## What to use it for?
 
-We're using it for the local development of S3 dependent Lambda functions and to test browser based direct uploads to S3 locally.
+We're using it for the local development of S3 dependent Lambda functions and
+to test browser based direct uploads to S3 locally.
+
+
+## What not to use it for?
+
+Please don't use gofakes3 as a production service. The intended use case for
+gofakes3 is currently to facilitate testing. It's not meant to be used for
+safe, persistent access to production data at the moment.
+
+There's no reason we couldn't set that as a stretch goal at a later date, but
+it's a long way down the road, especially while we have so much of the API left
+to implement; breaking changes are inevitable.
+
+In the meantime, there are more battle-hardened solutions for production
+workloads out there, some of which are listed in the "Similar Notable Projects"
+section below.
+
 
 ## How to use it?
 

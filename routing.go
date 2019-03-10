@@ -45,6 +45,15 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	} else if _, ok := query["uploads"]; ok {
 		err = g.routeMultipartUploadBase(bucket, object, w, r)
 
+	} else if _, ok := query["versioning"]; ok {
+		err = g.routeVersioning(bucket, w, r)
+
+	} else if _, ok := query["versions"]; ok {
+		err = g.routeVersions(bucket, w, r)
+
+	} else if versionID, ok := query["versionId"]; ok {
+		err = g.routeVersion(bucket, object, VersionID(versionID[0]), w, r)
+
 	} else if bucket != "" && object != "" {
 		err = g.routeObject(bucket, object, w, r)
 
@@ -52,7 +61,7 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 		err = g.routeBucket(bucket, w, r)
 
 	} else if r.Method == "GET" {
-		err = g.getBuckets(w, r)
+		err = g.listBuckets(w, r)
 
 	} else {
 		http.NotFound(w, r)
@@ -69,13 +78,13 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 func (g *GoFakeS3) routeObject(bucket, object string, w http.ResponseWriter, r *http.Request) (err error) {
 	switch r.Method {
 	case "GET":
-		return g.getObject(bucket, object, w, r)
+		return g.getObject(bucket, object, "", w, r)
+	case "HEAD":
+		return g.headObject(bucket, object, "", w, r)
 	case "PUT":
 		return g.createObject(bucket, object, w, r)
 	case "DELETE":
 		return g.deleteObject(bucket, object, w, r)
-	case "HEAD":
-		return g.headObject(bucket, object, w, r)
 	default:
 		return ErrMethodNotAllowed
 	}
@@ -86,7 +95,7 @@ func (g *GoFakeS3) routeObject(bucket, object string, w http.ResponseWriter, r *
 func (g *GoFakeS3) routeBucket(bucket string, w http.ResponseWriter, r *http.Request) (err error) {
 	switch r.Method {
 	case "GET":
-		return g.getBucket(bucket, w, r)
+		return g.listBucket(bucket, w, r)
 	case "PUT":
 		return g.createBucket(bucket, w, r)
 	case "DELETE":
@@ -113,6 +122,45 @@ func (g *GoFakeS3) routeMultipartUploadBase(bucket, object string, w http.Respon
 		return g.listMultipartUploads(bucket, w, r)
 	case "POST":
 		return g.initiateMultipartUpload(bucket, object, w, r)
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
+// routeVersioningBase operates on routes that contain '?versioning' in the
+// query string. These routes may or may not have a value for bucket; this is
+// validated and handled in the target handler functions.
+func (g *GoFakeS3) routeVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case "GET":
+		return g.getBucketVersioning(bucket, w, r)
+	case "PUT":
+		return g.putBucketVersioning(bucket, w, r)
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
+// routeVersions operates on routes that contain '?versions' in the query string.
+func (g *GoFakeS3) routeVersions(bucket string, w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case "GET":
+		return g.listBucketVersions(bucket, w, r)
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
+// routeVersion operates on routes that contain '?versionId=<id>' in the
+// query string.
+func (g *GoFakeS3) routeVersion(bucket, object string, versionID VersionID, w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case "GET":
+		return g.getObject(bucket, object, versionID, w, r)
+	case "HEAD":
+		return g.headObject(bucket, object, versionID, w, r)
+	case "DELETE":
+		return g.deleteObjectVersion(bucket, object, versionID, w, r)
 	default:
 		return ErrMethodNotAllowed
 	}

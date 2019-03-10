@@ -1,12 +1,15 @@
 package main
 
 import (
+	"expvar"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	httppprof "net/http/pprof"
 	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
@@ -39,6 +42,9 @@ type fakeS3Flags struct {
 	directFsBucket string
 	fsPath         string
 	fsMeta         string
+
+	debugCPU  string
+	debugHost string
 }
 
 func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
@@ -56,6 +62,10 @@ func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.directFsBucket, "directfs.bucket", "mybucket", "Name of the bucket for your file path; this will be the only supported bucket by the 'directfs' backend for the duration of your run.")
 	flagSet.StringVar(&f.fsPath, "fs.path", "", "Path to your S3 buckets. Buckets are stored under the '/buckets' subpath.")
 	flagSet.StringVar(&f.fsMeta, "fs.meta", "", "Optional path for storing S3 metadata for your buckets. Defaults to the '/metadata' subfolder of -fs.path if not passed.")
+
+	// Debugging:
+	flagSet.StringVar(&f.debugHost, "debug.host", "", "Run the debug server on this host")
+	flagSet.StringVar(&f.debugCPU, "debug.cpu", "", "Create CPU profile in this file")
 
 	// Deprecated:
 	flagSet.StringVar(&f.boltDb, "db", "locals3.db", "Deprecated; use -bolt.db")
@@ -77,6 +87,22 @@ func (f *fakeS3Flags) timeOptions() (source gofakes3.TimeSource, skewLimit time.
 	return source, skewLimit, nil
 }
 
+func debugServer(host string) {
+	mux := http.NewServeMux()
+	mux.Handle("/debug/vars", expvar.Handler())
+	mux.HandleFunc("/debug/pprof/", httppprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
+
+	srv := &http.Server{Addr: host}
+	srv.Handler = mux
+	if err := srv.ListenAndServe(); err != nil {
+		panic(err)
+	}
+}
+
 func run() error {
 	var values fakeS3Flags
 
@@ -85,6 +111,17 @@ func run() error {
 
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		return err
+	}
+
+	stopper, err := profile(values)
+	if err != nil {
+		return err
+	}
+	defer stopper()
+
+	if values.debugHost != "" {
+		log.Println("starting debug server at", fmt.Sprintf("http://%s/debug/pprof", values.debugHost))
+		go debugServer(values.debugHost)
 	}
 
 	var backend gofakes3.Backend
@@ -199,4 +236,21 @@ func listenAndServe(addr string, handler http.Handler) error {
 	server := &http.Server{Addr: addr, Handler: handler}
 
 	return server.Serve(listener)
+}
+
+func profile(values fakeS3Flags) (func(), error) {
+	fn := func() {}
+
+	if values.debugCPU != "" {
+		f, err := os.Create(values.debugCPU)
+		if err != nil {
+			return fn, err
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			return fn, err
+		}
+		return pprof.StopCPUProfile, nil
+	}
+
+	return fn, nil
 }

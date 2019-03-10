@@ -9,45 +9,12 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-)
-
-const (
-	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
-	//	"The name for a key is a sequence of Unicode characters whose UTF-8
-	//	encoding is at most 1024 bytes long."
-	KeySizeLimit = 1024
-
-	// From https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html:
-	//	Within the PUT request header, the user-defined metadata is limited to 2
-	// 	KB in size. The size of user-defined metadata is measured by taking the
-	// 	sum of the number of bytes in the UTF-8 encoding of each key and value.
-	//
-	// As this does not specify KB or KiB, KB is used in gofakes3. The reason
-	// for this is if gofakes3 is used for testing, and your tests show that
-	// 2KiB works, but Amazon uses 2KB...  that's a much worse time to discover
-	// the disparity!
-	DefaultMetadataSizeLimit = 2000
-
-	// Like DefaultMetadataSizeLimit, the docs don't specify MB or MiB, so we
-	// will accept 5MB for now. The Go client SDK rejects 5MB with the error
-	// "part size must be at least 5242880 bytes", which is a hint that it
-	// has been interpreted as MiB at least _somewhere_, but we should remain
-	// liberal in what we accept in the face of ambiguity.
-	DefaultUploadPartSize = 5 * 1000 * 1000
-
-	DefaultSkewLimit = 15 * time.Minute
-
-	MaxUploadsLimit       = 1000
-	DefaultMaxUploads     = 1000
-	MaxUploadPartsLimit   = 1000
-	DefaultMaxUploadParts = 1000
-
-	// From the docs: "Part numbers can be any number from 1 to 10,000, inclusive."
-	MaxUploadPartNumber = 10000
 )
 
 // GoFakeS3 implements HTTP handlers for processing S3 requests and returning
@@ -55,7 +22,9 @@ const (
 //
 // Logic is delegated to other components, like Backend or uploader.
 type GoFakeS3 struct {
-	storage           Backend
+	storage   Backend
+	versioned VersionedBackend
+
 	timeSource        TimeSource
 	timeSkew          time.Duration
 	metadataSizeLimit int
@@ -78,6 +47,10 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		uploader:          newUploader(),
 		requestID:         0,
 	}
+
+	// versioned MUST be set before options as one of the options disables it:
+	s3.versioned, _ = backend.(VersionedBackend)
+
 	for _, opt := range options {
 		opt(s3)
 	}
@@ -156,9 +129,6 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 	w.WriteHeader(resp.ErrorCode().Status())
 
 	if r.Method != http.MethodHead {
-		w.Header().Set("Content-Type", "application/xml")
-
-		w.Write([]byte(xml.Header))
 		if err := g.xmlEncoder(w).Encode(resp); err != nil {
 			g.log.Print(LogErr, err)
 			return
@@ -166,8 +136,7 @@ func (g *GoFakeS3) httpError(w http.ResponseWriter, r *http.Request, err error) 
 	}
 }
 
-// Get a list of all Buckets
-func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) listBuckets(w http.ResponseWriter, r *http.Request) error {
 	buckets, err := g.storage.ListBuckets()
 	if err != nil {
 		return err
@@ -181,40 +150,68 @@ func (g *GoFakeS3) getBuckets(w http.ResponseWriter, r *http.Request) error {
 			DisplayName: "GoFakeS3",
 		},
 	}
-	x, err := xml.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
 
-	w.Header().Set("Content-Type", "application/xml")
-	w.Write([]byte(xml.Header))
-	w.Write(x)
-	return nil
+	return g.xmlEncoder(w).Encode(s)
 }
 
-// GetBucket lists the contents of a bucket.
-func (g *GoFakeS3) getBucket(bucketName string, w http.ResponseWriter, r *http.Request) error {
-	g.log.Print(LogInfo, "GET BUCKET")
+func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.Request) error {
+	g.log.Print(LogInfo, "LIST BUCKET")
 
 	prefix := prefixFromQuery(r.URL.Query())
 
 	g.log.Print(LogInfo, "bucketname:", bucketName)
 	g.log.Print(LogInfo, "prefix    :", prefix)
 
-	bucket, err := g.storage.GetBucket(bucketName, prefix)
+	bucket, err := g.storage.ListBucket(bucketName, &prefix)
 	if err != nil {
 		return err
 	}
 
-	x, err := xml.MarshalIndent(bucket, "", "  ")
+	return g.xmlEncoder(w).Encode(bucket)
+}
+
+func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, r *http.Request) error {
+	if g.versioned == nil {
+		return ErrNotImplemented
+	}
+
+	prefix := prefixFromQuery(r.URL.Query())
+	page, err := listBucketVersionsPageFromQuery(r.URL.Query())
 	if err != nil {
 		return err
 	}
 
-	w.Header().Set("Content-Type", "application/xml")
-	w.Write([]byte(xml.Header))
-	w.Write(x)
-	return nil
+	// S300004:
+	if page.HasVersionIDMarker {
+		if page.VersionIDMarker == "" {
+			return ErrorInvalidArgument("version-id-marker", "", "A version-id marker cannot be empty.")
+		} else if !page.HasKeyMarker {
+			return ErrorInvalidArgument("version-id-marker", "", "A version-id marker cannot be specified without a key marker.")
+		}
+
+	} else if page.HasKeyMarker && page.KeyMarker == "" {
+		// S300004: S3 ignores everything if you pass an empty key marker so
+		// let's hide that bit of ugliness from Backend.
+		page = ListBucketVersionsPage{}
+	}
+
+	bucket, err := g.versioned.ListBucketVersions(bucketName, &prefix, &page)
+	if err != nil {
+		return err
+	}
+
+	for _, ver := range bucket.Versions {
+		// S300005: S3 returns the _string_ 'null' for the version ID if the
+		// bucket has never had versioning enabled. GoFakeS3 backend
+		// implementers should be able to simply return the empty string;
+		// GoFakeS3 itself should handle this particular bit of jank once and
+		// once only.
+		if ver.GetVersionID() == "" {
+			ver.setVersionID("null")
+		}
+	}
+
+	return g.xmlEncoder(w).Encode(bucket)
 }
 
 // CreateBucket creates a new S3 bucket in the BoltDB storage.
@@ -228,7 +225,6 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	w.Header().Set("Host", r.Header.Get("Host"))
 	w.Header().Set("Location", "/"+bucket)
 	w.Write([]byte{})
 	return nil
@@ -238,7 +234,11 @@ func (g *GoFakeS3) createBucket(bucket string, w http.ResponseWriter, r *http.Re
 // contains no items.
 func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "DELETE BUCKET:", bucket)
-	return g.storage.DeleteBucket(bucket)
+	if err := g.storage.DeleteBucket(bucket); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 // HeadBucket checks whether a bucket exists.
@@ -255,7 +255,13 @@ func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Requ
 }
 
 // GetObject retrievs a bucket object.
-func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
+func (g *GoFakeS3) getObject(
+	bucket, object string,
+	versionID VersionID,
+	w http.ResponseWriter,
+	r *http.Request,
+) error {
+
 	g.log.Print(LogInfo, "GET OBJECT")
 	g.log.Print(LogInfo, "Bucket:", bucket)
 	g.log.Print(LogInfo, "└── Object:", object)
@@ -265,22 +271,37 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 		return err
 	}
 
-	obj, err := g.storage.GetObject(bucket, object, rnge)
-	if err != nil {
-		return err
-	} else if obj == nil {
+	var obj *Object
+
+	{ // get object from backend
+		if versionID == "" {
+			obj, err = g.storage.GetObject(bucket, object, rnge)
+			if err != nil {
+				return err
+			}
+		} else {
+			if g.versioned == nil {
+				return ErrNotImplemented
+			}
+			obj, err = g.versioned.GetObjectVersion(bucket, object, versionID, rnge)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if obj == nil {
+		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
 		return ErrInternal
 	}
 	defer obj.Contents.Close()
 
-	obj.Range.writeHeader(obj.Size, w) // Writes Content-Length, and Content-Range if applicable.
-
-	for mk, mv := range obj.Metadata {
-		w.Header().Set(mk, mv)
+	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
+		return err
 	}
-	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
+
+	// Writes Content-Length, and Content-Range if applicable:
+	obj.Range.writeHeader(obj.Size, w)
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err
@@ -289,7 +310,64 @@ func (g *GoFakeS3) getObject(bucket, object string, w http.ResponseWriter, r *ht
 	return nil
 }
 
-// CreateObject (Browser Upload) creates a new S3 object.
+// writeGetOrHeadObjectResponse contains shared logic for constructing headers for
+// a HEAD and a GET request for a /bucket/object URL.
+func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWriter, r *http.Request) error {
+	// "If the current version of the object is a delete marker, Amazon S3
+	// behaves as if the object was deleted and includes x-amz-delete-marker:
+	// true in the response."
+	if obj.IsDeleteMarker {
+		w.Header().Set("x-amz-version-id", string(obj.VersionID))
+		w.Header().Set("x-amz-delete-marker", "true")
+		return KeyNotFound(obj.Name)
+	}
+
+	for mk, mv := range obj.Metadata {
+		w.Header().Set(mk, mv)
+	}
+	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
+
+	if obj.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(obj.VersionID))
+	}
+	return nil
+}
+
+// headObject retrieves only meta information of an object and not the whole.
+func (g *GoFakeS3) headObject(
+	bucket, object string,
+	versionID VersionID,
+	w http.ResponseWriter,
+	r *http.Request,
+) error {
+
+	g.log.Print(LogInfo, "HEAD OBJECT")
+	g.log.Print(LogInfo, "Bucket:", bucket)
+	g.log.Print(LogInfo, "└── Object:", object)
+
+	obj, err := g.storage.HeadObject(bucket, object)
+	if err != nil {
+		return err
+	}
+	if obj == nil {
+		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
+		return ErrInternal
+	}
+	defer obj.Contents.Close()
+
+	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
+		return err
+	}
+
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
+
+	return nil
+}
+
+// createObjectBrowserUpload allows objects to be created from a multipart upload initiated
+// by a browser form.
 func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "CREATE OBJECT THROUGH BROWSER UPLOAD")
 
@@ -334,8 +412,12 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 		return err
 	}
 
-	if err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size); err != nil {
+	result, err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size)
+	if err != nil {
 		return err
+	}
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 
 	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
@@ -363,6 +445,10 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	var md5Base64 string
 	if g.integrityCheck {
 		md5Base64 = r.Header.Get("Content-MD5")
+
+		if _, ok := r.Header[textproto.CanonicalMIMEHeaderKey("Content-MD5")]; ok && md5Base64 == "" {
+			return ErrInvalidDigest // Satisfies s3tests
+		}
 	}
 
 	// hashingReader is still needed to get the ETag even if integrityCheck
@@ -373,22 +459,64 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	if err := g.storage.PutObject(bucket, object, meta, rdr, size); err != nil {
+	result, err := g.storage.PutObject(bucket, object, meta, rdr, size)
+	if err != nil {
 		return err
 	}
 
+	if result.VersionID != "" {
+		g.log.Print(LogInfo, "CREATED VERSION:", bucket, object, result.VersionID)
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	}
 	w.Header().Set("ETag", `"`+hex.EncodeToString(rdr.Sum(nil))+`"`)
+
 	return nil
 }
 
-// deleteObject deletes a S3 object from the bucket.
 func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "DELETE:", bucket, object)
-	if err := g.storage.DeleteObject(bucket, object); err != nil {
+	result, err := g.storage.DeleteObject(bucket, object)
+	if err != nil {
 		return err
 	}
-	w.Header().Set("x-amz-delete-marker", "false")
-	w.Write([]byte{})
+
+	if result.IsDeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	} else {
+		w.Header().Set("x-amz-delete-marker", "false")
+	}
+
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (g *GoFakeS3) deleteObjectVersion(bucket, object string, version VersionID, w http.ResponseWriter, r *http.Request) error {
+	if g.versioned == nil {
+		return ErrNotImplemented
+	}
+
+	g.log.Print(LogInfo, "DELETE VERSION:", bucket, object, version)
+	result, err := g.versioned.DeleteObjectVersion(bucket, object, version)
+	if err != nil {
+		return err
+	}
+	g.log.Print(LogInfo, "DELETED VERSION:", bucket, object, version)
+
+	if result.IsDeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	} else {
+		w.Header().Set("x-amz-delete-marker", "false")
+	}
+
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
@@ -419,39 +547,7 @@ func (g *GoFakeS3) deleteMulti(bucket string, w http.ResponseWriter, r *http.Req
 		out.Deleted = nil
 	}
 
-	x, err := xml.MarshalIndent(&out, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	w.Write([]byte(xml.Header))
-	w.Write(x)
-	return nil
-}
-
-// HeadObject retrieves only meta information of an object and not the whole.
-func (g *GoFakeS3) headObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
-	g.log.Print(LogInfo, "HEAD OBJECT")
-
-	g.log.Print(LogInfo, "Bucket:", bucket)
-	g.log.Print(LogInfo, "└── Object:", object)
-
-	obj, err := g.storage.HeadObject(bucket, object)
-	if err != nil {
-		return err
-	}
-	defer obj.Contents.Close()
-
-	for mk, mv := range obj.Metadata {
-		w.Header().Set(mk, mv)
-	}
-	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
-	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Write([]byte{})
-
-	return nil
+	return g.xmlEncoder(w).Encode(out)
 }
 
 func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.ResponseWriter, r *http.Request) error {
@@ -504,6 +600,10 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 	if g.integrityCheck {
 		md5Base64 := r.Header.Get("Content-MD5")
+		if _, ok := r.Header[textproto.CanonicalMIMEHeaderKey("Content-MD5")]; ok && md5Base64 == "" {
+			return ErrInvalidDigest // Satisfies s3tests
+		}
+
 		if md5Base64 != "" {
 			var err error
 			rdr, err = newHashingReader(rdr, md5Base64)
@@ -533,22 +633,19 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "abort multipart upload", bucket, object, uploadID)
-	_, err := g.uploader.Complete(bucket, object, uploadID)
-	return err
+	if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "complete multipart upload", bucket, object, uploadID)
 
-	body, err := ioutil.ReadAll(r.Body)
-	defer r.Body.Close()
-	if err != nil {
-		return err
-	}
-
 	var in CompleteMultipartUploadRequest
-	if err := xml.Unmarshal(body, &in); err != nil {
-		return ErrorMessage(ErrMalformedXML, err.Error())
+	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
+		return err
 	}
 
 	upload, err := g.uploader.Complete(bucket, object, uploadID)
@@ -561,8 +658,12 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	if err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody))); err != nil {
+	result, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
+	if err != nil {
 		return err
+	}
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
 	}
 
 	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
@@ -614,6 +715,42 @@ func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID Uplo
 	return g.xmlEncoder(w).Encode(out)
 }
 
+func (g *GoFakeS3) getBucketVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
+	var config VersioningConfiguration
+
+	if g.versioned != nil {
+		var err error
+		config, err = g.versioned.VersioningConfiguration(bucket)
+		if err != nil {
+			return err
+		}
+	}
+
+	return g.xmlEncoder(w).Encode(config)
+}
+
+func (g *GoFakeS3) putBucketVersioning(bucket string, w http.ResponseWriter, r *http.Request) error {
+	var in VersioningConfiguration
+	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
+		return err
+	}
+
+	if g.versioned == nil {
+		if in.MFADelete == MFADeleteEnabled || in.Status == VersioningEnabled {
+			// We only need to respond that this is not implemented if there's an
+			// attempt to enable it. If we receive a request to disable it, or an
+			// empty request, that matches the current state and has no effect so
+			// we can accept it.
+			return ErrNotImplemented
+		} else {
+			return nil
+		}
+	}
+
+	g.log.Print(LogInfo, "PUT VERSIONING:", in.Status)
+	return g.versioned.SetVersioningConfiguration(bucket, in)
+}
+
 func (g *GoFakeS3) ensureBucketExists(bucket string) error {
 	exists, err := g.storage.BucketExists(bucket)
 	if err != nil {
@@ -625,10 +762,27 @@ func (g *GoFakeS3) ensureBucketExists(bucket string) error {
 	return nil
 }
 
-func (g *GoFakeS3) xmlEncoder(w io.Writer) *xml.Encoder {
+func (g *GoFakeS3) xmlEncoder(w http.ResponseWriter) *xml.Encoder {
+	w.Write([]byte(xml.Header))
+	w.Header().Set("Content-Type", "application/xml")
+
 	xe := xml.NewEncoder(w)
 	xe.Indent("", "  ")
 	return xe
+}
+
+func (g *GoFakeS3) xmlDecodeBody(rdr io.ReadCloser, into interface{}) error {
+	body, err := ioutil.ReadAll(rdr)
+	defer rdr.Close()
+	if err != nil {
+		return err
+	}
+
+	if err := xml.Unmarshal(body, into); err != nil {
+		return ErrorMessage(ErrMalformedXML, err.Error())
+	}
+
+	return nil
 }
 
 func formatHeaderTime(t time.Time) string {
@@ -662,4 +816,19 @@ func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (
 	}
 
 	return meta, nil
+}
+
+func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsPage, rerr error) {
+	maxKeys, err := parseClampedInt(query.Get("max-keys"), DefaultMaxBucketVersionKeys, 0, MaxBucketVersionKeys)
+	if err != nil {
+		return page, err
+	}
+
+	page.MaxKeys = maxKeys
+	page.KeyMarker = query.Get("key-marker")
+	page.VersionIDMarker = VersionID(query.Get("version-id-marker"))
+	_, page.HasKeyMarker = query["key-marker"]
+	_, page.HasVersionIDMarker = query["version-id-marker"]
+
+	return page, nil
 }

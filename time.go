@@ -19,12 +19,13 @@ func FixedTimeSource(at time.Time) TimeSourceAdvancer {
 }
 
 func DefaultTimeSource() TimeSource {
-	timeLocation, err := time.LoadLocation("GMT")
-	if err != nil {
-		panic(err)
-	}
 	return &locatedTimeSource{
-		timeLocation: timeLocation,
+		// XXX: uses time.FixedZone to 'fake' the GMT timezone that S3 uses
+		// (which is basically just UTC with a different name) to avoid
+		// time.LoadLocation, which requires zoneinfo.zip to be available and
+		// can break spectacularly on Windows (https://github.com/golang/go/issues/21881)
+		// or Docker.
+		timeLocation: time.FixedZone("GMT", 0),
 	}
 }
 

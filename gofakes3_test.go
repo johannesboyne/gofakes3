@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
+	"net/http/httputil"
 	"reflect"
 	"sort"
 	"strings"
@@ -158,8 +159,8 @@ func TestCreateObjectMD5(t *testing.T) {
 			Body:       bytes.NewReader([]byte("hello")),
 			ContentMD5: aws.String("bnVwCg=="),
 		})
-		if !s3HasErrorCode(err, gofakes3.ErrBadDigest) {
-			t.Fatal("expected BadDigest error, found", err)
+		if !s3HasErrorCode(err, gofakes3.ErrInvalidDigest) {
+			t.Fatal("expected InvalidDigest error, found", err)
 		}
 	}
 
@@ -381,7 +382,7 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 		res, err := upload(ts, bucket, w, body)
 		ts.OK(err)
 		if res.StatusCode != http.StatusOK {
-			ts.Fatal("bad status", res.StatusCode)
+			ts.Fatal("bad status", res.StatusCode, tryDumpResponse(res, true))
 		}
 		if etag != "" && res.Header.Get("ETag") != etag {
 			ts.Fatal("bad etag", res.Header.Get("ETag"), etag)
@@ -434,9 +435,253 @@ func TestCreateObjectBrowserUpload(t *testing.T) {
 	})
 }
 
+func TestVersioning(t *testing.T) {
+	assertVersioning := func(ts *testServer, mfa string, status string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		bv, err := svc.GetBucketVersioning(&s3.GetBucketVersioningInput{Bucket: aws.String(defaultBucket)})
+		ts.OK(err)
+		if aws.StringValue(bv.MFADelete) != mfa {
+			ts.Fatal("unexpected MFADelete")
+		}
+		if aws.StringValue(bv.Status) != status {
+			ts.Fatalf("unexpected Status %q, expected %q", aws.StringValue(bv.Status), status)
+		}
+	}
+
+	setVersioning := func(ts *testServer, status gofakes3.VersioningStatus) {
+		ts.Helper()
+		svc := ts.s3Client()
+		ts.OKAll(svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String(string(status)),
+			},
+		}))
+	}
+
+	t.Run("", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+
+		// Bucket that has never been versioned should return empty strings:
+		assertVersioning(ts, "", "")
+	})
+
+	t.Run("enable", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+
+		setVersioning(ts, "Enabled")
+		assertVersioning(ts, "", "Enabled")
+	})
+
+	t.Run("suspend", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+
+		setVersioning(ts, gofakes3.VersioningSuspended)
+		assertVersioning(ts, "", "")
+
+		setVersioning(ts, gofakes3.VersioningEnabled)
+		setVersioning(ts, gofakes3.VersioningSuspended)
+		assertVersioning(ts, "", "Suspended")
+	})
+
+	t.Run("no-versioning-suspend", func(t *testing.T) {
+		ts := newTestServer(t, withFakerOptions(
+			gofakes3.WithoutVersioning(),
+		))
+		defer ts.Close()
+
+		setVersioning(ts, "Suspended")
+		assertVersioning(ts, "", "")
+	})
+
+	t.Run("no-versioning-enable", func(t *testing.T) {
+		ts := newTestServer(t, withFakerOptions(
+			gofakes3.WithoutVersioning(),
+		))
+		defer ts.Close()
+
+		svc := ts.s3Client()
+		_, err := svc.PutBucketVersioning(&s3.PutBucketVersioningInput{
+			Bucket: aws.String(defaultBucket),
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String("Enabled"),
+			},
+		})
+		if !hasErrorCode(err, gofakes3.ErrNotImplemented) {
+			ts.Fatal("expected ErrNotImplemented, found", err)
+		}
+	})
+}
+
+func TestObjectVersions(t *testing.T) {
+	create := func(ts *testServer, bucket, key string, contents []byte, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		out, err := svc.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(contents),
+		})
+		ts.OK(err)
+		if aws.StringValue(out.VersionId) != version {
+			t.Fatal("version ID mismatch. found:", aws.StringValue(out.VersionId), "expected:", version)
+		}
+	}
+
+	get := func(ts *testServer, bucket, key string, contents []byte, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		input := &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		}
+		if version != "" {
+			input.VersionId = aws.String(version)
+		}
+		out, err := svc.GetObject(input)
+		ts.OK(err)
+		defer out.Body.Close()
+		bts, err := ioutil.ReadAll(out.Body)
+		ts.OK(err)
+		if !bytes.Equal(bts, contents) {
+			ts.Fatal("body mismatch. found:", string(bts), "expected:", string(contents))
+		}
+	}
+
+	deleteVersion := func(ts *testServer, bucket, key, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		}
+		if version != "" {
+			input.VersionId = aws.String(version)
+		}
+		ts.OKAll(svc.DeleteObject(input))
+	}
+
+	deleteDirect := func(ts *testServer, bucket, key, version string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		}
+		out, err := svc.DeleteObject(input)
+		ts.OK(err)
+		if aws.StringValue(out.VersionId) != version {
+			t.Fatal("version ID mismatch. found:", aws.StringValue(out.VersionId), "expected:", version)
+		}
+	}
+
+	list := func(ts *testServer, bucket string, versions ...string) {
+		ts.Helper()
+		svc := ts.s3Client()
+		out, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
+		ts.OK(err)
+
+		var found []string
+		for _, ver := range out.Versions {
+			found = append(found, aws.StringValue(ver.VersionId))
+		}
+		for _, ver := range out.DeleteMarkers {
+			found = append(found, aws.StringValue(ver.VersionId))
+		}
+
+		// Unfortunately, the S3 client API destroys the order of Versions and
+		// DeleteMarkers, which are sibling elements in the XML body but separated
+		// into different lists by the client:
+		sort.Strings(found)
+		sort.Strings(versions)
+		if !reflect.DeepEqual(found, versions) {
+			ts.Fatal("versions mismatch. found:", found, "expected:", versions)
+		}
+	}
+
+	// XXX: version IDs are brittle; we control the seed, but the format may
+	// change at any time.
+	const v1 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1H03F9QN5V72K21OG="
+	const v2 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1I00G5II3TDAF7GRG="
+	const v3 = "3/60O30C1G60O30C1G60O30C1G60O30C1G60O30C1G60O30C1J01VFV0CD31ES81G="
+
+	t.Run("put-list-delete-versions", func(t *testing.T) {
+		ts := newTestServer(t, withVersioning())
+		defer ts.Close()
+
+		create(ts, defaultBucket, "object", []byte("body 1"), v1)
+		get(ts, defaultBucket, "object", []byte("body 1"), "")
+		list(ts, defaultBucket, v1)
+
+		create(ts, defaultBucket, "object", []byte("body 2"), v2)
+		get(ts, defaultBucket, "object", []byte("body 2"), "")
+		list(ts, defaultBucket, v1, v2)
+
+		create(ts, defaultBucket, "object", []byte("body 3"), v3)
+		get(ts, defaultBucket, "object", []byte("body 3"), "")
+		list(ts, defaultBucket, v1, v2, v3)
+
+		get(ts, defaultBucket, "object", []byte("body 1"), v1)
+		get(ts, defaultBucket, "object", []byte("body 2"), v2)
+		get(ts, defaultBucket, "object", []byte("body 3"), v3)
+		get(ts, defaultBucket, "object", []byte("body 3"), "")
+
+		deleteVersion(ts, defaultBucket, "object", v1)
+		list(ts, defaultBucket, v2, v3)
+		deleteVersion(ts, defaultBucket, "object", v2)
+		list(ts, defaultBucket, v3)
+		deleteVersion(ts, defaultBucket, "object", v3)
+		list(ts, defaultBucket)
+	})
+
+	t.Run("delete-direct", func(t *testing.T) {
+		ts := newTestServer(t, withVersioning())
+		defer ts.Close()
+
+		create(ts, defaultBucket, "object", []byte("body 1"), v1)
+		list(ts, defaultBucket, v1)
+		create(ts, defaultBucket, "object", []byte("body 2"), v2)
+		list(ts, defaultBucket, v1, v2)
+
+		get(ts, defaultBucket, "object", []byte("body 2"), "")
+
+		deleteDirect(ts, defaultBucket, "object", v3)
+		list(ts, defaultBucket, v1, v2, v3)
+
+		svc := ts.s3Client()
+		_, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String("object"),
+		})
+		if !hasErrorCode(err, gofakes3.ErrNoSuchKey) {
+			ts.Fatal("expected ErrNoSuchKey, found", err)
+		}
+	})
+
+	t.Run("list-never-versioned", func(t *testing.T) {
+		ts := newTestServer(t, withVersioning())
+		defer ts.Close()
+
+		const neverVerBucket = "neverver"
+		ts.backendCreateBucket(neverVerBucket)
+
+		ts.backendPutString(neverVerBucket, "object", nil, "body 1")
+		list(ts, neverVerBucket, "null") // S300005
+	})
+}
+
 func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
 	if err, ok := err.(awserr.Error); ok {
 		return code == gofakes3.ErrorCode(err.Code())
 	}
 	return false
+}
+
+func tryDumpResponse(rs *http.Response, body bool) string {
+	b, _ := httputil.DumpResponse(rs, body)
+	return string(b)
 }

@@ -42,7 +42,7 @@ func TestPutGet(t *testing.T) {
 			}
 
 			contents := []byte("contents")
-			if err := backend.PutObject("test", "yep", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
+			if _, err := backend.PutObject("test", "yep", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
 				t.Fatal(err)
 			}
 			hasher := md5.New()
@@ -88,7 +88,7 @@ func TestPutGetRange(t *testing.T) {
 
 			contents := []byte("contents")
 			expected := contents[1:7]
-			if err := backend.PutObject("test", "yep", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
+			if _, err := backend.PutObject("test", "yep", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
 				t.Fatal(err)
 			}
 			hasher := md5.New()
@@ -133,16 +133,16 @@ func TestPutListRoot(t *testing.T) {
 			}
 
 			contents1 := []byte("contents1")
-			if err := backend.PutObject("test", "foo", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
+			if _, err := backend.PutObject("test", "foo", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
 				t.Fatal(err)
 			}
 
 			contents2 := []byte("contents2")
-			if err := backend.PutObject("test", "bar", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
+			if _, err := backend.PutObject("test", "bar", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
 				t.Fatal(err)
 			}
 
-			result, err := backend.GetBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			result, err := backend.ListBucket("test", &gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,17 +177,17 @@ func TestPutListDir(t *testing.T) {
 			}
 
 			contents1 := []byte("contents1")
-			if err := backend.PutObject("test", "foo/bar", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
+			if _, err := backend.PutObject("test", "foo/bar", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
 				t.Fatal(err)
 			}
 
 			contents2 := []byte("contents2")
-			if err := backend.PutObject("test", "foo/baz", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
+			if _, err := backend.PutObject("test", "foo/baz", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
 				t.Fatal(err)
 			}
 
 			{
-				result, err := backend.GetBucket("test", gofakes3.Prefix{Prefix: "foo/", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+				result, err := backend.ListBucket("test", &gofakes3.Prefix{Prefix: "foo/", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -197,7 +197,7 @@ func TestPutListDir(t *testing.T) {
 			}
 
 			{
-				result, err := backend.GetBucket("test", gofakes3.Prefix{Prefix: "foo/bar", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+				result, err := backend.ListBucket("test", &gofakes3.Prefix{Prefix: "foo/bar", HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -219,15 +219,15 @@ func TestPutDelete(t *testing.T) {
 			}
 
 			contents := []byte("contents1")
-			if err := backend.PutObject("test", "foo", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
+			if _, err := backend.PutObject("test", "foo", meta, bytes.NewReader(contents), int64(len(contents))); err != nil {
 				t.Fatal(err)
 			}
 
-			if err := backend.DeleteObject("test", "foo"); err != nil {
+			if _, err := backend.DeleteObject("test", "foo"); err != nil {
 				t.Fatal(err)
 			}
 
-			result, err := backend.GetBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			result, err := backend.ListBucket("test", &gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -249,12 +249,12 @@ func TestPutDeleteMulti(t *testing.T) {
 			}
 
 			contents1 := []byte("contents1")
-			if err := backend.PutObject("test", "foo/bar", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
+			if _, err := backend.PutObject("test", "foo/bar", meta, bytes.NewReader(contents1), int64(len(contents1))); err != nil {
 				t.Fatal(err)
 			}
 
 			contents2 := []byte("contents2")
-			if err := backend.PutObject("test", "foo/baz", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
+			if _, err := backend.PutObject("test", "foo/baz", meta, bytes.NewReader(contents2), int64(len(contents2))); err != nil {
 				t.Fatal(err)
 			}
 
@@ -266,7 +266,7 @@ func TestPutDeleteMulti(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			bucketContents, err := backend.GetBucket("test", gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
+			bucketContents, err := backend.ListBucket("test", &gofakes3.Prefix{HasPrefix: true, HasDelimiter: true, Delimiter: "/"})
 			if err != nil {
 				t.Fatal(err)
 			}

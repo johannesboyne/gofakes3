@@ -10,7 +10,12 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 	"gopkg.in/mgo.v2/bson"
+)
+
+var (
+	emptyPrefix = &gofakes3.Prefix{}
 )
 
 type Backend struct {
@@ -125,8 +130,12 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, err
 }
 
-func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Bucket, error) {
-	var bucket *gofakes3.Bucket
+func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+	if prefix == nil {
+		prefix = emptyPrefix
+	}
+
+	var bucket *gofakes3.ListBucketResult
 
 	mod := gofakes3.NewContentTime(db.timeSource.Now())
 
@@ -137,12 +146,12 @@ func (db *Backend) GetBucket(name string, prefix gofakes3.Prefix) (*gofakes3.Buc
 		}
 
 		c := b.Cursor()
-		bucket = gofakes3.NewBucket(name)
+		bucket = gofakes3.NewListBucketResult(name)
+		var match gofakes3.PrefixMatch
 
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			key := string(k)
-			match := prefix.Match(key)
-			if match == nil {
+			if !prefix.Match(key, &match) {
 				continue
 
 			} else if match.CommonPrefix {
@@ -244,7 +253,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	if err != nil {
 		return nil, err
 	}
-	obj.Contents = noOpReadCloser{}
+	obj.Contents = s3io.NoOpReadCloser{}
 	return obj, nil
 }
 
@@ -273,24 +282,32 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 		return nil, err
 	}
 
-	return t.Object(rangeRequest), nil
+	// FIXME: objectName here is a bit of a hack; this can be cleaned up when we have a
+	// database migration script.
+	return t.Object(objectName, rangeRequest), nil
 }
 
-func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) error {
+func (db *Backend) PutObject(
+	bucketName, objectName string,
+	meta map[string]string,
+	input io.Reader, size int64,
+) (result gofakes3.PutObjectResult, err error) {
+
 	bts, err := gofakes3.ReadAll(input, size)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	hash := md5.Sum(bts)
 
-	return db.bolt.Update(func(tx *bolt.Tx) error {
+	return result, db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)
 		}
 
 		data, err := bson.Marshal(&boltObject{
+			Name:     objectName,
 			Metadata: meta,
 			Size:     int64(len(bts)),
 			Contents: bts,
@@ -306,8 +323,8 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 	})
 }
 
-func (db *Backend) DeleteObject(bucketName, objectName string) error {
-	return db.bolt.Update(func(tx *bolt.Tx) error {
+func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
+	return result, db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)
@@ -319,7 +336,7 @@ func (db *Backend) DeleteObject(bucketName, objectName string) error {
 	})
 }
 
-func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.DeleteResult, err error) {
+func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, err error) {
 	err = db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
@@ -347,13 +364,3 @@ func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gof
 
 	return result, err
 }
-
-type readerWithDummyCloser struct{ io.Reader }
-
-func (d readerWithDummyCloser) Close() error { return nil }
-
-type noOpReadCloser struct{}
-
-func (d noOpReadCloser) Read(b []byte) (n int, err error) { return 0, io.EOF }
-
-func (d noOpReadCloser) Close() error { return nil }
