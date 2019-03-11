@@ -216,17 +216,20 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 }
 
 func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) (result gofakes3.PutObjectResult, err error) {
+	// No need to lock the backend while we read the data into memory; it holds
+	// the write lock open unnecessarily, and could be blocked for an unreasonably
+	// long time by a connection timing out:
+	bts, err := gofakes3.ReadAll(input, size)
+	if err != nil {
+		return result, err
+	}
+
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
 		return result, gofakes3.BucketNotFound(bucketName)
-	}
-
-	bts, err := gofakes3.ReadAll(input, size)
-	if err != nil {
-		return result, err
 	}
 
 	hash := md5.Sum(bts)
