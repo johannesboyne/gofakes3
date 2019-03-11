@@ -210,7 +210,7 @@ type ListBucketResult struct {
 
 	// Indicates where in the bucket listing begins. Marker is included in the
 	// response if it was sent with the request.
-	Marker string `xml:"Marker,omitempty"`
+	Marker string `xml:"Marker"`
 
 	// When the response is truncated (that is, the IsTruncated element value
 	// in the response is true), you can use the key name in this field as a
