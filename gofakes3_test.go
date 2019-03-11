@@ -794,7 +794,7 @@ func TestListBucketPagesFallback(t *testing.T) {
 	t.Run("fallback-disabled", func(t *testing.T) {
 		ts := newTestServer(t,
 			withBackend(&backendWithUnimplementedPaging{s3mem.New()}),
-			withFakerOptions(gofakes3.WithUnimplementedPageError(true)),
+			withFakerOptions(gofakes3.WithUnimplementedPageError()),
 		)
 		defer ts.Close()
 		createData(ts, "", 5)

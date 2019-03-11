@@ -804,7 +804,7 @@ type backendWithUnimplementedPaging struct {
 	gofakes3.Backend
 }
 
-func (b *backendWithUnimplementedPaging) ListBucket(name string, prefix gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
+func (b *backendWithUnimplementedPaging) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	if !page.IsEmpty() {
 		return nil, gofakes3.ErrInternalPageNotImplemented
 	}

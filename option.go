@@ -71,6 +71,12 @@ func WithoutVersioning() Option {
 	return func(g *GoFakeS3) { g.versioned = nil }
 }
 
-func WithUnimplementedPageError(enabled bool) Option {
-	return func(g *GoFakeS3) { g.failOnUnimplementedPage = enabled }
+// WithUnimplementedPageError allows you to enable or disable the error that occurs
+// if the Backend does not implement paging.
+//
+// By default, GoFakeS3 will simply retry a request for a page of objects
+// without the page if the Backend does not implement pagination. This can
+// be used to enable an error in that condition instead.
+func WithUnimplementedPageError() Option {
+	return func(g *GoFakeS3) { g.failOnUnimplementedPage = true }
 }
