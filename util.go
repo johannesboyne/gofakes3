@@ -14,7 +14,7 @@ func parseClampedInt(in string, defaultValue, min, max int64) (int64, error) {
 		var err error
 		v, err = strconv.ParseInt(in, 10, 0)
 		if err != nil {
-			return defaultValue, err
+			return defaultValue, ErrInvalidArgument
 		}
 	}
 
