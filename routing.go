@@ -51,8 +51,8 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	} else if _, ok := query["versions"]; ok {
 		err = g.routeVersions(bucket, w, r)
 
-	} else if versionID, ok := query["versionId"]; ok {
-		err = g.routeVersion(bucket, object, VersionID(versionID[0]), w, r)
+	} else if versionID := versionFromQuery(query["versionId"]); versionID != "" {
+		err = g.routeVersion(bucket, object, VersionID(versionID), w, r)
 
 	} else if bucket != "" && object != "" {
 		err = g.routeObject(bucket, object, w, r)
@@ -181,4 +181,16 @@ func (g *GoFakeS3) routeMultipartUpload(bucket, object string, uploadID UploadID
 	default:
 		return ErrMethodNotAllowed
 	}
+}
+
+func versionFromQuery(qv []string) string {
+	// The versionId subresource may be the string 'null'; this has been
+	// observed coming in via Boto. The S3 documentation for the "DELETE
+	// object" endpoint describes a 'null' version explicitly, but we don't
+	// want backend implementers to have to special-case this string, so
+	// let's hide it in here:
+	if len(qv) > 0 && qv[0] != "" && qv[0] != "null" {
+		return qv[0]
+	}
+	return ""
 }
