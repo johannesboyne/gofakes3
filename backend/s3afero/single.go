@@ -228,7 +228,7 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 	}, nil
 }
 
-func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (obj *gofakes3.Object, err error) {
 	if bucketName != db.name {
 		return nil, gofakes3.BucketNotFound(bucketName)
 	}
@@ -242,6 +242,13 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	} else if err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		// If an error occurs, the caller may not have access to Object.Body in order to close it:
+		if err != nil && obj == nil {
+			f.Close()
+		}
+	}()
 
 	stat, err := f.Stat()
 	if err != nil {

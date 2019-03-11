@@ -326,8 +326,8 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	}
 
 	defer func() {
-		// If an error occurs, the caller won't have access to Object.Body in order to close it:
-		if rerr != nil {
+		// If an error occurs, the caller may not have access to Object.Body in order to close it:
+		if obj == nil && rerr != nil {
 			f.Close()
 		}
 	}()
