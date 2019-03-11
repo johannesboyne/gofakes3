@@ -29,10 +29,14 @@ type boltObject struct {
 	Hash         []byte
 }
 
-func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRangeRequest) *gofakes3.Object {
+func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
 	data := b.Contents
 
-	rnge := rangeRequest.Range(b.Size)
+	rnge, err := rangeRequest.Range(b.Size)
+	if err != nil {
+		return nil, err
+	}
+
 	if rnge != nil {
 		data = data[rnge.Start : rnge.Start+rnge.Length]
 	}
@@ -44,7 +48,7 @@ func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRang
 		Contents: s3io.ReaderWithDummyCloser{bytes.NewReader(data)},
 		Range:    rnge,
 		Hash:     b.Hash,
-	}
+	}, nil
 }
 
 func bucketMetaKey(name string) []byte {

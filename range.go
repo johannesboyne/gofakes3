@@ -27,9 +27,9 @@ type ObjectRangeRequest struct {
 
 const RangeNoEnd = -1
 
-func (o *ObjectRangeRequest) Range(size int64) *ObjectRange {
+func (o *ObjectRangeRequest) Range(size int64) (*ObjectRange, error) {
 	if o == nil {
-		return nil
+		return nil, nil
 	}
 
 	var start, length int64
@@ -40,12 +40,12 @@ func (o *ObjectRangeRequest) Range(size int64) *ObjectRange {
 
 		if o.End == RangeNoEnd {
 			// If no end is specified, range extends to end of the file.
-			length = size - o.Start
+			length = size - start
 		} else {
 			if end >= size {
 				end = size - 1
 			}
-			length = end - o.Start + 1
+			length = end - start + 1
 		}
 
 	} else {
@@ -59,7 +59,11 @@ func (o *ObjectRangeRequest) Range(size int64) *ObjectRange {
 		length = size - start
 	}
 
-	return &ObjectRange{Start: start, Length: length}
+	if start >= size || start+length > size {
+		return nil, ErrInvalidRange
+	}
+
+	return &ObjectRange{Start: start, Length: length}, nil
 }
 
 // parseRangeHeader parses a single byte range from the Range header.

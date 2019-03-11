@@ -285,7 +285,7 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 
 	// FIXME: objectName here is a bit of a hack; this can be cleaned up when we have a
 	// database migration script.
-	return t.Object(objectName, rangeRequest), nil
+	return t.Object(objectName, rangeRequest)
 }
 
 func (db *Backend) PutObject(

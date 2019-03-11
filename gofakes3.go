@@ -182,6 +182,7 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 
 	g.log.Print(LogInfo, "bucketname:", bucketName)
 	g.log.Print(LogInfo, "prefix    :", prefix)
+	g.log.Print(LogInfo, "page      :", fmt.Sprintf("%+v", page))
 
 	objects, err := g.storage.ListBucket(bucketName, &prefix, page)
 

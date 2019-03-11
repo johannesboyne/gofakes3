@@ -181,7 +181,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	return obj.data.toObject(nil, false), nil
+	return obj.data.toObject(nil, false)
 }
 
 func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
@@ -204,7 +204,11 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	result := obj.data.toObject(rangeRequest, true)
+	result, err := obj.data.toObject(rangeRequest, true)
+	if err != nil {
+		return nil, err
+	}
+
 	if bucket.versioning != gofakes3.VersioningEnabled {
 		result.VersionID = ""
 	}
@@ -344,7 +348,7 @@ func (db *Backend) GetObjectVersion(
 		return nil, err
 	}
 
-	return ver.toObject(rangeRequest, true), nil
+	return ver.toObject(rangeRequest, true)
 }
 
 func (db *Backend) HeadObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (*gofakes3.Object, error) {
@@ -361,7 +365,7 @@ func (db *Backend) HeadObjectVersion(bucketName, objectName string, versionID go
 		return nil, err
 	}
 
-	return ver.toObject(nil, false), nil
+	return ver.toObject(nil, false)
 }
 
 func (db *Backend) DeleteObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (result gofakes3.ObjectDeleteResult, rerr error) {

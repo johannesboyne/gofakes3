@@ -340,7 +340,11 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	size, mtime := stat.Size(), stat.ModTime()
 
 	var rdr io.ReadCloser = f
-	rnge := rangeRequest.Range(size)
+	rnge, err := rangeRequest.Range(size)
+	if err != nil {
+		return nil, err
+	}
+
 	if rnge != nil {
 		if _, err := f.Seek(rnge.Start, io.SeekStart); err != nil {
 			return nil, err
