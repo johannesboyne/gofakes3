@@ -275,20 +275,26 @@ func TestDeleteMulti(t *testing.T) {
 }
 
 func TestGetObjectRange(t *testing.T) {
-	assertRange := func(ts *testServer, key string, hdr string, expected []byte) {
+	assertRange := func(ts *testServer, key string, hdr string, expected []byte, fail bool) {
+		ts.Helper()
 		svc := ts.s3Client()
 		obj, err := svc.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(defaultBucket),
 			Key:    aws.String(key),
 			Range:  aws.String(hdr),
 		})
-		ts.OK(err)
-		defer obj.Body.Close()
+		if fail != (err != nil) {
+			ts.Fatal("failure expected:", fail, "found:", err)
+		}
+		if !fail {
+			ts.OK(err)
+			defer obj.Body.Close()
 
-		out, err := ioutil.ReadAll(obj.Body)
-		ts.OK(err)
-		if !bytes.Equal(expected, out) {
-			ts.Fatal("range failed", hdr, err)
+			out, err := ioutil.ReadAll(obj.Body)
+			ts.OK(err)
+			if !bytes.Equal(expected, out) {
+				ts.Fatal("range failed", hdr, err)
+			}
 		}
 	}
 
@@ -297,31 +303,32 @@ func TestGetObjectRange(t *testing.T) {
 	for idx, tc := range []struct {
 		hdr      string
 		expected []byte
+		fail     bool
 	}{
-		{"bytes=0-", in},
-		{"bytes=1-", in[1:]},
-		{"bytes=0-0", in[:1]},
-		{"bytes=0-1", in[:2]},
-		{"bytes=1023-1023", in[1023:1024]},
+		{"bytes=0-", in, false},
+		{"bytes=1-", in[1:], false},
+		{"bytes=0-0", in[:1], false},
+		{"bytes=0-1", in[:2], false},
+		{"bytes=1023-1023", in[1023:1024], false},
 
-		// if the requested end is beyond the real end, it should still work
-		{"bytes=1023-1024", in[1023:1024]},
+		// if the requested end is beyond the real end, it should fail
+		{"bytes=1023-1024", in[1023:1024], true},
 
-		// if the requested start is beyond the real end, it should still work
-		{"bytes=1024-1024", []byte{}},
+		// if the requested start is beyond the real end, it should fail
+		{"bytes=1024-1024", []byte{}, true},
 
 		// suffix-byte-range-spec:
-		{"bytes=-0", []byte{}},
-		{"bytes=-1", in[1023:1024]},
-		{"bytes=-1024", in},
-		{"bytes=-1025", in},
+		{"bytes=-0", []byte{}, false},
+		{"bytes=-1", in[1023:1024], false},
+		{"bytes=-1024", in, false},
+		{"bytes=-1025", in, true},
 	} {
 		t.Run(fmt.Sprintf("%d/%s", idx, tc.hdr), func(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
 
 			ts.backendPutBytes(defaultBucket, "foo", nil, in)
-			assertRange(ts, "foo", tc.hdr, tc.expected)
+			assertRange(ts, "foo", tc.hdr, tc.expected, tc.fail)
 		})
 	}
 }

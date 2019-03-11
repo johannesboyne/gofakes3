@@ -42,9 +42,6 @@ func (o *ObjectRangeRequest) Range(size int64) (*ObjectRange, error) {
 			// If no end is specified, range extends to end of the file.
 			length = size - start
 		} else {
-			if end >= size {
-				end = size - 1
-			}
 			length = end - start + 1
 		}
 
@@ -52,14 +49,11 @@ func (o *ObjectRangeRequest) Range(size int64) (*ObjectRange, error) {
 		// If no start is specified, end specifies the range start relative
 		// to the end of the file.
 		end := o.End
-		if end > size {
-			end = size
-		}
 		start = size - end
 		length = size - start
 	}
 
-	if start >= size || start+length > size {
+	if start < 0 || length < 0 || start > size || start+length > size {
 		return nil, ErrInvalidRange
 	}
 
