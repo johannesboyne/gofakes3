@@ -77,9 +77,6 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 	if prefix == nil {
 		prefix = emptyPrefix
 	}
-	if !page.IsEmpty() {
-		return nil, gofakes3.ErrInternalPageNotImplemented
-	}
 
 	db.lock.RLock()
 	defer db.lock.RUnlock()
