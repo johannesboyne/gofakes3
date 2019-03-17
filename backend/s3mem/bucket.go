@@ -122,7 +122,7 @@ type bucketData struct {
 	metadata     map[string]string
 }
 
-func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBody bool) *gofakes3.Object {
+func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBody bool) (obj *gofakes3.Object, err error) {
 	sz := int64(len(bi.body))
 	data := bi.body
 
@@ -131,7 +131,11 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 
 	if withBody {
 		// In case of a range request the correct part of the slice is extracted:
-		rnge = rangeRequest.Range(sz)
+		rnge, err = rangeRequest.Range(sz)
+		if err != nil {
+			return nil, err
+		}
+
 		if rnge != nil {
 			data = data[rnge.Start : rnge.Start+rnge.Length]
 		}
@@ -153,7 +157,7 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 		IsDeleteMarker: bi.deleteMarker,
 		VersionID:      bi.versionID,
 		Contents:       contents,
-	}
+	}, nil
 }
 
 func (b *bucket) setVersioning(enabled bool) {

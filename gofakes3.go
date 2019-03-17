@@ -2,6 +2,7 @@ package gofakes3
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -25,14 +26,15 @@ type GoFakeS3 struct {
 	storage   Backend
 	versioned VersionedBackend
 
-	timeSource        TimeSource
-	timeSkew          time.Duration
-	metadataSizeLimit int
-	integrityCheck    bool
-	hostBucket        bool
-	uploader          *uploader
-	requestID         uint64
-	log               Logger
+	timeSource              TimeSource
+	timeSkew                time.Duration
+	metadataSizeLimit       int
+	integrityCheck          bool
+	failOnUnimplementedPage bool
+	hostBucket              bool
+	uploader                *uploader
+	requestID               uint64
+	log                     Logger
 }
 
 // New creates a new GoFakeS3 using the supplied Backend. Backends are pluggable.
@@ -154,20 +156,113 @@ func (g *GoFakeS3) listBuckets(w http.ResponseWriter, r *http.Request) error {
 	return g.xmlEncoder(w).Encode(s)
 }
 
+// S3 has two versions of this API, both of which are close to identical. We manage that
+// jank in here so the Backend doesn't have to with the following tricks:
+//
+// - Hiding the NextMarker inside the ContinuationToken for V2 calls
+// - Masking the Owner in the response for V2 calls
+//
+// The wrapping response objects are slightly different too, but the list of
+// objects is pretty much the same.
+//
+// - https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGET.html
+// - https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
+//
 func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "LIST BUCKET")
 
-	prefix := prefixFromQuery(r.URL.Query())
-
-	g.log.Print(LogInfo, "bucketname:", bucketName)
-	g.log.Print(LogInfo, "prefix    :", prefix)
-
-	bucket, err := g.storage.ListBucket(bucketName, &prefix)
+	q := r.URL.Query()
+	prefix := prefixFromQuery(q)
+	page, err := listBucketPageFromQuery(q)
 	if err != nil {
 		return err
 	}
 
-	return g.xmlEncoder(w).Encode(bucket)
+	isVersion2 := q.Get("list-type") == "2"
+
+	g.log.Print(LogInfo, "bucketname:", bucketName)
+	g.log.Print(LogInfo, "prefix    :", prefix)
+	g.log.Print(LogInfo, "page      :", fmt.Sprintf("%+v", page))
+
+	objects, err := g.storage.ListBucket(bucketName, &prefix, page)
+
+	if err != nil {
+		if err == ErrInternalPageNotImplemented && !g.failOnUnimplementedPage {
+			// We have observed (though not yet confirmed) that simple clients
+			// tend to work fine if you simply ignore pagination, so the
+			// default if this is not implemented is to retry without it. If
+			// you care about this performance impact for some weird reason,
+			// you'll need to handle it yourself.
+			objects, err = g.storage.ListBucket(bucketName, &prefix, ListBucketPage{})
+			if err != nil {
+				return err
+			}
+
+		} else if err == ErrInternalPageNotImplemented && g.failOnUnimplementedPage {
+			return ErrNotImplemented
+		} else {
+			return err
+		}
+	}
+
+	base := ListBucketResultBase{
+		Xmlns:          "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:           bucketName,
+		CommonPrefixes: objects.CommonPrefixes,
+		Contents:       objects.Contents,
+		IsTruncated:    objects.IsTruncated,
+		Delimiter:      prefix.Delimiter,
+		Prefix:         prefix.Prefix,
+		MaxKeys:        page.MaxKeys,
+	}
+
+	if !isVersion2 {
+		var result = &ListBucketResult{
+			ListBucketResultBase: base,
+			Marker:               page.Marker,
+		}
+		if base.Delimiter != "" {
+			// From the S3 docs: "This element is returned only if you specify
+			// a delimiter request parameter." Dunno why. This hack has been moved
+			// into GoFakeS3 to spare backend implementers the trouble.
+			result.NextMarker = objects.NextMarker
+		}
+		return g.xmlEncoder(w).Encode(result)
+
+	} else {
+		var result = &ListBucketResultV2{
+			ListBucketResultBase: base,
+			KeyCount:             int64(len(objects.CommonPrefixes) + len(objects.Contents)),
+			StartAfter:           q.Get("start-after"),
+			ContinuationToken:    q.Get("continuation-token"),
+		}
+		if objects.NextMarker != "" {
+			// We are just cheating with these continuation tokens; they're just the NextMarker
+			// from v1 in disguise! That may change at any time and should not be relied upon
+			// though.
+			result.NextContinuationToken = base64.URLEncoding.EncodeToString([]byte(objects.NextMarker))
+		}
+
+		// On the topic of "fetch-owner", the AWS docs say, in typically vague style:
+		// "If you want the owner information in the response, you can specify
+		// this parameter with the value set to true."
+		//
+		// What does the bare word 'true' mean when we're talking about a query
+		// string parameter, which can only be a string? Does it mean the word
+		// 'true'? Does it mean 'any truthy string'? Does it mean only the key
+		// needs to be present (i.e. '?fetch-owner'), which we are assuming
+		// for now? This is why you need proper technical writers.
+		//
+		// Probably need to hit up the s3assumer at some point, but until then, here's
+		// another FIXME!
+		if _, ok := q["fetch-owner"]; !ok {
+			for _, v := range result.Contents {
+				v.Owner = nil
+			}
+		}
+
+		return g.xmlEncoder(w).Encode(result)
+	}
 }
 
 func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, r *http.Request) error {
@@ -175,8 +270,9 @@ func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, 
 		return ErrNotImplemented
 	}
 
-	prefix := prefixFromQuery(r.URL.Query())
-	page, err := listBucketVersionsPageFromQuery(r.URL.Query())
+	q := r.URL.Query()
+	prefix := prefixFromQuery(q)
+	page, err := listBucketVersionsPageFromQuery(q)
 	if err != nil {
 		return err
 	}
@@ -562,7 +658,11 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 	}
 
 	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
-	out := InitiateMultipartUpload{UploadID: upload.ID}
+	out := InitiateMultipartUpload{
+		UploadID: upload.ID,
+		Bucket:   bucket,
+		Key:      object,
+	}
 	return g.xmlEncoder(w).Encode(out)
 }
 
@@ -816,6 +916,39 @@ func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (
 	}
 
 	return meta, nil
+}
+
+func listBucketPageFromQuery(query url.Values) (page ListBucketPage, rerr error) {
+	maxKeys, err := parseClampedInt(query.Get("max-keys"), DefaultMaxBucketKeys, 0, MaxBucketKeys)
+	if err != nil {
+		return page, err
+	}
+
+	page.MaxKeys = maxKeys
+
+	if _, page.HasMarker = query["marker"]; page.HasMarker {
+		// List Objects V1 uses marker only:
+		page.Marker = query.Get("marker")
+
+	} else if _, page.HasMarker = query["continuation-token"]; page.HasMarker {
+		// List Objects V2 uses continuation-token preferentially, or
+		// start-after if continuation-token is missing. continuation-token is
+		// an opaque value that looks like this: 1ueGcxLPRx1Tr/XYExHnhbYLgveDs2J/wm36Hy4vbOwM=.
+		// This just looks like base64 junk so we just cheat and base64 encode
+		// the next marker and hide it in a continuation-token.
+		tok, err := base64.URLEncoding.DecodeString(query.Get("continuation-token"))
+		if err != nil {
+			// FIXME: log
+			return page, ErrInvalidToken // FIXME: confirm for sure what AWS does here
+		}
+		page.Marker = string(tok)
+
+	} else if _, page.HasMarker = query["start-after"]; page.HasMarker {
+		// List Objects V2 uses start-after if continuation-token is missing:
+		page.Marker = query.Get("start-after")
+	}
+
+	return page, nil
 }
 
 func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsPage, rerr error) {

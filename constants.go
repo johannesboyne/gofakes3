@@ -28,10 +28,14 @@ const (
 
 	DefaultSkewLimit = 15 * time.Minute
 
-	MaxUploadsLimit             = 1000
-	DefaultMaxUploads           = 1000
-	MaxUploadPartsLimit         = 1000
-	DefaultMaxUploadParts       = 1000
+	MaxUploadsLimit       = 1000
+	DefaultMaxUploads     = 1000
+	MaxUploadPartsLimit   = 1000
+	DefaultMaxUploadParts = 1000
+
+	MaxBucketKeys        = 1000
+	DefaultMaxBucketKeys = 1000
+
 	MaxBucketVersionKeys        = 1000
 	DefaultMaxBucketVersionKeys = 1000
 

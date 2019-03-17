@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-func TestBucketAddPrefix(t *testing.T) {
-	b := NewListBucketResult("yep")
+func TestObjectListAddPrefix(t *testing.T) {
+	b := NewObjectList()
 	b.AddPrefix("prefix1")
 	if len(b.CommonPrefixes) != 1 {
 		t.Fatal("unexpected prefixes length")

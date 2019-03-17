@@ -160,6 +160,9 @@ func withVersioning() testServerOption {
 func withFakerOptions(opts ...gofakes3.Option) testServerOption {
 	return func(ts *testServer) { ts.options = opts }
 }
+func withBackend(backend gofakes3.Backend) testServerOption {
+	return func(ts *testServer) { ts.backend = backend }
+}
 
 func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 	t.Helper()
@@ -616,6 +619,93 @@ func (ts *testServer) assertObject(bucket string, object string, meta map[string
 	}
 }
 
+type listBucketResult struct {
+	CommonPrefixes []*s3.CommonPrefix
+	Contents       []*s3.Object
+}
+
+func (ts *testServer) mustListBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int64, marker string) *listBucketResult {
+	r, err := ts.listBucketV1Pages(prefix, maxKeys, marker)
+	ts.OK(err)
+	return r
+}
+
+func (ts *testServer) listBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int64, marker string) (*listBucketResult, error) {
+	const pageLimit = 20
+
+	svc := ts.s3Client()
+	pages := 0
+	in := &s3.ListObjectsInput{
+		Bucket:  aws.String(defaultBucket),
+		MaxKeys: aws.Int64(maxKeys),
+	}
+	if prefix != nil && prefix.HasDelimiter {
+		in.Delimiter = aws.String(prefix.Delimiter)
+	}
+	if prefix != nil && prefix.HasPrefix {
+		in.Prefix = aws.String(prefix.Prefix)
+	}
+	if marker != "" {
+		in.Marker = aws.String(marker)
+	}
+
+	var rs listBucketResult
+	if err := (svc.ListObjectsPages(in, func(out *s3.ListObjectsOutput, lastPage bool) bool {
+		pages++
+		if pages > pageLimit {
+			panic("stuck in a page loop")
+		}
+		rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
+		rs.Contents = append(rs.Contents, out.Contents...)
+		return !lastPage
+	})); err != nil {
+		return nil, err
+	}
+
+	return &rs, nil
+}
+
+func (ts *testServer) mustListBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, marker string) *listBucketResult {
+	r, err := ts.listBucketV2Pages(prefix, maxKeys, marker)
+	ts.OK(err)
+	return r
+}
+
+func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, startAfter string) (*listBucketResult, error) {
+	const pageLimit = 20
+
+	svc := ts.s3Client()
+	pages := 0
+	in := &s3.ListObjectsV2Input{
+		Bucket:  aws.String(defaultBucket),
+		MaxKeys: aws.Int64(maxKeys),
+	}
+	if prefix != nil && prefix.HasDelimiter {
+		in.Delimiter = aws.String(prefix.Delimiter)
+	}
+	if prefix != nil && prefix.HasPrefix {
+		in.Prefix = aws.String(prefix.Prefix)
+	}
+	if startAfter != "" {
+		in.StartAfter = aws.String(startAfter)
+	}
+
+	var rs listBucketResult
+	if err := (svc.ListObjectsV2Pages(in, func(out *s3.ListObjectsV2Output, lastPage bool) bool {
+		pages++
+		if pages > pageLimit {
+			panic("stuck in a page loop")
+		}
+		rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
+		rs.Contents = append(rs.Contents, out.Contents...)
+		return !lastPage
+	})); err != nil {
+		return nil, err
+	}
+
+	return &rs, nil
+}
+
 func (ts *testServer) Close() {
 	ts.server.Close()
 }
@@ -708,4 +798,15 @@ func httpClient() *http.Client {
 	return &http.Client{
 		Timeout: 2 * time.Second,
 	}
+}
+
+type backendWithUnimplementedPaging struct {
+	gofakes3.Backend
+}
+
+func (b *backendWithUnimplementedPaging) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
+	if !page.IsEmpty() {
+		return nil, gofakes3.ErrInternalPageNotImplemented
+	}
+	return b.Backend.ListBucket(name, prefix, page)
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
 func TestCreateBucket(t *testing.T) {
@@ -274,20 +275,26 @@ func TestDeleteMulti(t *testing.T) {
 }
 
 func TestGetObjectRange(t *testing.T) {
-	assertRange := func(ts *testServer, key string, hdr string, expected []byte) {
+	assertRange := func(ts *testServer, key string, hdr string, expected []byte, fail bool) {
+		ts.Helper()
 		svc := ts.s3Client()
 		obj, err := svc.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(defaultBucket),
 			Key:    aws.String(key),
 			Range:  aws.String(hdr),
 		})
-		ts.OK(err)
-		defer obj.Body.Close()
+		if fail != (err != nil) {
+			ts.Fatal("failure expected:", fail, "found:", err)
+		}
+		if !fail {
+			ts.OK(err)
+			defer obj.Body.Close()
 
-		out, err := ioutil.ReadAll(obj.Body)
-		ts.OK(err)
-		if !bytes.Equal(expected, out) {
-			ts.Fatal("range failed", hdr, err)
+			out, err := ioutil.ReadAll(obj.Body)
+			ts.OK(err)
+			if !bytes.Equal(expected, out) {
+				ts.Fatal("range failed", hdr, err)
+			}
 		}
 	}
 
@@ -296,31 +303,32 @@ func TestGetObjectRange(t *testing.T) {
 	for idx, tc := range []struct {
 		hdr      string
 		expected []byte
+		fail     bool
 	}{
-		{"bytes=0-", in},
-		{"bytes=1-", in[1:]},
-		{"bytes=0-0", in[:1]},
-		{"bytes=0-1", in[:2]},
-		{"bytes=1023-1023", in[1023:1024]},
+		{"bytes=0-", in, false},
+		{"bytes=1-", in[1:], false},
+		{"bytes=0-0", in[:1], false},
+		{"bytes=0-1", in[:2], false},
+		{"bytes=1023-1023", in[1023:1024], false},
 
-		// if the requested end is beyond the real end, it should still work
-		{"bytes=1023-1024", in[1023:1024]},
+		// if the requested end is beyond the real end, it should fail
+		{"bytes=1023-1024", in[1023:1024], true},
 
-		// if the requested start is beyond the real end, it should still work
-		{"bytes=1024-1024", []byte{}},
+		// if the requested start is beyond the real end, it should fail
+		{"bytes=1024-1024", []byte{}, true},
 
 		// suffix-byte-range-spec:
-		{"bytes=-0", []byte{}},
-		{"bytes=-1", in[1023:1024]},
-		{"bytes=-1024", in},
-		{"bytes=-1025", in},
+		{"bytes=-0", []byte{}, false},
+		{"bytes=-1", in[1023:1024], false},
+		{"bytes=-1024", in, false},
+		{"bytes=-1025", in, true},
 	} {
 		t.Run(fmt.Sprintf("%d/%s", idx, tc.hdr), func(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
 
 			ts.backendPutBytes(defaultBucket, "foo", nil, in)
-			assertRange(ts, "foo", tc.hdr, tc.expected)
+			assertRange(ts, "foo", tc.hdr, tc.expected, tc.fail)
 		})
 	}
 }
@@ -671,6 +679,148 @@ func TestObjectVersions(t *testing.T) {
 
 		ts.backendPutString(neverVerBucket, "object", nil, "body 1")
 		list(ts, neverVerBucket, "null") // S300005
+	})
+}
+
+func TestListBucketPages(t *testing.T) {
+	createData := func(ts *testServer, prefix string, n int64) []string {
+		keys := make([]string, n)
+		for i := int64(0); i < n; i++ {
+			key := fmt.Sprintf("%s%d", prefix, i)
+			ts.backendPutString(defaultBucket, key, nil, fmt.Sprintf("body-%d", i))
+			keys[i] = key
+		}
+		return keys
+	}
+
+	assertKeys := func(ts *testServer, rs *listBucketResult, keys ...string) {
+		found := make([]string, len(rs.Contents))
+		for i := 0; i < len(rs.Contents); i++ {
+			found[i] = aws.StringValue(rs.Contents[i].Key)
+		}
+		if !reflect.DeepEqual(found, keys) {
+			t.Fatal("key mismatch:", keys, "!=", found)
+		}
+	}
+
+	for idx, tc := range []struct {
+		keys, pageKeys int64
+	}{
+		{9, 2},
+		{8, 3},
+		{7, 4},
+		{6, 5},
+		{5, 6},
+	} {
+		t.Run(fmt.Sprintf("list-page-basic/%d", idx), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+			keys := createData(ts, "", tc.keys)
+
+			rs := ts.mustListBucketV1Pages(nil, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+
+			rs = ts.mustListBucketV2Pages(nil, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+		})
+
+		t.Run(fmt.Sprintf("list-page-prefix/%d", idx), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			// junk keys with no prefix to ensure that we are actually limiting the output.
+			// these should not show up in the output.
+			createData(ts, "", tc.keys)
+
+			// these are the actual keys we expect to see:
+			keys := createData(ts, "test", tc.keys)
+
+			prefix := gofakes3.NewPrefix(aws.String("test"), nil)
+
+			rs := ts.mustListBucketV1Pages(&prefix, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+
+			rs = ts.mustListBucketV2Pages(&prefix, tc.pageKeys, "")
+			if len(rs.CommonPrefixes) > 0 {
+				t.Fatal()
+			}
+			assertKeys(ts, rs, keys...)
+		})
+
+		t.Run(fmt.Sprintf("list-page-prefix-delim/%d", idx), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			// junk keys with no prefix to ensure that we are actually limiting the output.
+			// these should not show up in the output.
+			createData(ts, "", tc.keys)
+
+			// these are the actual keys we expect to see:
+			keys := createData(ts, "test/", tc.keys)
+
+			// add some common prefixes:
+			createData(ts, "test/prefix1/", 2)
+			createData(ts, "test/prefix2/", 2)
+
+			prefix := gofakes3.NewFolderPrefix("test/")
+
+			rs := ts.mustListBucketV1Pages(&prefix, tc.pageKeys, "")
+			assertKeys(ts, rs, keys...)
+
+			rs = ts.mustListBucketV2Pages(&prefix, tc.pageKeys, "")
+			assertKeys(ts, rs, keys...)
+
+			// FIXME: there are some unanswered questions for the assumer about
+			// how CommonPrefixes interacts with paging; CommonPrefixes should be
+			// checked once we've established how S3 actually behaves.
+		})
+	}
+}
+
+// Ensure that a backend that does not support pagination can use the fallback if enabled:
+func TestListBucketPagesFallback(t *testing.T) {
+	createData := func(ts *testServer, prefix string, n int64) []string {
+		keys := make([]string, n)
+		for i := int64(0); i < n; i++ {
+			key := fmt.Sprintf("%s%d", prefix, i)
+			ts.backendPutString(defaultBucket, key, nil, fmt.Sprintf("body-%d", i))
+			keys[i] = key
+		}
+		return keys
+	}
+
+	t.Run("fallback-disabled", func(t *testing.T) {
+		ts := newTestServer(t,
+			withBackend(&backendWithUnimplementedPaging{s3mem.New()}),
+			withFakerOptions(gofakes3.WithUnimplementedPageError()),
+		)
+		defer ts.Close()
+		createData(ts, "", 5)
+		_, err := ts.listBucketV1Pages(nil, 2, "")
+		if !hasErrorCode(err, gofakes3.ErrNotImplemented) {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("fallback-enabled", func(t *testing.T) {
+		ts := newTestServer(t, withBackend(&backendWithUnimplementedPaging{s3mem.New()}))
+		defer ts.Close()
+		createData(ts, "", 5)
+		r := ts.mustListBucketV1Pages(nil, 2, "")
+
+		// Without pagination, should just fall back to returning all keys:
+		if len(r.Contents) != 5 {
+			t.Fatal()
+		}
 	})
 }
 

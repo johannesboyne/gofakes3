@@ -49,6 +49,7 @@ const (
 	ErrInvalidDigest ErrorCode = "InvalidDigest"
 
 	ErrInvalidRange         ErrorCode = "InvalidRange"
+	ErrInvalidToken         ErrorCode = "InvalidToken"
 	ErrKeyTooLong           ErrorCode = "KeyTooLongError" // This is not a typo: Error is part of the string, but redundant in the constant name
 	ErrMalformedPOSTRequest ErrorCode = "MalformedPOSTRequest"
 
@@ -87,6 +88,12 @@ const (
 	ErrNotImplemented       ErrorCode = "NotImplemented"
 
 	ErrInternal ErrorCode = "InternalError"
+)
+
+// INTERNAL errors! These are not part of the S3 interface, they are codes
+// we have declared ourselves. Should all map to a 500 status code:
+const (
+	ErrInternalPageNotImplemented InternalErrorCode = "PaginationNotImplemented"
 )
 
 // errorResponse should be implemented by any type that needs to be handled by
@@ -194,6 +201,13 @@ type ErrorCode string
 func (e ErrorCode) ErrorCode() ErrorCode { return e }
 func (e ErrorCode) Error() string        { return string(e) }
 
+// InternalErrorCode represents an GoFakeS3 error code. It maps to ErrInternal
+// when constructing a response.
+type InternalErrorCode string
+
+func (e InternalErrorCode) ErrorCode() ErrorCode { return ErrInternal }
+func (e InternalErrorCode) Error() string        { return string(ErrInternal) }
+
 // Message tries to return the same string as S3 would return for the error
 // response, when it is known, or nothing when it is not. If you see the status
 // text for a code we don't have listed in here in the wild, please let us
@@ -227,6 +241,7 @@ func (e ErrorCode) Status() int {
 		ErrInvalidDigest,
 		ErrInvalidPart,
 		ErrInvalidPartOrder,
+		ErrInvalidToken,
 		ErrInvalidURI,
 		ErrKeyTooLong,
 		ErrMetadataTooLarge,

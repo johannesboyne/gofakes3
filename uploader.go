@@ -457,9 +457,8 @@ func (mpu *multipartUpload) AddPart(partNumber int, at time.Time, body []byte) (
 
 	// What the ETag actually is is not specified, so let's just invent any old thing
 	// from guaranteed unique input:
-	key := fmt.Sprintf("%s/%s/%s/%d", mpu.Bucket, mpu.Object, mpu.ID, partNumber)
 	hash := md5.New()
-	hash.Write([]byte(key))
+	hash.Write([]byte(body))
 	etag = fmt.Sprintf(`"%s"`, hex.EncodeToString(hash.Sum(nil)))
 
 	part := multipartUploadPart{

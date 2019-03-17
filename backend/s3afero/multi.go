@@ -95,13 +95,15 @@ func (db *MultiBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *MultiBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *MultiBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	if prefix == nil {
 		prefix = emptyPrefix
 	}
-
 	if err := gofakes3.ValidateBucketName(bucket); err != nil {
 		return nil, gofakes3.BucketNotFound(bucket)
+	}
+	if !page.IsEmpty() {
+		return nil, gofakes3.ErrInternalPageNotImplemented
 	}
 
 	db.lock.Lock()
@@ -115,7 +117,7 @@ func (db *MultiBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix)
 	}
 }
 
-func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ListBucketResult, error) {
+func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ObjectList, error) {
 	bucketPath := path.Join(bucket, prefixPath)
 
 	dirEntries, err := afero.ReadDir(db.bucketFs, filepath.FromSlash(bucketPath))
@@ -125,7 +127,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 		return nil, err
 	}
 
-	response := gofakes3.NewListBucketResult(bucket)
+	response := gofakes3.NewObjectList()
 
 	for _, entry := range dirEntries {
 		object := entry.Name()
@@ -161,7 +163,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 	return response, nil
 }
 
-func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ObjectList, error) {
 	stat, err := db.bucketFs.Stat(filepath.FromSlash(bucket))
 	if os.IsNotExist(err) {
 		return nil, gofakes3.BucketNotFound(bucket)
@@ -171,7 +173,7 @@ func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, 
 		return nil, fmt.Errorf("gofakes3: expected %q to be a bucket path", bucket)
 	}
 
-	response := gofakes3.NewListBucketResult(bucket)
+	response := gofakes3.NewObjectList()
 
 	if err := afero.Walk(db.bucketFs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -324,8 +326,8 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	}
 
 	defer func() {
-		// If an error occurs, the caller won't have access to Object.Body in order to close it:
-		if rerr != nil {
+		// If an error occurs, the caller may not have access to Object.Body in order to close it:
+		if obj == nil && rerr != nil {
 			f.Close()
 		}
 	}()
@@ -338,7 +340,11 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	size, mtime := stat.Size(), stat.ModTime()
 
 	var rdr io.ReadCloser = f
-	rnge := rangeRequest.Range(size)
+	rnge, err := rangeRequest.Range(size)
+	if err != nil {
+		return nil, err
+	}
+
 	if rnge != nil {
 		if _, err := f.Seek(rnge.Start, io.SeekStart); err != nil {
 			return nil, err

@@ -34,6 +34,12 @@ func NewPrefix(prefix, delim *string) (p Prefix) {
 	return p
 }
 
+func NewFolderPrefix(prefix string) (p Prefix) {
+	p.HasPrefix, p.Prefix = true, prefix
+	p.HasDelimiter, p.Delimiter = true, "/"
+	return p
+}
+
 // FilePrefix returns the path portion, then the remaining portion of the
 // Prefix if the Delimiter is "/". If the Delimiter is not set, or not "/",
 // ok will be false.
@@ -66,8 +72,8 @@ func (p Prefix) FilePrefix() (path, remaining string, ok bool) {
 // result to key.
 //
 func (p Prefix) Match(key string, match *PrefixMatch) (ok bool) {
-	if !p.HasPrefix {
-		// If there is no prefix, in the search, the match is the prefix:
+	if !p.HasPrefix && !p.HasDelimiter {
+		// If there is no prefix in the search, the match is the prefix:
 		if match != nil {
 			*match = PrefixMatch{Key: key, MatchedPart: key}
 		}
@@ -141,9 +147,6 @@ func (p Prefix) Match(key string, match *PrefixMatch) (ok bool) {
 }
 
 func (p Prefix) String() string {
-	if !p.HasPrefix {
-		return "<prefix empty>"
-	}
 	if p.HasDelimiter {
 		return fmt.Sprintf("prefix:%q, delim:%q", p.Prefix, p.Delimiter)
 	} else {

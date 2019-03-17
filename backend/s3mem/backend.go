@@ -73,7 +73,7 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 	return buckets, nil
 }
 
-func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.ListBucketResult, error) {
+func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	if prefix == nil {
 		prefix = emptyPrefix
 	}
@@ -86,10 +86,18 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 		return nil, gofakes3.BucketNotFound(name)
 	}
 
-	response := gofakes3.NewListBucketResult(name)
-	iter := storedBucket.objects.Iterator()
-
+	var response = gofakes3.NewObjectList()
+	var iter = goskipiter.New(storedBucket.objects.Iterator())
 	var match gofakes3.PrefixMatch
+
+	if page.Marker != "" {
+		iter.Seek(page.Marker)
+		iter.Next() // Move to the next item after the Marker
+	}
+
+	var cnt int64 = 0
+
+	var lastMatchedPart string
 
 	for iter.Next() {
 		item := iter.Value().(*bucketObject)
@@ -98,7 +106,11 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 			continue
 
 		} else if match.CommonPrefix {
+			if match.MatchedPart == lastMatchedPart {
+				continue // Should not count towards keys
+			}
 			response.AddPrefix(match.MatchedPart)
+			lastMatchedPart = match.MatchedPart
 
 		} else {
 			response.Add(&gofakes3.Content{
@@ -107,6 +119,13 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix) (*gofakes3.L
 				ETag:         `"` + hex.EncodeToString(item.data.hash) + `"`,
 				Size:         int64(len(item.data.body)),
 			})
+		}
+
+		cnt++
+		if page.MaxKeys > 0 && cnt >= page.MaxKeys {
+			response.NextMarker = item.data.name
+			response.IsTruncated = iter.Next()
+			break
 		}
 	}
 
@@ -162,7 +181,7 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	return obj.data.toObject(nil, false), nil
+	return obj.data.toObject(nil, false)
 }
 
 func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
@@ -185,7 +204,11 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	result := obj.data.toObject(rangeRequest, true)
+	result, err := obj.data.toObject(rangeRequest, true)
+	if err != nil {
+		return nil, err
+	}
+
 	if bucket.versioning != gofakes3.VersioningEnabled {
 		result.VersionID = ""
 	}
@@ -194,17 +217,20 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 }
 
 func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) (result gofakes3.PutObjectResult, err error) {
+	// No need to lock the backend while we read the data into memory; it holds
+	// the write lock open unnecessarily, and could be blocked for an unreasonably
+	// long time by a connection timing out:
+	bts, err := gofakes3.ReadAll(input, size)
+	if err != nil {
+		return result, err
+	}
+
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	bucket := db.buckets[bucketName]
 	if bucket == nil {
 		return result, gofakes3.BucketNotFound(bucketName)
-	}
-
-	bts, err := gofakes3.ReadAll(input, size)
-	if err != nil {
-		return result, err
 	}
 
 	hash := md5.Sum(bts)
@@ -322,7 +348,7 @@ func (db *Backend) GetObjectVersion(
 		return nil, err
 	}
 
-	return ver.toObject(rangeRequest, true), nil
+	return ver.toObject(rangeRequest, true)
 }
 
 func (db *Backend) HeadObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (*gofakes3.Object, error) {
@@ -339,7 +365,7 @@ func (db *Backend) HeadObjectVersion(bucketName, objectName string, versionID go
 		return nil, err
 	}
 
-	return ver.toObject(nil, false), nil
+	return ver.toObject(nil, false)
 }
 
 func (db *Backend) DeleteObjectVersion(bucketName, objectName string, versionID gofakes3.VersionID) (result gofakes3.ObjectDeleteResult, rerr error) {
@@ -454,7 +480,7 @@ func (db *Backend) ListBucketVersions(
 			}
 
 			cnt++
-			if cnt >= page.MaxKeys {
+			if page.MaxKeys > 0 && cnt >= page.MaxKeys {
 				truncated = versions.Next()
 				goto done
 			}
