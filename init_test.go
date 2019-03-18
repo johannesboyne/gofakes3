@@ -198,8 +198,19 @@ func newTestServer(t *testing.T, opts ...testServerOption) *testServer {
 	ts.GoFakeS3 = gofakes3.New(ts.backend, fakerOpts...)
 	ts.server = httptest.NewServer(ts.GoFakeS3.Server())
 	ts.bucketManager, _ = ts.backend.(gofakes3.BucketManagerBackend)
+	if ts.bucketManager == nil {
+		// This is a bit of a hack to to deal with wrapping interfaces like backendWithUnimplementedPaging
+		if bmm, ok := ts.backend.(interface {
+			Manager() gofakes3.BucketManagerBackend
+		}); ok {
+			ts.bucketManager = bmm.Manager()
+		}
+	}
 
 	for _, bucket := range ts.initialBuckets {
+		if ts.bucketManager == nil {
+			panic("attempted to create bucket without bucket manager")
+		}
 		ts.TT.OK(ts.bucketManager.CreateBucket(bucket))
 	}
 
@@ -805,6 +816,11 @@ func httpClient() *http.Client {
 
 type backendWithUnimplementedPaging struct {
 	gofakes3.Backend
+}
+
+func (b *backendWithUnimplementedPaging) Manager() gofakes3.BucketManagerBackend {
+	bb, _ := b.Backend.(gofakes3.BucketManagerBackend)
+	return bb
 }
 
 func (b *backendWithUnimplementedPaging) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
