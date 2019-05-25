@@ -55,7 +55,7 @@ func (h *hashingReader) Read(p []byte) (n int, err error) {
 	n, err = h.inner.Read(p)
 
 	if n != 0 {
-		wn, _ := h.hash.Write(p[:n]) // Hash.Write never returns an error.
+		wn, _ := h.hash.Write(p[:n]) // ETag.Write never returns an error.
 		if wn != n {
 			return n, fmt.Errorf("short write to hasher")
 		}

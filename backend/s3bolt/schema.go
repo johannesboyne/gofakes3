@@ -47,7 +47,7 @@ func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRang
 		Size:     b.Size,
 		Contents: s3io.ReaderWithDummyCloser{bytes.NewReader(data)},
 		Range:    rnge,
-		Hash:     b.Hash,
+		ETag:     b.Hash,
 	}, nil
 }
 

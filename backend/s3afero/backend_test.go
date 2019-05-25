@@ -70,8 +70,8 @@ func TestPutGet(t *testing.T) {
 			if obj.Size != int64(len(contents)) {
 				t.Fatal(obj.Size, "!=", len(contents))
 			}
-			if !bytes.Equal(obj.Hash, hash) {
-				t.Fatal(hex.EncodeToString(obj.Hash), "!=", hex.EncodeToString(hash))
+			if !bytes.Equal(obj.ETag, hash) {
+				t.Fatal(hex.EncodeToString(obj.ETag), "!=", hex.EncodeToString(hash))
 			}
 		})
 	}
@@ -116,8 +116,8 @@ func TestPutGetRange(t *testing.T) {
 			if obj.Size != int64(len(contents)) {
 				t.Fatal(obj.Size, "!=", len(contents))
 			}
-			if !bytes.Equal(obj.Hash, hash) {
-				t.Fatal(hex.EncodeToString(obj.Hash), "!=", hex.EncodeToString(hash))
+			if !bytes.Equal(obj.ETag, hash) {
+				t.Fatal(hex.EncodeToString(obj.ETag), "!=", hex.EncodeToString(hash))
 			}
 		})
 	}

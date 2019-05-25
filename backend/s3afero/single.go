@@ -221,7 +221,7 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 
 	return &gofakes3.Object{
 		Name:     objectName,
-		Hash:     meta.Hash,
+		ETag:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
 		Contents: s3io.NoOpReadCloser{},
@@ -277,7 +277,7 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 
 	return &gofakes3.Object{
 		Name:     objectName,
-		Hash:     meta.Hash,
+		ETag:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
 		Range:    rnge,

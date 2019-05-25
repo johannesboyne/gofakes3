@@ -56,3 +56,40 @@ func ReadAll(r io.Reader, size int64) (b []byte, err error) {
 
 	return b, nil
 }
+
+// MultiReadCloser is a fakeS3-centric replacement for io.MultiReader() which
+// includes a closing mechanism where supported on the inputs.
+type MultiReadCloser struct {
+	sources []io.ReadCloser
+}
+
+func (mrc *MultiReadCloser) Read(p []byte) (n int, err error) {
+	var count = len(mrc.sources)
+	for current, source := range mrc.sources {
+		n, err = source.Read(p)
+		if n > 0 || err != io.EOF {
+			if err == io.EOF && current < (count-1) {
+				err = nil
+			}
+			return
+		}
+	}
+	return
+}
+
+func (mrc *MultiReadCloser) Close() (err error) {
+	for _, source := range mrc.sources {
+		// mrc.sources could contain nil values.
+		if closer, ok := source.(io.Closer); ok {
+			err = closer.Close()
+			if err != nil {
+				return
+			}
+		}
+	}
+	return
+}
+
+func NewMultiReadCloser(r ...io.ReadCloser) (rc io.ReadCloser) {
+	return &MultiReadCloser{sources: r}
+}

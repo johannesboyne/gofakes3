@@ -297,7 +297,7 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 
 	return &gofakes3.Object{
 		Name:     objectName,
-		Hash:     meta.Hash,
+		ETag:     meta.Hash,
 		Metadata: meta.Meta,
 		Size:     size,
 		Contents: s3io.NoOpReadCloser{},
@@ -359,7 +359,7 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 
 	return &gofakes3.Object{
 		Name:     objectName,
-		Hash:     meta.Hash,
+		ETag:     meta.Hash,
 		Metadata: meta.Meta,
 		Range:    rnge,
 		Size:     size,

@@ -390,6 +390,7 @@ func (g *GoFakeS3) getObject(
 		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
 		return ErrInternal
 	}
+
 	defer obj.Contents.Close()
 
 	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
@@ -423,7 +424,7 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 	}
 	w.Header().Set("Last-Modified", formatHeaderTime(g.timeSource.Now()))
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
+	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.ETag)+`"`)
 
 	if obj.VersionID != "" {
 		w.Header().Set("x-amz-version-id", string(obj.VersionID))
@@ -451,7 +452,8 @@ func (g *GoFakeS3) headObject(
 		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
 		return ErrInternal
 	}
-	defer obj.Contents.Close()
+
+	_ = obj.Contents.Close()
 
 	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
 		return err
@@ -657,11 +659,24 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 		return err
 	}
 
-	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
-	out := InitiateMultipartUpload{
-		UploadID: upload.ID,
-		Bucket:   bucket,
-		Key:      object,
+	var out InitiateMultipartUpload
+	if mpb, ok := g.storage.(MultipartBackend); ok {
+		upload, err := mpb.InitiateMultipart(bucket, object, meta, g.timeSource.Now())
+		if err != nil {
+			return err
+		}
+		out = InitiateMultipartUpload{
+			UploadID: upload.ID,
+			Bucket:   bucket,
+			Key:      object,
+		}
+	} else {
+		upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
+		out = InitiateMultipartUpload{
+			UploadID: upload.ID,
+			Bucket:   bucket,
+			Key:      object,
+		}
 	}
 	return g.xmlEncoder(w).Encode(out)
 }
@@ -686,15 +701,6 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrMissingContentLength
 	}
 
-	upload, err := g.uploader.Get(bucket, object, uploadID)
-	if err != nil {
-		// FIXME: What happens with S3 when you abort a multipart upload while
-		// part uploads are still in progress? In this case, we will retain the
-		// reference to the part even though another request goroutine may
-		// delete it; it will be available for GC when this function finishes.
-		return err
-	}
-
 	defer r.Body.Close()
 	var rdr io.Reader = r.Body
 
@@ -713,18 +719,32 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 	}
 
-	body, err := ReadAll(rdr, size)
-	if err != nil {
-		return err
-	}
+	var etag string
+	if mpb, ok := g.storage.(MultipartBackend); ok {
+		etag, err = mpb.PutMultipart(bucket, object, uploadID, int(partNumber), rdr, size)
+	} else {
+		upload, err := g.uploader.Get(bucket, object, uploadID)
+		if err != nil {
+			// FIXME: What happens with S3 when you abort a multipart upload while
+			// part uploads are still in progress? In this case, we will retain the
+			// reference to the part even though another request goroutine may
+			// delete it; it will be available for GC when this function finishes.
+			return err
+		}
 
-	if int64(len(body)) != r.ContentLength {
-		return ErrIncompleteBody
-	}
+		body, err := ReadAll(rdr, size)
+		if err != nil {
+			return err
+		}
 
-	etag, err := upload.AddPart(int(partNumber), g.timeSource.Now(), body)
-	if err != nil {
-		return err
+		if int64(len(body)) != r.ContentLength {
+			return ErrIncompleteBody
+		}
+
+		etag, err = upload.AddPart(int(partNumber), g.timeSource.Now(), body)
+		if err != nil {
+			return err
+		}
 	}
 
 	w.Header().Add("ETag", etag)
@@ -733,8 +753,15 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "abort multipart upload", bucket, object, uploadID)
-	if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
-		return err
+
+	if mpb, ok := g.storage.(MultipartBackend); ok {
+		if err := mpb.AbortMultipart(bucket, object, uploadID); err != nil {
+			return err
+		}
+	} else {
+		if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
+			return err
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
@@ -748,29 +775,49 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	upload, err := g.uploader.Complete(bucket, object, uploadID)
-	if err != nil {
-		return err
+	var result *CompleteMultipartUploadResult
+	var version VersionID
+
+	if mpb, ok := g.storage.(MultipartBackend); ok {
+		upload, err := mpb.CompleteMultipart(bucket, object, uploadID)
+		if err != nil {
+			return err
+		}
+		version = upload.VersionID
+		result = &CompleteMultipartUploadResult{
+			ETag:   upload.ETag,
+			Bucket: bucket,
+			Key:    object,
+		}
+	} else {
+		upload, err := g.uploader.Complete(bucket, object, uploadID)
+		if err != nil {
+			return err
+		}
+
+		fileBody, etag, err := upload.Reassemble(&in)
+		if err != nil {
+			return err
+		}
+
+		pubObjectResult, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
+		if err != nil {
+			return err
+		}
+
+		version = pubObjectResult.VersionID
+		result = &CompleteMultipartUploadResult{
+			ETag:   etag,
+			Bucket: bucket,
+			Key:    object,
+		}
 	}
 
-	fileBody, etag, err := upload.Reassemble(&in)
-	if err != nil {
-		return err
+	if version != "" {
+		w.Header().Set("x-amz-version-id", string(version))
 	}
 
-	result, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
-	if err != nil {
-		return err
-	}
-	if result.VersionID != "" {
-		w.Header().Set("x-amz-version-id", string(result.VersionID))
-	}
-
-	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
-		ETag:   etag,
-		Bucket: bucket,
-		Key:    object,
-	})
+	return g.xmlEncoder(w).Encode(result)
 }
 
 func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r *http.Request) error {
@@ -786,9 +833,17 @@ func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r 
 		maxUploads = DefaultMaxUploads
 	}
 
-	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
-	if err != nil {
-		return err
+	var out *ListMultipartUploadsResult
+	if mpb, ok := g.storage.(MultipartBackend); ok {
+		out, err = mpb.ListOngoingMultiparts(bucket, marker, prefix, maxUploads)
+		if err != nil {
+			return err
+		}
+	} else {
+		out, err = g.uploader.List(bucket, marker, prefix, maxUploads)
+		if err != nil {
+			return err
+		}
 	}
 
 	return g.xmlEncoder(w).Encode(out)
@@ -807,9 +862,17 @@ func (g *GoFakeS3) listMultipartUploadParts(bucket, object string, uploadID Uplo
 		return ErrInvalidURI
 	}
 
-	out, err := g.uploader.ListParts(bucket, object, uploadID, int(marker), maxParts)
-	if err != nil {
-		return err
+	var out *ListMultipartUploadPartsResult
+	if mpb, ok := g.storage.(MultipartBackend); ok {
+		out, err = mpb.ListOngoingMultipartParts(bucket, object, uploadID, int(marker), maxParts)
+		if err != nil {
+			return err
+		}
+	} else {
+		out, err = g.uploader.ListParts(bucket, object, uploadID, int(marker), maxParts)
+		if err != nil {
+			return err
+		}
 	}
 
 	return g.xmlEncoder(w).Encode(out)

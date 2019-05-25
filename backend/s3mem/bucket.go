@@ -150,13 +150,13 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 
 	return &gofakes3.Object{
 		Name:           bi.name,
-		Hash:           bi.hash,
+		ETag:           bi.hash,
 		Metadata:       bi.metadata,
 		Size:           sz,
 		Range:          rnge,
 		IsDeleteMarker: bi.deleteMarker,
 		VersionID:      bi.versionID,
-		Contents:       contents,
+		Contents: contents,
 	}, nil
 }
 

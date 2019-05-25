@@ -2,6 +2,7 @@ package gofakes3
 
 import (
 	"io"
+	"time"
 )
 
 const (
@@ -17,7 +18,7 @@ type Object struct {
 	Metadata map[string]string
 	Size     int64
 	Contents io.ReadCloser
-	Hash     []byte
+	ETag     []byte
 	Range    *ObjectRange
 
 	// VersionID will be empty if bucket versioning has not been enabled.
@@ -229,6 +230,68 @@ type Backend interface {
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
+}
+
+// MultipartBackend may be optionally implemented by a Backend in order to store
+// multipart uploads directly in the backend.
+//
+// If you don't implement MultipartBackend, requests to GoFakeS3 will use an
+// in-memory cache until the upload is finished.
+type MultipartBackend interface {
+	// InitiateMultipart should assume that the key is valid. The map containing meta
+	// may be nil.
+	//
+	// It is at the backend's responsibility to make sure the upload can be tracked in it's state
+	// by the UploadID that is returned by it. It should not replace the content for the key until
+	// CompleteMultipart was called.
+	//
+	// The Etag property of the created object may be randomly generated
+	InitiateMultipart(bucketName, key string, meta map[string]string, initiated time.Time) (backendMultipartUpload, error)
+
+	// PutMultipart should assume that the key is valid. The partNumber should not yet exist.
+	//
+	// The backend should reject parts being added to a finished object.
+	//
+	// input SHOULD be a hashingReader that returns ErrBadDigest on integrity errors.
+	//
+	// The size can be used if the backend needs to read the whole reader; use
+	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
+	//
+	// Returns an etag as string
+	PutMultipart(bucketName, key string, id UploadID, partNumber int, input io.Reader, size int64) (string, error)
+
+	// AbortMultipart should assume that the key is valid.
+	//
+	// The backend should delete all received parts for the key and upload id.
+	//
+	// A deletion should return nil on success, or the appropriate error in case of an error.
+	AbortMultipart(bucket, key string, id UploadID) error
+
+	// CompleteMultipart should assume that the key is valid.
+	//
+	// The backend should check if all required parts are existent (i.e. there are no holes).
+	// Should there be a missing part ErrInvalidPart should be returned by the backend.
+	// It also is the backend's responsibility the uploadID replaces the current version of the object
+	//
+	// This is the point after which the key should be visible and retrievable via `GetObject`
+	CompleteMultipart(bucket, key string, id UploadID) (backendMultipartUpload, error)
+
+	// ListOngoingMultiparts should assume that the key is valid.
+	ListOngoingMultiparts(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error)
+
+	ListOngoingMultipartParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error)
+}
+
+type backendMultipartUpload struct {
+	ID        UploadID
+	Bucket    string
+	Object    string
+	Meta      map[string]string
+	Initiated time.Time
+
+	// These properties should be set from the underlying Object content if available.
+	ETag      string
+	VersionID VersionID
 }
 
 // VersionedBackend may be optionally implemented by a Backend in order to support

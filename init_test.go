@@ -598,6 +598,7 @@ func (ts *testServer) assertObject(bucket string, object string, meta map[string
 
 	obj, err := ts.backend.GetObject(bucket, object, nil)
 	ts.OK(err)
+
 	defer obj.Contents.Close()
 
 	data, err := gofakes3.ReadAll(obj.Contents, obj.Size)
