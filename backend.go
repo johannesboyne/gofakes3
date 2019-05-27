@@ -246,7 +246,7 @@ type MultipartBackend interface {
 	// CompleteMultipart was called.
 	//
 	// The Etag property of the created object may be randomly generated
-	InitiateMultipart(bucketName, key string, meta map[string]string, initiated time.Time) (backendMultipartUpload, error)
+	InitiateMultipart(bucketName, key string, meta map[string]string, initiated time.Time) (MultipartBackendUpload, error)
 
 	// PutMultipart should assume that the key is valid. The partNumber should not yet exist.
 	//
@@ -274,7 +274,7 @@ type MultipartBackend interface {
 	// It also is the backend's responsibility the uploadID replaces the current version of the object
 	//
 	// This is the point after which the key should be visible and retrievable via `GetObject`
-	CompleteMultipart(bucket, key string, id UploadID) (backendMultipartUpload, error)
+	CompleteMultipart(bucket, key string, id UploadID, input *CompleteMultipartUploadRequest) (MultipartBackendUpload, error)
 
 	// ListOngoingMultiparts should assume that the key is valid.
 	ListOngoingMultiparts(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error)
@@ -282,7 +282,7 @@ type MultipartBackend interface {
 	ListOngoingMultipartParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error)
 }
 
-type backendMultipartUpload struct {
+type MultipartBackendUpload struct {
 	ID        UploadID
 	Bucket    string
 	Object    string

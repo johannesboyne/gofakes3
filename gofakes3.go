@@ -779,7 +779,7 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 	var version VersionID
 
 	if mpb, ok := g.storage.(MultipartBackend); ok {
-		upload, err := mpb.CompleteMultipart(bucket, object, uploadID)
+		upload, err := mpb.CompleteMultipart(bucket, object, uploadID, &in)
 		if err != nil {
 			return err
 		}
