@@ -2,11 +2,11 @@ package s3bolt
 
 import (
 	"bytes"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
+	"strings"
+	"sync"
 
 	"github.com/boltdb/bolt"
 	"github.com/johannesboyne/gofakes3"
@@ -22,6 +22,7 @@ type Backend struct {
 	bolt           *bolt.DB
 	timeSource     gofakes3.TimeSource
 	metaBucketName []byte
+	sync.Mutex
 }
 
 var _ gofakes3.Backend = &Backend{}
@@ -97,6 +98,10 @@ func (db *Backend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 			if bytes.Equal(name, db.metaBucketName) {
 				return nil
 			}
+			// Skip internal data structures
+			if strings.HasPrefix(string(name), BUCKET_PREFIX) {
+				return nil
+			}
 
 			nameStr := string(name)
 			info := gofakes3.BucketInfo{Name: nameStr}
@@ -150,7 +155,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 		c := b.Cursor()
 		var match gofakes3.PrefixMatch
 
-		for k, v := c.First(); k != nil; k, v = c.Next() {
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			key := string(k)
 			if !prefix.Match(key, &match) {
 				continue
@@ -159,12 +164,16 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 				objects.AddPrefix(match.MatchedPart)
 
 			} else {
-				hash := md5.Sum(v)
+				obj, err := db.HeadObject(name, key)
+				if err != nil {
+					continue
+				}
+
 				item := &gofakes3.Content{
-					Key:          string(k),
+					Key:          key,
 					LastModified: mod,
-					ETag:         `"` + hex.EncodeToString(hash[:]) + `"`,
-					Size:         int64(len(v)),
+					ETag:         fmt.Sprintf(`"%x"`, obj.ETag),
+					Size:         obj.Size,
 				}
 				objects.Add(item)
 			}
@@ -250,7 +259,7 @@ func (db *Backend) BucketExists(name string) (exists bool, err error) {
 }
 
 func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, error) {
-	obj, err := db.GetObject(bucketName, objectName, nil)
+	obj, err := db.GetObject(bucketName, objectName, &gofakes3.ObjectRangeRequest{Start: -1})
 	if err != nil {
 		return nil, err
 	}
@@ -258,34 +267,58 @@ func (db *Backend) HeadObject(bucketName, objectName string) (*gofakes3.Object, 
 	return obj, nil
 }
 
-func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
-	var t boltObject
-
-	err := db.bolt.View(func(tx *bolt.Tx) error {
+func (db *Backend) getBlob(bucketName, objectName string, data *[]byte) error {
+	return db.bolt.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)
 		}
 
-		v := b.Get([]byte(objectName))
-		if v == nil {
+		*data = b.Get([]byte(objectName))
+		if data == nil || *data == nil {
 			return gofakes3.KeyNotFound(objectName)
 		}
-
-		if err := bson.Unmarshal(v, &t); err != nil {
-			return fmt.Errorf("gofakes3: could not unmarshal object at %q/%q: %v", bucketName, objectName, err)
-		}
-
 		return nil
 	})
+}
 
+func (db *Backend) putBlob(bucketName, objectName string, data *[]byte, createIfNotExists bool) error {
+	return db.bolt.Update(func(tx *bolt.Tx) error {
+		var b *bolt.Bucket
+		var err error
+
+		if tx.Writable() && createIfNotExists {
+			b, err = tx.CreateBucketIfNotExists([]byte(bucketName))
+			if err != nil {
+				return gofakes3.BucketNotFound(bucketName)
+			}
+		} else {
+			b = tx.Bucket([]byte(bucketName))
+			if b == nil {
+				return gofakes3.BucketNotFound(bucketName)
+			}
+		}
+
+		return b.Put([]byte(objectName), *data)
+	})
+}
+
+func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+	var t boltObject
+	var v []byte
+
+	err := db.getBlob(bucketName, objectName, &v)
 	if err != nil {
 		return nil, err
 	}
 
+	if err = bson.Unmarshal(v, &t); err != nil {
+		return nil, fmt.Errorf("gofakes3: could not unmarshal object at %q/%q: %v", bucketName, objectName, err)
+	}
+
 	// FIXME: objectName here is a bit of a hack; this can be cleaned up when we have a
 	// database migration script.
-	return t.Object(objectName, rangeRequest)
+	return t.Object(objectName, rangeRequest, db)
 }
 
 func (db *Backend) PutObject(
@@ -294,74 +327,112 @@ func (db *Backend) PutObject(
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
 
-	bts, err := gofakes3.ReadAll(input, size)
+	etag, err := db.addChunk(input, size)
 	if err != nil {
 		return result, err
 	}
 
-	hash := md5.Sum(bts)
+	var data []byte
+	data, err = bson.Marshal(&boltObject{
+		Name:      objectName,
+		Metadata:  meta,
+		Size:      size,
+		Chunks:    []string{etag},
+		ChunkSize: size,
+		Hash:      []byte(etag),
+	})
+	if err != nil {
+		return
+	}
 
-	return result, db.bolt.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
-		if b == nil {
-			return gofakes3.BucketNotFound(bucketName)
-		}
-
-		data, err := bson.Marshal(&boltObject{
-			Name:     objectName,
-			Metadata: meta,
-			Size:     int64(len(bts)),
-			Contents: bts,
-			Hash:     hash[:],
-		})
+	var previousBlob []byte
+	var oldChunks []string
+	_ = db.getBlob(bucketName, objectName, &previousBlob)
+	if len(previousBlob) == 0 {
+		// No previous data
+	} else {
+		var previous boltObject
+		err = bson.Unmarshal(previousBlob, &previous)
 		if err != nil {
-			return err
+			return
 		}
-		if err := b.Put([]byte(objectName), data); err != nil {
-			return err
+		oldChunks = previous.Chunks
+	}
+
+	err = db.putBlob(bucketName, objectName, &data, false)
+
+	// Delete old chunks only after the new object was stored
+	for _, etag := range oldChunks {
+		err = db.deleteChunk(etag)
+		if err != nil {
+			return
 		}
-		return nil
-	})
+	}
+
+	result = gofakes3.PutObjectResult{
+		VersionID: gofakes3.VersionID(etag),
+	}
+	return
 }
 
-func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
-	return result, db.bolt.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
-		if b == nil {
-			return gofakes3.BucketNotFound(bucketName)
-		}
-		if err := b.Delete([]byte(objectName)); err != nil {
-			return fmt.Errorf("gofakes3: delete failed for object %q in bucket %q", objectName, bucketName)
-		}
-		return nil
-	})
-}
-
-func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, err error) {
+func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, err error) {
 	err = db.bolt.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)
 		}
 
-		for _, object := range objects {
-			if err := b.Delete([]byte(object)); err != nil {
-				log.Println("delete object failed:", err)
-				result.Error = append(result.Error, gofakes3.ErrorResult{
-					Code:    gofakes3.ErrInternal,
-					Message: gofakes3.ErrInternal.Message(),
-					Key:     object,
-				})
+		var t boltObject
+		var v []byte
 
-			} else {
-				result.Deleted = append(result.Deleted, gofakes3.ObjectID{
-					Key: object,
-				})
+		err := db.getBlob(bucketName, objectName, &v)
+		if err != nil {
+			return err
+		}
+
+		if err = bson.Unmarshal(v, &t); err != nil {
+			return err
+		}
+
+		for _, etag := range t.Chunks {
+			err = db.deleteChunk(etag)
+			if err != nil {
+				return err
 			}
+		}
+		if err = b.Delete([]byte(objectName)); err != nil {
+			return fmt.Errorf("gofakes3: delete failed for object %q in bucket %q", objectName, bucketName)
+		}
+		return nil
+	})
+
+	return
+}
+
+func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gofakes3.MultiDeleteResult, err error) {
+	err = db.bolt.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			return gofakes3.BucketNotFound(bucketName)
 		}
 
 		return nil
 	})
 
+	for _, object := range objects {
+		if _, err = db.DeleteObject(bucketName, object); err != nil {
+			log.Println("delete object failed:", err)
+			result.Error = append(result.Error, gofakes3.ErrorResult{
+				Code:    gofakes3.ErrInternal,
+				Message: gofakes3.ErrInternal.Message(),
+				Key:     object,
+			})
+			err = nil
+		} else {
+			result.Deleted = append(result.Deleted, gofakes3.ObjectID{
+				Key: object,
+			})
+		}
+	}
 	return result, err
 }

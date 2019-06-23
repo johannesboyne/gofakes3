@@ -25,20 +25,73 @@ type boltObject struct {
 	Metadata     map[string]string
 	LastModified time.Time
 	Size         int64
-	Contents     []byte
+	Chunks       []string
+	ChunkSize    int64
 	Hash         []byte
 }
 
-func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
-	data := b.Contents
+func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRangeRequest, backend *Backend) (*gofakes3.Object, error) {
+	var rnge *gofakes3.ObjectRange
+	var err error
 
-	rnge, err := rangeRequest.Range(b.Size)
-	if err != nil {
-		return nil, err
+	// Hack to make HEAD requests not hogging memory
+	if rangeRequest != nil && rangeRequest.Start == -1 {
+		rnge = &gofakes3.ObjectRange{
+			Start: -1,
+		}
+	} else {
+		rnge, err = rangeRequest.Range(b.Size)
+		if err != nil {
+			return nil, err
+
+		}
 	}
 
-	if rnge != nil {
-		data = data[rnge.Start : rnge.Start+rnge.Length]
+	var data []byte
+	var position, length int64
+
+	if rnge == nil {
+		position = 0
+		length = b.Size
+	} else {
+		position = rnge.Start
+		length = rnge.Length
+	}
+
+	if position != -1 {
+		if rnge == nil {
+			data = make([]byte, b.Size)
+		} else {
+			data = make([]byte, length)
+		}
+		var readBytes int64
+		var blob []byte
+		for chunkIndex, etag := range b.Chunks {
+			// If range starts above current chunk skip it
+			if position > ((b.ChunkSize * int64(chunkIndex)) + b.ChunkSize - 1) {
+				continue
+			}
+
+			var chunkOffset int64
+			previousChunks := b.ChunkSize * int64(chunkIndex)
+			if previousChunks == 0 || position == 0 {
+				chunkOffset = position
+			} else {
+				chunkOffset = position % previousChunks
+			}
+
+			err = backend.getBlob(DATA_BUCKET, etag, &blob)
+			if err != nil {
+				return nil, err
+			}
+
+			n := copy(data[readBytes:], blob[chunkOffset:])
+			readBytes += int64(n)
+			position = 0
+			if readBytes >= length {
+				break
+			}
+		}
 	}
 
 	return &gofakes3.Object{

@@ -742,9 +742,9 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 
 		etag, err = upload.AddPart(int(partNumber), g.timeSource.Now(), body)
-		if err != nil {
-			return err
-		}
+	}
+	if err != nil {
+		return err
 	}
 
 	w.Header().Add("ETag", etag)
@@ -777,12 +777,11 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 
 	var result *CompleteMultipartUploadResult
 	var version VersionID
+	var err error
 
 	if mpb, ok := g.storage.(MultipartBackend); ok {
-		upload, err := mpb.CompleteMultipart(bucket, object, uploadID, &in)
-		if err != nil {
-			return err
-		}
+		var upload MultipartBackendUpload
+		upload, err = mpb.CompleteMultipart(bucket, object, uploadID, &in)
 		version = upload.VersionID
 		result = &CompleteMultipartUploadResult{
 			ETag:   upload.ETag,
@@ -790,7 +789,8 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 			Key:    object,
 		}
 	} else {
-		upload, err := g.uploader.Complete(bucket, object, uploadID)
+		var upload *multipartUpload
+		upload, err = g.uploader.Complete(bucket, object, uploadID)
 		if err != nil {
 			return err
 		}
@@ -801,9 +801,6 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		}
 
 		pubObjectResult, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
-		if err != nil {
-			return err
-		}
 
 		version = pubObjectResult.VersionID
 		result = &CompleteMultipartUploadResult{
@@ -811,6 +808,9 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 			Bucket: bucket,
 			Key:    object,
 		}
+	}
+	if err != nil {
+		return err
 	}
 
 	if version != "" {
