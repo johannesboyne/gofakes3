@@ -53,8 +53,12 @@ func (o *ObjectRangeRequest) Range(size int64) (*ObjectRange, error) {
 		length = size - start
 	}
 
-	if start < 0 || length < 0 || start > size || start+length > size {
+	if start < 0 || length < 0 || start >= size {
 		return nil, ErrInvalidRange
+	}
+
+	if start+length > size {
+		return &ObjectRange{Start: start, Length: size - start}, nil
 	}
 
 	return &ObjectRange{Start: start, Length: length}, nil

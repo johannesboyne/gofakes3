@@ -311,14 +311,14 @@ func TestGetObjectRange(t *testing.T) {
 		{"bytes=0-1", in[:2], false},
 		{"bytes=1023-1023", in[1023:1024], false},
 
-		// if the requested end is beyond the real end, it should fail
-		{"bytes=1023-1024", in[1023:1024], true},
+		// if the requested end is beyond the real end, returns "remainder of the representation"
+		{"bytes=1023-1025", in[1023:1024], false},
 
 		// if the requested start is beyond the real end, it should fail
 		{"bytes=1024-1024", []byte{}, true},
 
 		// suffix-byte-range-spec:
-		{"bytes=-0", []byte{}, false},
+		{"bytes=-0", []byte{}, true},
 		{"bytes=-1", in[1023:1024], false},
 		{"bytes=-1024", in, false},
 		{"bytes=-1025", in, true},
