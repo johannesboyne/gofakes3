@@ -4,42 +4,14 @@
 ![Logo](/GoFakeS3.png)
 # AWS (GOFAKE)S3 
 
-AWS S3 fake server.
-
-A _poor man's_ object storage based on an In-Memory KV db or
-[BoltDB](https://github.com/boltdb/bolt) (Pluggable).
-
-```
-  s3client -> [gofakes3:9000] -- Get    Bucket (List)
-                          ^  |-- Create Bucket
-                          |  |-- Delete Bucket
-                          |  |-- Head   Bucket
-                          |  |
-                          |  |-- Get    Object
-                          |  |-- Create Object
-                          |  |-- Delete Object
-                          |  |-- Head   Object
-                          |  V
-                   XXXXXXXXXXXXXXXXXXXXX
-                   XXXX             XXXX
-                XXXX                   XXXX
-                XX XXX                XXXXX
-                XX   XXXXXXXXXXXXXXXXXX  XX
-                XX                       XX
-                XX                       XX
-                XX     BoltDB (Store)    XX
-                XX           ⚡️           XX
-                XX                       XX
-                XX                      XXX
-                 XXX                 XXXX
-                   XXXXXX         XXXX
-                         XXXXXXXXX
-```
-
+AWS S3 fake server and testing library for extensive S3 test integrations.
+Either by running a test-server, e.g. for testing of AWS Lambda functions
+accessing S3. Or, to have a simple and convencience S3 mock- and test-server.
 
 ## What to use it for?
 
-We're using it for the local development of S3 dependent Lambda functions and
+We're using it for the local development of S3 dependent Lambda functions,
+to test AWS S3 golang implementations and access, and
 to test browser based direct uploads to S3 locally.
 
 
@@ -59,6 +31,48 @@ section below.
 
 
 ## How to use it?
+
+### Example
+
+```golang
+// fake s3
+backend := s3mem.New()
+faker := gofakes3.New(backend)
+ts := httptest.NewServer(faker.Server())
+defer ts.Close()
+
+// configure S3 client
+s3Config := &aws.Config{
+	Credentials:      credentials.NewStaticCredentials("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
+	Endpoint:         aws.String(ts.URL),
+	Region:           aws.String("eu-central-1"),
+	DisableSSL:       aws.Bool(true),
+	S3ForcePathStyle: aws.Bool(true),
+}
+newSession := session.New(s3Config)
+
+s3Client := s3.New(newSession)
+cparams := &s3.CreateBucketInput{
+	Bucket: aws.String("newbucket"),
+}
+
+// Create a new bucket using the CreateBucket call.
+_, err := s3Client.CreateBucket(cparams)
+if err != nil {
+	// Message from an error.
+	fmt.Println(err.Error())
+	return
+}
+
+// Upload a new object "testobject" with the string "Hello World!" to our "newbucket".
+_, err = s3Client.PutObject(&s3.PutObjectInput{
+	Body:   strings.NewReader(`{"configuration": {"main_color": "#333"}, "screens": []}`),
+	Bucket: aws.String("newbucket"),
+	Key:    aws.String("test.txt"),
+})
+
+// ... accessing of test.txt through any S3 client would now be possible
+```
 
 Please feel free to check it out and to provide useful feedback (using github
 issues), but be aware, this software is used internally and for the local
