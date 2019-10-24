@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"reflect"
 	"testing"
 
@@ -285,5 +286,34 @@ func TestPutDeleteMulti(t *testing.T) {
 				t.Fatal()
 			}
 		})
+	}
+}
+
+func TestMultiCreateBucket(t *testing.T) {
+	// Some bugs surfaced in the bucket creation logic in the MultiBucket backend
+	// that only occur when using a real FS.
+	tmp, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+
+	fs, err := FsPath(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	multi, err := MultiBucket(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := multi.BucketExists("test"); ok {
+		t.Fatal()
+	}
+	if err := multi.CreateBucket("test"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := multi.BucketExists("test"); !ok {
+		t.Fatal()
 	}
 }

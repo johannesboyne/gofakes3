@@ -31,6 +31,7 @@ type MultiBucketBackend struct {
 	baseFs    afero.Fs
 	bucketFs  afero.Fs
 	metaStore *metaStore
+	dirMode   os.FileMode
 
 	// FIXME(bw): values in here should not be used beyond the configuration
 	// step; maybe this can be cleaned up later using a builder struct or
@@ -50,6 +51,7 @@ func MultiBucket(fs afero.Fs, opts ...MultiOption) (*MultiBucketBackend, error) 
 	b := &MultiBucketBackend{
 		baseFs:   fs,
 		bucketFs: afero.NewBasePathFs(fs, "buckets"),
+		dirMode:  0700,
 	}
 	for _, opt := range opts {
 		if err := opt(b); err != nil {
@@ -218,10 +220,15 @@ func (db *MultiBucketBackend) CreateBucket(name string) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	if err := db.bucketFs.Mkdir(name, 0600); os.IsNotExist(err) {
-		return gofakes3.ResourceError(gofakes3.ErrBucketAlreadyExists, name)
-	} else {
+	if _, err := db.bucketFs.Stat(name); os.IsNotExist(err) {
+		if err := db.bucketFs.MkdirAll(name, db.dirMode); err != nil {
+			return err
+		}
+		return nil
+	} else if err != nil {
 		return err
+	} else {
+		return gofakes3.ResourceError(gofakes3.ErrBucketAlreadyExists, name)
 	}
 }
 
@@ -389,7 +396,7 @@ func (db *MultiBucketBackend) PutObject(
 	objectDir := filepath.Dir(objectFilePath)
 
 	if objectDir != "." {
-		if err := db.bucketFs.MkdirAll(objectDir, 0777); err != nil {
+		if err := db.bucketFs.MkdirAll(objectDir, db.dirMode); err != nil {
 			return result, err
 		}
 	}
