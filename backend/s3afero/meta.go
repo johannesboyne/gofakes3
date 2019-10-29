@@ -107,9 +107,9 @@ func (ms *metaStore) saveMeta(path metaPath, meta *Metadata) error {
 	if err != nil {
 		return err
 	}
-
-	// Don't care if this fails; it probably already exists (but may not)
-	ms.fs.Mkdir(filepath.Dir(path.FilePath()), 0777)
+	if err := ms.fs.MkdirAll(filepath.Dir(path.FilePath()), 0777); err != nil {
+		return err
+	}
 
 	return afero.WriteFile(ms.fs, path.FilePath(), bts, 0666)
 }
