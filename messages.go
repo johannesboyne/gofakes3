@@ -185,7 +185,7 @@ type ListBucketResultBase struct {
 	// Specifies whether (true) or not (false) all of the results were
 	// returned. If the number of results exceeds that specified by MaxKeys,
 	// all of the results might not be returned.
-	IsTruncated bool `xml:"IsTruncated,omitempty"`
+	IsTruncated bool `xml:"IsTruncated"`
 
 	// Causes keys that contain the same string between the prefix and the
 	// first occurrence of the delimiter to be rolled up into a single result
