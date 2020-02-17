@@ -182,6 +182,22 @@ func TestCreateObjectMD5(t *testing.T) {
 	}
 }
 
+func TestCreateObjectWithMissingContentLength(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := ts.rawClient()
+	body := []byte{}
+	rq, err := http.NewRequest("PUT", client.URL(fmt.Sprintf("/%s/yep", defaultBucket)).String(), maskReader(bytes.NewReader(body)))
+	if err != nil {
+		panic(err)
+	}
+	client.SetHeaders(rq, body)
+	rs, _ := client.Do(rq)
+	if rs.StatusCode != http.StatusLengthRequired {
+		t.Fatal()
+	}
+}
+
 func TestDeleteBucket(t *testing.T) {
 	t.Run("delete-empty", func(t *testing.T) {
 		ts := newTestServer(t, withoutInitialBuckets())
