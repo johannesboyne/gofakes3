@@ -15,8 +15,10 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path"
@@ -870,6 +872,41 @@ func (c *rawClient) SetHeaders(rq *http.Request, body []byte) {
 	rq.Header.Set("User-Agent", "aws-sdk-go/1.17.4 (go1.14rc1; linux; amd64)")
 	rq.Header.Set("X-Amz-Date", time.Now().In(time.UTC).Format("20060102T030405-0700"))
 	rq.Header.Set("X-Amz-Content-Sha256", hashSHA256Bytes(body).Hex())
+}
+
+// SendRaw can be used to bypass Go's http client, which helps us out a lot by taking
+// care of some things for us, but which we actually want to test messing up from
+// time to time.
+func (c *rawClient) SendRaw(rq *http.Request) ([]byte, error) {
+	b, err := httputil.DumpRequest(rq, true)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialTimeout("tcp", c.base.Host, 2*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	conn.SetDeadline(deadline)
+	if _, err := conn.Write(b); err != nil {
+		return nil, err
+	}
+
+	var rs []byte
+	var scratch = make([]byte, 1024)
+	for {
+		n, err := conn.Read(scratch)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		rs = append(rs, scratch[:n]...)
+	}
+
+	return rs, nil
 }
 
 func (c *rawClient) Do(rq *http.Request) (*http.Response, error) {

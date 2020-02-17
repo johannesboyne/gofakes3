@@ -1,6 +1,7 @@
 package gofakes3_test
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/xml"
 	"fmt"
@@ -195,6 +196,35 @@ func TestCreateObjectWithMissingContentLength(t *testing.T) {
 	rs, _ := client.Do(rq)
 	if rs.StatusCode != http.StatusLengthRequired {
 		t.Fatal()
+	}
+}
+
+func TestCreateObjectWithInvalidContentLength(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := ts.rawClient()
+
+	body := []byte{1, 2, 3}
+	rq, err := http.NewRequest("PUT", client.URL(fmt.Sprintf("/%s/yep", defaultBucket)).String(), maskReader(bytes.NewReader(body)))
+	if err != nil {
+		panic(err)
+	}
+
+	client.SetHeaders(rq, body)
+	rq.Header.Set("Content-Length", "quack")
+	raw, err := client.SendRaw(rq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(raw)), rq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Body.Close()
+
+	if rs.StatusCode != http.StatusBadRequest {
+		t.Fatal(rs.StatusCode, "!=", http.StatusBadRequest)
 	}
 }
 
