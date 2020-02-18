@@ -529,9 +529,15 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
-	if err != nil || size <= 0 {
+	contentLength := r.Header.Get("Content-Length")
+	if contentLength == "" {
 		return ErrMissingContentLength
+	}
+
+	size, err := strconv.ParseInt(contentLength, 10, 64)
+	if err != nil || size < 0 {
+		w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
+		return nil
 	}
 
 	if len(object) > KeySizeLimit {

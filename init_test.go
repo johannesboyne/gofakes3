@@ -7,6 +7,7 @@ package gofakes3_test
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"flag"
@@ -14,11 +15,16 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"path"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -150,7 +156,9 @@ type testServer struct {
 
 type testServerOption func(ts *testServer)
 
-func withoutInitialBuckets() testServerOption { return func(ts *testServer) { ts.initialBuckets = nil } }
+func withoutInitialBuckets() testServerOption {
+	return func(ts *testServer) { ts.initialBuckets = nil }
+}
 func withInitialBuckets(buckets ...string) testServerOption {
 	return func(ts *testServer) { ts.initialBuckets = buckets }
 }
@@ -293,6 +301,10 @@ func (ts *testServer) assertLs(bucket string, prefix string, expectedPrefixes []
 	}
 
 	ls.assertContents(ts.TT, expectedPrefixes, expectedObjects)
+}
+
+func (ts *testServer) rawClient() *rawClient {
+	return newRawClient(httpClient(), ts.server.URL)
 }
 
 type multipartUploadOptions struct {
@@ -716,6 +728,12 @@ func hashMD5Bytes(body []byte) hashValue {
 	return hashValue(h.Sum(nil))
 }
 
+func hashSHA256Bytes(body []byte) hashValue {
+	h := sha256.New()
+	h.Write(body)
+	return hashValue(h.Sum(nil))
+}
+
 type hashValue []byte
 
 func (h hashValue) Base64() string { return base64.StdEncoding.EncodeToString(h) }
@@ -809,4 +827,103 @@ func (b *backendWithUnimplementedPaging) ListBucket(name string, prefix *gofakes
 		return nil, gofakes3.ErrInternalPageNotImplemented
 	}
 	return b.Backend.ListBucket(name, prefix, page)
+}
+
+type rawClient struct {
+	client *http.Client
+	base   *url.URL
+}
+
+func newRawClient(client *http.Client, base string) *rawClient {
+	u, err := url.Parse(base)
+	if err != nil {
+		panic(err)
+	}
+	return &rawClient{client: client, base: u}
+}
+
+func (c *rawClient) URL(rqpath string) *url.URL {
+	u, err := url.Parse(c.base.String())
+	if err != nil {
+		panic(err)
+	}
+	u.Path = path.Join(u.Path, rqpath)
+	return u
+}
+
+func (c *rawClient) Request(method, rqpath string, body []byte) *http.Request {
+	u := c.URL(rqpath)
+	rq, err := http.NewRequest(method, u.String(), bytes.NewReader(body))
+	if err != nil {
+		panic(err)
+	}
+	c.SetHeaders(rq, body)
+	return rq
+}
+
+func (c *rawClient) SetHeaders(rq *http.Request, body []byte) {
+	// NOTE: This was put together by using httputil.DumpRequest inside routeBase(). We
+	// don't currently implement the Authorization header, so that has been skimmed for
+	// now.
+	rq.Header.Set("Accept-Encoding", "gzip")
+	rq.Header.Set("Authorization", "...") // TODO
+	rq.Header.Set("Content-Length", strconv.FormatInt(int64(len(body)), 10))
+	rq.Header.Set("Content-Md5", hashMD5Bytes(body).Base64())
+	rq.Header.Set("User-Agent", "aws-sdk-go/1.17.4 (go1.14rc1; linux; amd64)")
+	rq.Header.Set("X-Amz-Date", time.Now().In(time.UTC).Format("20060102T030405-0700"))
+	rq.Header.Set("X-Amz-Content-Sha256", hashSHA256Bytes(body).Hex())
+}
+
+// SendRaw can be used to bypass Go's http client, which helps us out a lot by taking
+// care of some things for us, but which we actually want to test messing up from
+// time to time.
+func (c *rawClient) SendRaw(rq *http.Request) ([]byte, error) {
+	b, err := httputil.DumpRequest(rq, true)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialTimeout("tcp", c.base.Host, 2*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	conn.SetDeadline(deadline)
+	if _, err := conn.Write(b); err != nil {
+		return nil, err
+	}
+
+	var rs []byte
+	var scratch = make([]byte, 1024)
+	for {
+		n, err := conn.Read(scratch)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		rs = append(rs, scratch[:n]...)
+	}
+
+	return rs, nil
+}
+
+func (c *rawClient) Do(rq *http.Request) (*http.Response, error) {
+	return c.client.Do(rq)
+}
+
+func maskReader(r io.Reader) io.Reader {
+	// http.NewRequest() forces a ContentLength if it recognises
+	// the type of reader you pass as the body. This is a cheeky
+	// way to bypass that:
+	return &maskedReader{r}
+}
+
+type maskedReader struct {
+	inner io.Reader
+}
+
+func (r *maskedReader) Read(b []byte) (n int, err error) {
+	return r.inner.Read(b)
 }
