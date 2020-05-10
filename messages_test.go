@@ -134,3 +134,23 @@ func TestMFADeleteStatus(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestCopyObjectResult(t *testing.T) {
+	res := CopyObjectResult{
+		ETag:         `"etag0"`,
+		LastModified: NewContentTime(time.Date(2019, 1, 1, 12, 0, 0, 0, time.UTC)),
+	}
+	const expected = "" +
+		"<CopyObjectResult>" +
+		"<ETag>&#34;etag0&#34;</ETag>" +
+		"<LastModified>2019-01-01T12:00:00Z</LastModified>" +
+		"</CopyObjectResult>"
+
+	out, err := xml.Marshal(&res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != expected {
+		t.Fatalf("unexpected XML output: %s", string(out))
+	}
+}

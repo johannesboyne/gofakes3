@@ -424,6 +424,13 @@ type ListMultipartUploadPartItem struct {
 	Size         int64       `xml:"Size"`
 }
 
+// CopyObjectResult contains the response from a CopyObject operation.
+type CopyObjectResult struct {
+	XMLName      xml.Name    `xml:"CopyObjectResult"`
+	ETag         string      `xml:"ETag,omitempty"`
+	LastModified ContentTime `xml:"LastModified,omitempty"`
+}
+
 // MFADeleteStatus is used by VersioningConfiguration.
 type MFADeleteStatus string
 
