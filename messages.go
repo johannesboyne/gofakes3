@@ -205,6 +205,12 @@ type ListBucketResultBase struct {
 	Contents       []*Content     `xml:"Contents"`
 }
 
+type GetBucketLocation struct {
+	XMLName            xml.Name `xml:"LocationConstraint"`
+	Xmlns              string   `xml:"xmlns,attr"`
+	LocationConstraint string   `xml:",chardata"`
+}
+
 type ListBucketResult struct {
 	ListBucketResultBase
 

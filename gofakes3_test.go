@@ -371,6 +371,25 @@ func TestDeleteMulti(t *testing.T) {
 	})
 }
 
+func TestGetBucketLocation(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	ts.backendPutString(defaultBucket, "foo", nil, "one")
+
+	out, err := svc.GetBucketLocation(&s3.GetBucketLocationInput{
+		Bucket: aws.String(defaultBucket),
+	})
+	if err != nil {
+		t.Fatal("get-bucket-location-failed", err)
+	}
+
+	if out.LocationConstraint != nil {
+		t.Fatal("location-constraint-not-empty", *out.LocationConstraint)
+	}
+}
+
 func TestGetObjectRange(t *testing.T) {
 	assertRange := func(ts *testServer, key string, hdr string, expected []byte, fail bool) {
 		ts.Helper()
