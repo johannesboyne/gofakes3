@@ -265,6 +265,17 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 	}
 }
 
+func (g *GoFakeS3) getBucketLocation(bucketName string, w http.ResponseWriter, r *http.Request) error {
+	g.log.Print(LogInfo, "GET BUCKET LOCATION")
+
+	result := GetBucketLocation{
+		Xmlns:              "http://s3.amazonaws.com/doc/2006-03-01/",
+		LocationConstraint: "",
+	}
+
+	return g.xmlEncoder(w).Encode(result)
+}
+
 func (g *GoFakeS3) listBucketVersions(bucketName string, w http.ResponseWriter, r *http.Request) error {
 	if g.versioned == nil {
 		return ErrNotImplemented
