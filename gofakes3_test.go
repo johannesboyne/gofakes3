@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -276,6 +277,39 @@ func TestCopyObject(t *testing.T) {
 
 	if v := obj.Metadata["X-Amz-Meta-Three"]; v != "dst" {
 		t.Fatalf("bad Content-Encoding: %q", v)
+	}
+}
+
+func TestCopyObjectWithSpecialChars(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	srcMeta := map[string]string{
+		"Content-Type": "text/plain",
+	}
+	srcKey := "src+key,with special;chars!?="
+	content := "contents"
+	ts.backendPutString(defaultBucket, srcKey, srcMeta, content)
+	copySource := "/" + defaultBucket + "/" + url.QueryEscape(srcKey)
+	_, err := svc.CopyObject(&s3.CopyObjectInput{
+		Bucket:     aws.String(defaultBucket),
+		Key:        aws.String("dst-key"),
+		CopySource: aws.String(copySource),
+	})
+	ts.OK(err)
+
+	obj, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String(srcKey),
+	})
+	if err != nil {
+		t.Fatalf("object not found with key %v", srcKey)
+	}
+	objContent, err := ioutil.ReadAll(obj.Body)
+	ts.OK(err)
+	if !bytes.Equal([]byte(content), objContent) {
+		ts.Fatalf("object contents are different %v!=%v", content, objContent)
 	}
 }
 

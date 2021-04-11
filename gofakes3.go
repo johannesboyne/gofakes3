@@ -617,6 +617,10 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	srcBucket := parts[0]
 	srcKey := strings.SplitN(parts[1], "?", 2)[0]
 
+	srcKey, err = url.QueryUnescape(srcKey)
+	if err != nil {
+		return err
+	}
 	srcObj, err := g.storage.GetObject(srcBucket, srcKey, nil)
 	if err != nil {
 		return err
