@@ -313,6 +313,28 @@ func TestCopyObjectWithSpecialChars(t *testing.T) {
 	}
 }
 
+func TestCopyObjectWithSpecialCharsEscapedInvalied(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	srcMeta := map[string]string{
+		"Content-Type": "text/plain",
+	}
+	srcKey := "src+key" //encoded srcKey = src%2Bkey
+	content := "contents"
+	ts.backendPutString(defaultBucket, srcKey, srcMeta, content)
+	copySource := "/" + defaultBucket + "/src%2key" //invalid encoding
+	_, err := svc.CopyObject(&s3.CopyObjectInput{
+		Bucket:     aws.String(defaultBucket),
+		Key:        aws.String("dst-key"),
+		CopySource: aws.String(copySource),
+	})
+	if err == nil {
+		t.Fatalf("copy object should return error when copy source encoding is invaid")
+	}
+}
+
 func TestDeleteBucket(t *testing.T) {
 	t.Run("delete-empty", func(t *testing.T) {
 		ts := newTestServer(t, withoutInitialBuckets())
