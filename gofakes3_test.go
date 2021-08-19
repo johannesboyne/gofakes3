@@ -110,6 +110,30 @@ func TestListBuckets(t *testing.T) {
 	assertBucketTime("test3", defaultDate.Add(1*time.Minute))
 }
 
+func TestListBucketObjectSize(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	_, err := svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+		Body:   bytes.NewReader([]byte("hello")), // size 5
+	})
+	ts.OK(err)
+
+	listInput := s3.ListObjectsV2Input{
+		Bucket: aws.String(defaultBucket),
+	}
+
+	output, err := svc.ListObjectsV2(&listInput) // there should be only 1 object
+	ts.OK(err)
+
+	if *output.Contents[0].Size != int64(5) {
+		ts.Fatalf("Size wanted 5 got :%v\n", output.Contents[0].Size)
+	}
+}
+
 func TestCreateObject(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
