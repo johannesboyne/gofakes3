@@ -130,7 +130,7 @@ func TestListBucketObjectSize(t *testing.T) {
 	ts.OK(err)
 
 	if *output.Contents[0].Size != int64(5) {
-		ts.Fatalf("Size wanted 5 got :%v\n", output.Contents[0].Size)
+		ts.Fatalf("Size wanted 5 got :%v\n", *output.Contents[0].Size)
 	}
 }
 
