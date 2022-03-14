@@ -560,6 +560,52 @@ func TestGetObjectRangeInvalid(t *testing.T) {
 	}
 }
 
+func TestGetObjectIfNoneMatch(t *testing.T) {
+	objectKey := "foo"
+	assertModified := func(ts *testServer, ifNoneMatch string, shouldModify bool) {
+		svc := ts.s3Client()
+		input := s3.GetObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(objectKey),
+		}
+		if ifNoneMatch != "" {
+			input.IfNoneMatch = aws.String(ifNoneMatch)
+		}
+
+		_, err := svc.GetObject(&input)
+		modified := true
+		if err != nil {
+			if !s3HasErrorCode(err, gofakes3.ErrNotModified) {
+				ts.Fatal("get-object-failed", err)
+			}
+
+			modified = false
+		}
+
+		if modified != shouldModify {
+			ts.Fatal("expected modified", shouldModify, "found", modified)
+		}
+	}
+
+	for idx, tc := range []struct {
+		ifNoneMatch  string
+		shouldModify bool
+	}{
+		{shouldModify: true},
+		{ifNoneMatch: `"5d41402abc4b2a76b9719d911017c592"`, shouldModify: false}, // md5("hello")
+		{ifNoneMatch: `"notTheSameEtag"`, shouldModify: true},
+	} {
+		t.Run(fmt.Sprintf("%d/%s", idx, tc.ifNoneMatch), func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			ts.backendPutString(defaultBucket, objectKey, nil, "hello")
+
+			assertModified(ts, tc.ifNoneMatch, tc.shouldModify)
+		})
+	}
+}
+
 func TestCreateObjectBrowserUpload(t *testing.T) {
 	addFile := func(tt gofakes3.TT, w *multipart.Writer, object string, b []byte) {
 		tt.Helper()

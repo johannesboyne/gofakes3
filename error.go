@@ -83,6 +83,9 @@ const (
 
 	ErrNoSuchVersion ErrorCode = "NoSuchVersion"
 
+	// No need to retransmit the object
+	ErrNotModified ErrorCode = "NotModified"
+
 	ErrRequestTimeTooSkewed ErrorCode = "RequestTimeTooSkewed"
 	ErrTooManyBuckets       ErrorCode = "TooManyBuckets"
 	ErrNotImplemented       ErrorCode = "NotImplemented"
@@ -267,6 +270,9 @@ func (e ErrorCode) Status() int {
 
 	case ErrNotImplemented:
 		return http.StatusNotImplemented
+
+	case ErrNotModified:
+		return http.StatusNotModified
 
 	case ErrMissingContentLength:
 		return http.StatusLengthRequired

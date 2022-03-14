@@ -433,12 +433,20 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 	for mk, mv := range obj.Metadata {
 		w.Header().Set(mk, mv)
 	}
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", `"`+hex.EncodeToString(obj.Hash)+`"`)
 
 	if obj.VersionID != "" {
 		w.Header().Set("x-amz-version-id", string(obj.VersionID))
 	}
+
+	etag := `"` + hex.EncodeToString(obj.Hash) + `"`
+	w.Header().Set("ETag", etag)
+
+	if r.Header.Get("If-None-Match") == etag {
+		return ErrNotModified
+	}
+
+	w.Header().Set("Accept-Ranges", "bytes")
+
 	return nil
 }
 
