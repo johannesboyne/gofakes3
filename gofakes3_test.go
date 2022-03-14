@@ -565,9 +565,8 @@ func TestGetObjectIfNoneMatch(t *testing.T) {
 	assertModified := func(ts *testServer, ifNoneMatch string, shouldModify bool) {
 		svc := ts.s3Client()
 		input := s3.GetObjectInput{
-			Bucket:      aws.String(defaultBucket),
-			Key:         aws.String(objectKey),
-			IfNoneMatch: aws.String(ifNoneMatch),
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(objectKey),
 		}
 		if ifNoneMatch != "" {
 			input.IfNoneMatch = aws.String(ifNoneMatch)
