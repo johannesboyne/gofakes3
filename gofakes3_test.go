@@ -253,6 +253,31 @@ func TestCreateObjectWithInvalidContentLength(t *testing.T) {
 	}
 }
 
+func TestCreateObjectWithContentDisposition(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	_, err := svc.PutObject(&s3.PutObjectInput{
+		Bucket:             aws.String(defaultBucket),
+		Key:                aws.String("object"),
+		Body:               bytes.NewReader([]byte("hello")),
+		ContentDisposition: aws.String("inline; filename=hello_world.txt"),
+	})
+	ts.OK(err)
+
+	obj, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	if obj.ContentDisposition == nil {
+		t.Fatal("missing Content-Disposition")
+	}
+	if *obj.ContentDisposition != "inline; filename=hello_world.txt" {
+		t.Fatal("Content-Disposition does not match")
+	}
+}
+
 func TestCopyObject(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
