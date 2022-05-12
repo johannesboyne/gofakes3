@@ -305,8 +305,11 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 	})
 	ts.OK(err)
 
-	if *head.Metadata["Test"] != "test" {
+	if head.Metadata["Test"] == nil {
 		t.Fatalf("missing metadata: %+v", head.Metadata)
+	}
+	if *head.Metadata["Test"] != "test" {
+		t.Fatal("wrong metadata key")
 	}
 
 	_, err = svc.PutObjectTagging(&s3.PutObjectTaggingInput{
@@ -320,8 +323,17 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 	})
 	ts.OK(err)
 
+	head, err = svc.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	ts.OK(err)
+
+	if head.Metadata["Test"] == nil {
+		t.Fatalf("missing metadata after PutObjectTagging: %+v", head.Metadata)
+	}
 	if *head.Metadata["Test"] != "test" {
-		t.Fatalf("missing metadata: %+v", head.Metadata)
+		t.Fatal("wrong metadata key")
 	}
 
 	result, err := svc.GetObjectTagging(&s3.GetObjectTaggingInput{
