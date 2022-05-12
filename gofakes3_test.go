@@ -278,6 +278,63 @@ func TestCreateObjectWithContentDisposition(t *testing.T) {
 	}
 }
 
+func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	_, err := svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+		Body:   bytes.NewReader([]byte("hello")),
+		Metadata: map[string]*string{
+			"Test": aws.String("test"),
+		},
+	})
+	ts.OK(err)
+
+	_, err = svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	ts.OK(err)
+
+	head, err := svc.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	ts.OK(err)
+
+	if *head.Metadata["Test"] != "test" {
+		t.Fatalf("missing metadata: %+v", head.Metadata)
+	}
+
+	_, err = svc.PutObjectTagging(&s3.PutObjectTaggingInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+		Tagging: &s3.Tagging{
+			TagSet: []*s3.Tag{
+				{Key: aws.String("Tag-Test"), Value: aws.String("test")},
+			},
+		},
+	})
+	ts.OK(err)
+
+	if *head.Metadata["Test"] != "test" {
+		t.Fatalf("missing metadata: %+v", head.Metadata)
+	}
+
+	result, err := svc.GetObjectTagging(&s3.GetObjectTaggingInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	ts.OK(err)
+
+	if *result.TagSet[0].Key != "Tag-Test" && *result.TagSet[0].Value != "test" {
+		t.Fatalf("tag set wrong: %+v", head.Metadata)
+	}
+}
+
 func TestCopyObject(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
