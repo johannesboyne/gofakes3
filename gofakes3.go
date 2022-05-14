@@ -645,7 +645,7 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	}
 
 	source := meta["X-Amz-Copy-Source"]
-	g.log.Print(LogInfo, "COPY:", source)
+	g.log.Print(LogInfo, "COPY:", source, "TO", bucket, object)
 
 	if len(object) > KeySizeLimit {
 		return ResourceError(ErrKeyTooLong, object)
