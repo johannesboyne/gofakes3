@@ -812,6 +812,13 @@ func hasErrorCode(err error, code gofakes3.ErrorCode) bool {
 	}
 }
 
+func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
+	if err, ok := err.(awserr.Error); ok {
+		return code == gofakes3.ErrorCode(err.Code())
+	}
+	return false
+}
+
 func httpClient() *http.Client {
 	return &http.Client{
 		Timeout: 2 * time.Second,
