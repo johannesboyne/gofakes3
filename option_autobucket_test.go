@@ -62,6 +62,20 @@ func TestAutoBucketDeleteObject(t *testing.T) {
 	}
 }
 
+func TestAutoBucketGetBucketLocation(t *testing.T) {
+	autoSrv := newAutoBucketTestServer(t)
+	defer autoSrv.Close()
+	svc := autoSrv.s3Client()
+
+	_, err := svc.GetBucketLocation(&s3.GetBucketLocationInput{
+		Bucket: aws.String(autoBucket),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	autoSrv.assertObject(autoBucket, "object", nil, "hello")
+}
+
 func TestAutoBucketDeleteObjectVersion(t *testing.T) {
 	ts := newAutoBucketTestServer(t)
 	defer ts.Close()
