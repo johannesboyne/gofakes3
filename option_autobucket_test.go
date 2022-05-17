@@ -73,7 +73,6 @@ func TestAutoBucketGetBucketLocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	autoSrv.assertObject(autoBucket, "object", nil, "hello")
 }
 
 func TestAutoBucketDeleteObjectVersion(t *testing.T) {
