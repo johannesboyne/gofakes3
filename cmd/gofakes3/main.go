@@ -35,6 +35,8 @@ type fakeS3Flags struct {
 	fixedTimeStr  string
 	noIntegrity   bool
 	hostBucket    bool
+	autoBucket    bool
+	quiet         bool
 
 	boltDb         string
 	directFsPath   string
@@ -53,6 +55,10 @@ func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.initialBucket, "initialbucket", "", "If passed, this bucket will be created on startup if it does not already exist.")
 	flagSet.BoolVar(&f.noIntegrity, "no-integrity", false, "Pass this flag to disable Content-MD5 validation when uploading.")
 	flagSet.BoolVar(&f.hostBucket, "hostbucket", false, "If passed, the bucket name will be extracted from the first segment of the hostname, rather than the first part of the URL path.")
+	flagSet.BoolVar(&f.autoBucket, "autobucket", false, "If passed, nonexistent buckets will be created on first use instead of raising an error")
+
+	// Logging
+	flagSet.BoolVar(&f.quiet, "quiet", false, "If passed, log messages are not printed to stderr")
 
 	// Backend specific:
 	flagSet.StringVar(&f.backendKind, "backend", "", "Backend to use to store data (memory, bolt, directfs, fs)")
@@ -180,6 +186,9 @@ func run() error {
 		if values.initialBucket != "" {
 			return fmt.Errorf("gofakes3: -initialbucket not supported by directfs")
 		}
+		if values.autoBucket {
+			return fmt.Errorf("gofakes3: -autobucket not supported by directfs")
+		}
 		if timeSource != nil {
 			log.Println("warning: time source not supported by this backend")
 		}
@@ -215,12 +224,18 @@ func run() error {
 		log.Println("created -initialbucket", values.initialBucket)
 	}
 
+	logger := gofakes3.GlobalLog()
+	if values.quiet {
+		logger = gofakes3.DiscardLog()
+	}
+
 	faker := gofakes3.New(backend,
 		gofakes3.WithIntegrityCheck(!values.noIntegrity),
 		gofakes3.WithTimeSkewLimit(timeSkewLimit),
 		gofakes3.WithTimeSource(timeSource),
-		gofakes3.WithLogger(gofakes3.GlobalLog()),
+		gofakes3.WithLogger(logger),
 		gofakes3.WithHostBucket(values.hostBucket),
+		gofakes3.WithAutoBucket(values.autoBucket),
 	)
 
 	return listenAndServe(values.host, faker.Server())

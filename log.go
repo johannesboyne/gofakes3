@@ -109,3 +109,17 @@ func (s *stdLog) Print(level LogLevel, v ...interface{}) {
 type discardLog struct{}
 
 func (d discardLog) Print(level LogLevel, v ...interface{}) {}
+
+func MultiLog(loggers ...Logger) Logger {
+	return &multiLog{loggers}
+}
+
+type multiLog struct {
+	loggers []Logger
+}
+
+func (m multiLog) Print(level LogLevel, v ...interface{}) {
+	for _, l := range m.loggers {
+		l.Print(level, v...)
+	}
+}
