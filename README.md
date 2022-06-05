@@ -2,7 +2,7 @@
 [![Codecov](https://codecov.io/gh/johannesboyne/gofakes3/branch/master/graph/badge.svg)](https://codecov.io/gh/johannesboyne/gofakes3)
 
 ![Logo](/GoFakeS3.png)
-# AWS (GOFAKE)S3 
+# AWS (GOFAKE)S3
 
 AWS S3 fake server and testing library for extensive S3 test integrations.
 Either by running a test-server, e.g. for testing of AWS Lambda functions
@@ -32,7 +32,7 @@ section below.
 
 ## How to use it?
 
-### Example
+### Example (aws-sdk-go version 1)
 
 ```golang
 // fake s3
@@ -74,6 +74,43 @@ _, err = s3Client.PutObject(&s3.PutObjectInput{
 // ... accessing of test.txt through any S3 client would now be possible
 ```
 
+### Example for V2 (aws-sdk-go-v2)
+
+```golang
+// ... same as above
+ts := httptest.NewServer(faker.Server())
+defer ts.Close()
+
+// Difference in configuring the client
+
+// Setup a new config
+cfg, _ := config.LoadDefaultConfig(
+	context.TODO(),
+	config.WithSharedConfigProfile("test"),
+	config.WithHTTPClient(
+		&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
+	),
+	config.WithEndpointResolver(
+		aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
+			return aws.Endpoint{URL: ts.URL}, nil
+		}),
+	),
+)
+
+// Create an Amazon S3 v2 client, important to use o.UsePathStyle
+// alternatively change local DNS settings, e.g., in /etc/hosts
+// to support requests to http://<bucketname>.127.0.0.1:32947/...
+client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	o.UsePathStyle = true
+})
+
+```
+
+
 Please feel free to check it out and to provide useful feedback (using github
 issues), but be aware, this software is used internally and for the local
 development only. Thus, it has no demand for correctness, performance or
@@ -83,7 +120,7 @@ There are two ways to run locally: using DNS, or using S3 path mode.
 
 S3 path mode is the most flexible and least restrictive, but it does require that you
 are able to modify your client code.In Go, the modification would look like so:
-    
+
 	config := aws.Config{}
 	config.WithS3ForcePathStyle(true)
 
@@ -131,20 +168,20 @@ exports.handle = function (e, ctx) {
   <body>
 
   <form action="http://localhost:9000/<bucket-name>/" method="post" enctype="multipart/form-data">
-    Key to upload: 
+    Key to upload:
     <input type="input"  name="key" value="user/user1/test/<filename>" /><br />
     <input type="hidden" name="acl" value="public-read" />
-    <input type="hidden" name="x-amz-meta-uuid" value="14365123651274" /> 
-    <input type="hidden" name="x-amz-server-side-encryption" value="AES256" /> 
+    <input type="hidden" name="x-amz-meta-uuid" value="14365123651274" />
+    <input type="hidden" name="x-amz-server-side-encryption" value="AES256" />
     <input type="text"   name="X-Amz-Credential" value="AKIAIOSFODNN7EXAMPLE/20151229/us-east-1/s3/aws4_request" />
     <input type="text"   name="X-Amz-Algorithm" value="AWS4-HMAC-SHA256" />
     <input type="text"   name="X-Amz-Date" value="20151229T000000Z" />
 
-    Tags for File: 
+    Tags for File:
     <input type="input"  name="x-amz-meta-tag" value="" /><br />
     <input type="hidden" name="Policy" value='<Base64-encoded policy string>' />
     <input type="hidden" name="X-Amz-Signature" value="<signature-value>" />
-    File: 
+    File:
     <input type="file"   name="file" /> <br />
     <!-- The elements after this will be ignored -->
     <input type="submit" name="submit" value="Upload to Amazon S3" />
