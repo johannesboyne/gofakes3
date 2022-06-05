@@ -295,6 +295,11 @@ func (db *SingleBucketBackend) PutObject(
 		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
+	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
+	if err != nil {
+		return result, err
+	}
+
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

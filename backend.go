@@ -2,6 +2,8 @@ package gofakes3
 
 import (
 	"io"
+
+	"github.com/aws/aws-sdk-go/aws/awserr"
 )
 
 const (
@@ -304,4 +306,25 @@ type VersionedBackend interface {
 	// The Backend MUST treat a nil prefix identically to a zero prefix, and a
 	// nil page identically to a zero page.
 	ListBucketVersions(bucketName string, prefix *Prefix, page *ListBucketVersionsPage) (*ListBucketVersionsResult, error)
+}
+
+func MergeMetadata(db Backend, bucketName string, objectName string, meta map[string]string) error {
+	// get potential existing object to potentially carry metadata over
+	existingObj, err := db.GetObject(bucketName, objectName, nil)
+	if err != nil {
+		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() != string(ErrNoSuchKey) {
+			return err
+		}
+	}
+	// carry over metadata if it exists
+	if existingObj != nil {
+		for k, v := range existingObj.Metadata {
+			// new metadata overwrites old but keep the rest
+			// TODO: check how metadata can be deleted?!
+			if _, ok := meta[k]; !ok {
+				meta[k] = v
+			}
+		}
+	}
+	return nil
 }
