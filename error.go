@@ -342,7 +342,7 @@ func requestTimeTooSkewed(at time.Time, max time.Duration) error {
 	}
 }
 
-// durationAsMilliseconds tricks xml.Marsha into serialising a time.Duration as
+// durationAsMilliseconds tricks xml.Marshal into serialising a time.Duration as
 // truncated milliseconds instead of nanoseconds.
 type durationAsMilliseconds time.Duration
 

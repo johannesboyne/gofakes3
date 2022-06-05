@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
@@ -1158,13 +1157,6 @@ func TestListBucketPagesFallback(t *testing.T) {
 			t.Fatal()
 		}
 	})
-}
-
-func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
-	if err, ok := err.(awserr.Error); ok {
-		return code == gofakes3.ErrorCode(err.Code())
-	}
-	return false
 }
 
 func tryDumpResponse(rs *http.Response, body bool) string {
