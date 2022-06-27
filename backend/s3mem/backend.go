@@ -225,6 +225,11 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		return result, err
 	}
 
+	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
+	if err != nil {
+		return result, err
+	}
+
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -243,6 +248,7 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		metadata:     meta,
 		lastModified: db.timeSource.Now(),
 	}
+
 	bucket.put(objectName, item)
 
 	if bucket.versioning == gofakes3.VersioningEnabled {

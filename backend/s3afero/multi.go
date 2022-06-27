@@ -380,6 +380,11 @@ func (db *MultiBucketBackend) PutObject(
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
 
+	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
+	if err != nil {
+		return result, err
+	}
+
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

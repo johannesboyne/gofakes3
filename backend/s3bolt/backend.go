@@ -302,6 +302,11 @@ func (db *Backend) PutObject(
 		return result, err
 	}
 
+	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
+	if err != nil {
+		return result, err
+	}
+
 	mod := db.timeSource.Now()
 	hash := md5.Sum(bts)
 
