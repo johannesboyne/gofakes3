@@ -230,7 +230,7 @@ func (g *GoFakeS3) listBucket(bucketName string, w http.ResponseWriter, r *http.
 
 	isVersion2 := q.Get("list-type") == "2"
 
-	g.log.Print(LogInfo, "bucketname:", bucketName, "prefix:", prefix, "page:", fmt.Sprintf("%+v", page))
+	g.log.Print(LogInfo, "bucketName:", bucketName, "prefix:", prefix, "page:", fmt.Sprintf("%+v", page))
 
 	objects, err := g.storage.ListBucket(bucketName, &prefix, page)
 	if err != nil {
@@ -417,7 +417,10 @@ func (g *GoFakeS3) headBucket(bucket string, w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	w.Write([]byte{})
+	_, err := w.Write([]byte{})
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -463,7 +466,12 @@ func (g *GoFakeS3) getObject(
 		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
 		return ErrInternal
 	}
-	defer obj.Contents.Close()
+	defer func(Contents io.ReadCloser) {
+		err := Contents.Close()
+		if err != nil {
+			g.log.Print(LogErr, "contents close", err.Error())
+		}
+	}(obj.Contents)
 
 	if err := g.writeGetOrHeadObjectResponse(obj, w, r); err != nil {
 		return err
