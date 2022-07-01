@@ -5,9 +5,10 @@ import "log"
 type LogLevel string
 
 const (
-	LogErr  LogLevel = "ERR"
-	LogWarn LogLevel = "WARN"
-	LogInfo LogLevel = "INFO"
+	LogErr   LogLevel = "ERR"
+	LogWarn  LogLevel = "WARN"
+	LogInfo  LogLevel = "INFO"
+	LogDebug LogLevel = "DEBUG"
 )
 
 // Logger provides a very minimal target for logging implementations to hit to
