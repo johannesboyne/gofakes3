@@ -400,6 +400,20 @@ func (g *GoFakeS3) deleteBucket(bucket string, w http.ResponseWriter, r *http.Re
 	if err := g.ensureBucketExists(bucket); err != nil {
 		return err
 	}
+
+	// Support for Minio's DeleteBucket with force-delete header.
+	forceDelete := r.Header.Get("x-minio-force-delete")
+	if forceDelete == "true" {
+		type forceDeleter interface {
+			ForceDeleteBucket(name string) error
+		}
+		if f, ok := g.storage.(forceDeleter); ok {
+			if err := f.ForceDeleteBucket(bucket); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err := g.storage.DeleteBucket(bucket); err != nil {
 		return err
 	}

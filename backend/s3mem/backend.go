@@ -165,6 +165,19 @@ func (db *Backend) DeleteBucket(name string) error {
 	return nil
 }
 
+func (db *Backend) ForceDeleteBucket(name string) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.buckets[name] == nil {
+		return gofakes3.ErrNoSuchBucket
+	}
+
+	delete(db.buckets, name)
+
+	return nil
+}
+
 func (db *Backend) BucketExists(name string) (exists bool, err error) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
