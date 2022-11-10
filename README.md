@@ -77,7 +77,8 @@ _, err = s3Client.PutObject(&s3.PutObjectInput{
 ### Example for V2 (aws-sdk-go-v2)
 
 ```golang
-// ... same as above
+backend := s3mem.New()
+faker := gofakes3.New(backend)
 ts := httptest.NewServer(faker.Server())
 defer ts.Close()
 
@@ -86,19 +87,17 @@ defer ts.Close()
 // Setup a new config
 cfg, _ := config.LoadDefaultConfig(
 	context.TODO(),
-	config.WithSharedConfigProfile("test"),
-	config.WithHTTPClient(
-		&http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
-		},
-	),
-	config.WithEndpointResolver(
-		aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
-			return aws.Endpoint{URL: ts.URL}, nil
-		}),
-	),
+    config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "SESSION")),
+    config.WithHTTPClient(&http.Client{
+        Transport: &http.Transport{
+            TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        },
+    }),
+    config.WithEndpointResolverWithOptions(
+        aws.EndpointResolverWithOptionsFunc(func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
+            return aws.Endpoint{URL: ts.URL}, nil
+        }),
+    ),
 )
 
 // Create an Amazon S3 v2 client, important to use o.UsePathStyle
