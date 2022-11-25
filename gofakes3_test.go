@@ -282,10 +282,11 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
+	expectedBody := "hello"
 	_, err := svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(defaultBucket),
 		Key:    aws.String("object"),
-		Body:   bytes.NewReader([]byte("hello")),
+		Body:   strings.NewReader(expectedBody),
 		Metadata: map[string]*string{
 			"Test": aws.String("test"),
 		},
@@ -343,6 +344,19 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 
 	if *result.TagSet[0].Key != "Tag-Test" && *result.TagSet[0].Value != "test" {
 		t.Fatalf("tag set wrong: %+v", head.Metadata)
+	}
+
+	get, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	ts.OK(err)
+
+	c, err := io.ReadAll(get.Body)
+	ts.OK(err)
+
+	if string(c) != expectedBody {
+		t.Fatalf("body has been changed: %s", string(c))
 	}
 }
 
