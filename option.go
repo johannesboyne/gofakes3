@@ -84,5 +84,5 @@ func WithUnimplementedPageError() Option {
 // WithAutoBucket instructs GoFakeS3 to create buckets that don't exist on first use,
 // rather than returning ErrNoSuchBucket.
 func WithAutoBucket(enabled bool) Option {
-	return func(g *GoFakeS3) { g.autoBucket = true }
+	return func(g *GoFakeS3) { g.autoBucket = enabled }
 }
