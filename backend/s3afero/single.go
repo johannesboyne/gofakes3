@@ -3,7 +3,6 @@ package s3afero
 import (
 	"crypto/md5"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -28,7 +27,6 @@ import (
 // It is STRONGLY recommended that the metadata Fs is not contained within the
 // `/buckets` subdirectory as that could make a significant mess, but this is
 // infeasible to validate, so you're encouraged to be extremely careful!
-//
 type SingleBucketBackend struct {
 	lock      sync.Mutex
 	fs        afero.Fs
@@ -158,17 +156,13 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ObjectList, error) {
 	response := gofakes3.NewObjectList()
 
-	if err := afero.Walk(db.fs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
+	if err := afero.Walk(db.fs, filepath.FromSlash("."), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
 		}
 
 		objectPath := filepath.ToSlash(path)
-		parts := strings.SplitN(objectPath, "/", 2)
-		if len(parts) != 2 {
-			panic(fmt.Errorf("unexpected path %q", path)) // should never happen
-		}
-		objectName := parts[1]
+		objectName := objectPath
 
 		if !prefix.Match(objectName, nil) {
 			return nil

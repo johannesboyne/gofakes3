@@ -115,7 +115,9 @@ type ListBucketPage struct {
 }
 
 func (p ListBucketPage) IsEmpty() bool {
-	return p == ListBucketPage{}
+	return p == ListBucketPage{
+		MaxKeys: DefaultMaxBucketKeys,
+	}
 }
 
 type PutObjectResult struct {
