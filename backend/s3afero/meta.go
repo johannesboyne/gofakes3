@@ -15,6 +15,7 @@ import (
 type Metadata struct {
 	File    string
 	ModTime time.Time
+	Tags    map[string]string
 	Size    int64
 	Hash    []byte
 	Meta    map[string]string

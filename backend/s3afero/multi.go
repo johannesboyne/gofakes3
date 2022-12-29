@@ -25,7 +25,6 @@ import (
 // It is STRONGLY recommended that the metadata Fs is not contained within the
 // `/buckets` subdirectory as that could make a significant mess, but this is
 // infeasible to validate, so you're encouraged to be extremely careful!
-//
 type MultiBucketBackend struct {
 	lock      sync.Mutex
 	baseFs    afero.Fs
@@ -306,6 +305,7 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
+		Tags:     meta.Tags,
 		Size:     size,
 		Contents: s3io.NoOpReadCloser{},
 	}, nil
@@ -368,6 +368,7 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
+		Tags:     meta.Tags,
 		Range:    rnge,
 		Size:     size,
 		Contents: rdr,
@@ -377,9 +378,11 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 func (db *MultiBucketBackend) PutObject(
 	bucketName, objectName string,
 	meta map[string]string,
+	tags map[string]string,
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
 
+	// merge metadata
 	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
 	if err != nil {
 		return result, err
@@ -441,6 +444,7 @@ func (db *MultiBucketBackend) PutObject(
 	storedMeta := &Metadata{
 		File:    objectPath,
 		Hash:    hasher.Sum(nil),
+		Tags:    tags,
 		Meta:    meta,
 		Size:    stat.Size(),
 		ModTime: stat.ModTime(),
