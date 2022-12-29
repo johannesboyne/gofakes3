@@ -23,6 +23,7 @@ type boltBucket struct {
 type boltObject struct {
 	Name         string
 	Metadata     map[string]string
+	Tags         map[string]string
 	LastModified time.Time
 	Size         int64
 	Contents     []byte
@@ -44,6 +45,7 @@ func (b *boltObject) Object(objectName string, rangeRequest *gofakes3.ObjectRang
 	return &gofakes3.Object{
 		Name:     objectName,
 		Metadata: b.Metadata,
+		Tags:     b.Tags,
 		Size:     b.Size,
 		Contents: s3io.ReaderWithDummyCloser{bytes.NewReader(data)},
 		Range:    rnge,
