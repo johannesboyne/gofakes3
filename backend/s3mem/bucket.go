@@ -120,6 +120,7 @@ type bucketData struct {
 	hash         []byte
 	etag         string
 	metadata     map[string]string
+	tags         map[string]string
 }
 
 func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBody bool) (obj *gofakes3.Object, err error) {
@@ -152,6 +153,7 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 		Name:           bi.name,
 		Hash:           bi.hash,
 		Metadata:       bi.metadata,
+		Tags:           bi.tags,
 		Size:           sz,
 		Range:          rnge,
 		IsDeleteMarker: bi.deleteMarker,

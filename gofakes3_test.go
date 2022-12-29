@@ -282,10 +282,11 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
+	expectedBody := "hello"
 	_, err := svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(defaultBucket),
 		Key:    aws.String("object"),
-		Body:   bytes.NewReader([]byte("hello")),
+		Body:   strings.NewReader(expectedBody),
 		Metadata: map[string]*string{
 			"Test": aws.String("test"),
 		},
@@ -316,7 +317,7 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 		Key:    aws.String("object"),
 		Tagging: &s3.Tagging{
 			TagSet: []*s3.Tag{
-				{Key: aws.String("Tag-Test"), Value: aws.String("test")},
+				{Key: aws.String("TagTest"), Value: aws.String("test")},
 			},
 		},
 	})
@@ -341,8 +342,22 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 	})
 	ts.OK(err)
 
-	if *result.TagSet[0].Key != "Tag-Test" && *result.TagSet[0].Value != "test" {
+	if *result.TagSet[0].Key != "TagTest" && *result.TagSet[0].Value != "test" {
 		t.Fatalf("tag set wrong: %+v", head.Metadata)
+	}
+
+	// receive object after tagging
+	get, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	ts.OK(err)
+
+	c, err := io.ReadAll(get.Body)
+	ts.OK(err)
+
+	if string(c) != expectedBody {
+		t.Fatalf("body has been changed: %s", string(c))
 	}
 }
 
@@ -356,7 +371,7 @@ func TestCopyObject(t *testing.T) {
 		"X-Amz-Meta-One": "src",
 		"X-Amz-Meta-Two": "src",
 	}
-	ts.backendPutString(defaultBucket, "src-key", srcMeta, "content")
+	ts.backendPutString(defaultBucket, "src-key", srcMeta, nil, "content")
 
 	out, err := svc.CopyObject(&s3.CopyObjectInput{
 		Bucket:     aws.String(defaultBucket),
@@ -407,7 +422,7 @@ func TestCopyObjectWithSpecialChars(t *testing.T) {
 	}
 	srcKey := "src+key,with special;chars!?="
 	content := "contents"
-	ts.backendPutString(defaultBucket, srcKey, srcMeta, content)
+	ts.backendPutString(defaultBucket, srcKey, srcMeta, nil, content)
 	copySource := "/" + defaultBucket + "/" + url.QueryEscape(srcKey)
 	_, err := svc.CopyObject(&s3.CopyObjectInput{
 		Bucket:     aws.String(defaultBucket),
@@ -440,7 +455,7 @@ func TestCopyObjectWithSpecialCharsEscapedInvalied(t *testing.T) {
 	}
 	srcKey := "src+key" //encoded srcKey = src%2Bkey
 	content := "contents"
-	ts.backendPutString(defaultBucket, srcKey, srcMeta, content)
+	ts.backendPutString(defaultBucket, srcKey, srcMeta, nil, content)
 	copySource := "/" + defaultBucket + "/src%2key" //invalid encoding
 	_, err := svc.CopyObject(&s3.CopyObjectInput{
 		Bucket:     aws.String(defaultBucket),
@@ -470,7 +485,7 @@ func TestDeleteBucket(t *testing.T) {
 		svc := ts.s3Client()
 
 		ts.backendCreateBucket("test")
-		ts.backendPutString("test", "test", nil, "test")
+		ts.backendPutString("test", "test", nil, nil, "test")
 		_, err := svc.DeleteBucket(&s3.DeleteBucketInput{
 			Bucket: aws.String("test"),
 		})
@@ -503,9 +518,9 @@ func TestDeleteMulti(t *testing.T) {
 		defer ts.Close()
 		svc := ts.s3Client()
 
-		ts.backendPutString(defaultBucket, "foo", nil, "one")
-		ts.backendPutString(defaultBucket, "bar", nil, "two")
-		ts.backendPutString(defaultBucket, "baz", nil, "three")
+		ts.backendPutString(defaultBucket, "foo", nil, nil, "one")
+		ts.backendPutString(defaultBucket, "bar", nil, nil, "two")
+		ts.backendPutString(defaultBucket, "baz", nil, nil, "three")
 
 		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
 			Bucket: aws.String(defaultBucket),
@@ -525,9 +540,9 @@ func TestDeleteMulti(t *testing.T) {
 		defer ts.Close()
 		svc := ts.s3Client()
 
-		ts.backendPutString(defaultBucket, "foo", nil, "one")
-		ts.backendPutString(defaultBucket, "bar", nil, "two")
-		ts.backendPutString(defaultBucket, "baz", nil, "three")
+		ts.backendPutString(defaultBucket, "foo", nil, nil, "one")
+		ts.backendPutString(defaultBucket, "bar", nil, nil, "two")
+		ts.backendPutString(defaultBucket, "baz", nil, nil, "three")
 
 		rs, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
 			Bucket: aws.String(defaultBucket),
@@ -549,7 +564,7 @@ func TestGetBucketLocation(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	ts.backendPutString(defaultBucket, "foo", nil, "one")
+	ts.backendPutString(defaultBucket, "foo", nil, nil, "one")
 
 	out, err := svc.GetBucketLocation(&s3.GetBucketLocationInput{
 		Bucket: aws.String(defaultBucket),
@@ -616,7 +631,7 @@ func TestGetObjectRange(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
 
-			ts.backendPutBytes(defaultBucket, "foo", nil, in)
+			ts.backendPutBytes(defaultBucket, "foo", nil, nil, in)
 			assertRange(ts, "foo", tc.hdr, tc.expected, tc.fail)
 		})
 	}
@@ -647,7 +662,7 @@ func TestGetObjectRangeInvalid(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
 
-			ts.backendPutBytes(defaultBucket, "foo", nil, in)
+			ts.backendPutBytes(defaultBucket, "foo", nil, nil, in)
 			assertRangeInvalid(ts, "foo", tc.hdr)
 		})
 	}
@@ -692,7 +707,7 @@ func TestGetObjectIfNoneMatch(t *testing.T) {
 			ts := newTestServer(t)
 			defer ts.Close()
 
-			ts.backendPutString(defaultBucket, objectKey, nil, "hello")
+			ts.backendPutString(defaultBucket, objectKey, nil, nil, "hello")
 
 			assertModified(ts, tc.ifNoneMatch, tc.shouldModify)
 		})
@@ -1012,7 +1027,7 @@ func TestObjectVersions(t *testing.T) {
 		const neverVerBucket = "neverver"
 		ts.backendCreateBucket(neverVerBucket)
 
-		ts.backendPutString(neverVerBucket, "object", nil, "body 1")
+		ts.backendPutString(neverVerBucket, "object", nil, nil, "body 1")
 		list(ts, neverVerBucket, "null") // S300005
 	})
 }
@@ -1022,7 +1037,7 @@ func TestListBucketPages(t *testing.T) {
 		keys := make([]string, n)
 		for i := int64(0); i < n; i++ {
 			key := fmt.Sprintf("%s%d", prefix, i)
-			ts.backendPutString(defaultBucket, key, nil, fmt.Sprintf("body-%d", i))
+			ts.backendPutString(defaultBucket, key, nil, nil, fmt.Sprintf("body-%d", i))
 			keys[i] = key
 		}
 		return keys
@@ -1127,7 +1142,7 @@ func TestListBucketPagesFallback(t *testing.T) {
 		keys := make([]string, n)
 		for i := int64(0); i < n; i++ {
 			key := fmt.Sprintf("%s%d", prefix, i)
-			ts.backendPutString(defaultBucket, key, nil, fmt.Sprintf("body-%d", i))
+			ts.backendPutString(defaultBucket, key, nil, nil, fmt.Sprintf("body-%d", i))
 			keys[i] = key
 		}
 		return keys

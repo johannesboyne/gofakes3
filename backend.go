@@ -17,6 +17,7 @@ const (
 type Object struct {
 	Name     string
 	Metadata map[string]string
+	Tags     map[string]string
 	Size     int64
 	Contents io.ReadCloser
 	Hash     []byte
@@ -227,7 +228,7 @@ type Backend interface {
 	//
 	// The size can be used if the backend needs to read the whole reader; use
 	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
-	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
+	PutObject(bucketName, key string, meta map[string]string, tags map[string]string, input io.Reader, size int64) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
 }

@@ -549,7 +549,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 		return err
 	}
 
-	result, err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size)
+	result, err := g.storage.PutObject(bucket, key, meta, nil, rdr, fileHeader.Size)
 	if err != nil {
 		return err
 	}
@@ -623,7 +623,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	result, err := g.storage.PutObject(bucket, object, meta, rdr, size)
+	result, err := g.storage.PutObject(bucket, object, meta, nil, rdr, size)
 	if err != nil {
 		return err
 	}
@@ -681,7 +681,7 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 		}
 	}
 
-	result, err := g.storage.PutObject(bucket, object, meta, srcObj.Contents, srcObj.Size)
+	result, err := g.storage.PutObject(bucket, object, meta, nil, srcObj.Contents, srcObj.Size)
 	if err != nil {
 		return err
 	}
@@ -881,6 +881,67 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 	return nil
 }
 
+// From the docs:
+//
+// Updating is usually done via different e.g., PutObject routes; but
+// PutObjectTagging is one example where existing objects are updated in situ
+//
+// Sets the supplied tag-set to an object that already exists in a bucket.
+//
+// A tag is a key-value pair. You can associate tags with an object by sending a
+// PUT request against the tagging subresource that is associated with the
+// object.
+func (g *GoFakeS3) updateObjectWithTags(bucket, object string, version string, w http.ResponseWriter, r *http.Request) error {
+	// write keys / metadata to object
+	if err := g.ensureBucketExists(bucket); err != nil {
+		return err
+	}
+
+	var in Tagging
+	if err := g.xmlDecodeBody(r.Body, &in); err != nil {
+		return err
+	}
+
+	rnge, err := parseRangeHeader(r.Header.Get("Range"))
+	if err != nil {
+		return err
+	}
+
+	obj, err := g.storage.GetObject(bucket, object, rnge)
+	if err != nil {
+		return err
+	}
+	if obj.Tags == nil {
+		obj.Tags = map[string]string{}
+	}
+	for _, v := range in.TagSet.Tag {
+		obj.Tags[v.Key] = v.Value
+	}
+
+	result, err := g.storage.PutObject(bucket, object, obj.Metadata, obj.Tags, obj.Contents, obj.Size)
+	if err != nil {
+		return err
+	}
+	if result.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	}
+
+	return nil
+}
+
+func (g *GoFakeS3) getObjectTags(bucket, object string, version string, w http.ResponseWriter, r *http.Request) error {
+	obj, err := g.storage.HeadObject(bucket, object)
+	if err != nil {
+		return err
+	}
+	out := Tagging{}
+	for k, v := range obj.Tags {
+		out.TagSet.Tag = append(out.TagSet.Tag, Tag{Key: k, Value: v})
+	}
+
+	return g.xmlEncoder(w).Encode(out)
+}
+
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "abort multipart upload", bucket, object, uploadID)
 	if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
@@ -908,7 +969,7 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	result, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
+	result, err := g.storage.PutObject(bucket, object, upload.Meta, nil, bytes.NewReader(fileBody), int64(len(fileBody)))
 	if err != nil {
 		return err
 	}

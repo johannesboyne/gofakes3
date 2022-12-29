@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -12,12 +13,12 @@ import (
 //
 // URLs are assumed to break down into two common path segments, in the
 // following format:
-//   /<bucket>/<object>
+//
+//	/<bucket>/<object>
 //
 // The operation for most of the core functionality is built around HTTP
 // verbs, but outside the core functionality, the clean separation starts
 // to degrade, especially around multipart uploads.
-//
 func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	var (
 		path   = strings.Trim(r.URL.Path, "/")
@@ -47,6 +48,9 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 
 	} else if _, ok := query["versioning"]; ok {
 		err = g.routeVersioning(bucket, w, r)
+
+	} else if _, ok := query["tagging"]; ok {
+		err = g.routeTagging(bucket, object, query, w, r)
 
 	} else if _, ok := query["versions"]; ok {
 		err = g.routeVersions(bucket, w, r)
@@ -155,6 +159,19 @@ func (g *GoFakeS3) routeVersions(bucket string, w http.ResponseWriter, r *http.R
 	}
 }
 
+// routeTagging operates on routes that contain '?tagging' in the query string.
+func (g *GoFakeS3) routeTagging(bucket, object string, query url.Values, w http.ResponseWriter, r *http.Request) error {
+	versionID := versionFromQuery(query["versionId"])
+	switch r.Method {
+	case "PUT":
+		return g.updateObjectWithTags(bucket, object, versionID, w, r)
+	case "GET":
+		return g.getObjectTags(bucket, object, versionID, w, r)
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
 // routeVersion operates on routes that contain '?versionId=<id>' in the
 // query string.
 func (g *GoFakeS3) routeVersion(bucket, object string, versionID VersionID, w http.ResponseWriter, r *http.Request) error {
@@ -165,6 +182,8 @@ func (g *GoFakeS3) routeVersion(bucket, object string, versionID VersionID, w ht
 		return g.headObject(bucket, object, versionID, w, r)
 	case "DELETE":
 		return g.deleteObjectVersion(bucket, object, versionID, w, r)
+	case "PUT":
+		return g.updateObjectWithTags(bucket, object, string(versionID), w, r)
 	default:
 		return ErrMethodNotAllowed
 	}
