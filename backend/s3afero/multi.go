@@ -152,7 +152,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 		}
 
 		if entry.IsDir() {
-			response.AddPrefix(path.Join(prefixPath, prefixPart))
+			response.AddPrefix(path.Join(prefixPath, prefixPart, entry.Name()) + "/")
 
 		} else {
 			size := entry.Size()

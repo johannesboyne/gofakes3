@@ -130,7 +130,7 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 		}
 
 		if entry.IsDir() {
-			response.AddPrefix(path.Join(prefixPath, prefixPart))
+			response.AddPrefix(path.Join(prefixPath, prefixPart, entry.Name()) + "/")
 
 		} else {
 			size := entry.Size()
