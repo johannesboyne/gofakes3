@@ -32,6 +32,7 @@ type MultiBucketBackend struct {
 	bucketFs  afero.Fs
 	metaStore *metaStore
 	dirMode   os.FileMode
+	flags     FsFlags
 
 	// FIXME(bw): values in here should not be used beyond the configuration
 	// step; maybe this can be cleaned up later using a builder struct or
@@ -48,19 +49,28 @@ func MultiBucket(fs afero.Fs, opts ...MultiOption) (*MultiBucketBackend, error) 
 		return nil, err
 	}
 
-	b := &MultiBucketBackend{
-		baseFs:   fs,
-		bucketFs: afero.NewBasePathFs(fs, "buckets"),
-		dirMode:  0700,
-	}
+	b := &MultiBucketBackend{}
 	for _, opt := range opts {
 		if err := opt(b); err != nil {
 			return nil, err
 		}
 	}
 
+	bucketsFs, err := NewBasePathFs(fs, "buckets", FsPathCreateAll)
+	if err != nil {
+		return nil, err
+	}
+
+	b.baseFs = fs
+	b.bucketFs = bucketsFs
+	b.dirMode = 0700
+
 	if b.configOnly.metaFs == nil {
-		b.configOnly.metaFs = afero.NewBasePathFs(fs, "metadata")
+		metaFs, err := NewBasePathFs(fs, "metadata", FsPathCreateAll)
+		if err != nil {
+			return nil, err
+		}
+		b.configOnly.metaFs = metaFs
 	}
 	b.metaStore = newMetaStore(b.configOnly.metaFs, modTimeFsCalc(fs))
 

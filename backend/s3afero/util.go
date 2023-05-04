@@ -1,6 +1,7 @@
 package s3afero
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,9 +45,25 @@ func ensureNoOsFs(name string, fs afero.Fs) error {
 	return nil
 }
 
+func NewBasePathFs(source afero.Fs, path string, flags FsFlags) (afero.Fs, error) {
+	if flags&(FsPathCreateAll|FsPathCreate) != 0 {
+		if err := source.MkdirAll(path, 0700); err != nil {
+			return nil, err
+		}
+	}
+	return afero.NewBasePathFs(source, path), nil
+}
+
+type FsFlags int
+
+const (
+	FsPathCreate FsFlags = 1 << iota
+	FsPathCreateAll
+)
+
 // FsPath returns an afero.Fs rooted to the path provided. If the path is invalid,
 // or is less than 2 levels down from the filesystem root, an error is returned.
-func FsPath(path string) (afero.Fs, error) {
+func FsPath(path string, flags FsFlags) (afero.Fs, error) {
 	if path == "" {
 		return nil, fmt.Errorf("gofakes3: empty path")
 	}
@@ -57,15 +74,31 @@ func FsPath(path string) (afero.Fs, error) {
 	}
 
 	stat, err := os.Stat(path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		if flags&FsPathCreate != 0 {
+			if err := os.Mkdir(path, 0700); err != nil {
+				return nil, err
+			}
+		} else if flags&FsPathCreateAll != 0 {
+			if err := os.MkdirAll(path, 0700); err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+
+	} else if err != nil {
 		return nil, err
 	} else if !stat.IsDir() {
 		return nil, fmt.Errorf("gofakes3: path %q is not a directory", path)
 	}
 
 	parts := strings.Split(path, string(filepath.Separator))
-	if len(parts) < 2 { // cheap and nasty footgun check:
-		return nil, fmt.Errorf("gofakes3: invalid path %q", path)
+
+	// cheap and nasty footgun check to ensure root path is not used
+	// FIXME: possibly not enough on windows
+	if len(parts) <= 1 {
+		return nil, fmt.Errorf("gofakes3: path %q at the root of the file system not allowed; use FsAllowAll to bypass", path)
 	}
 
 	return afero.NewBasePathFs(afero.NewOsFs(), path), nil

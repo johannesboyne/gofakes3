@@ -16,4 +16,11 @@ func MultiWithMetaFs(fs afero.Fs) MultiOption {
 	}
 }
 
+func MultiFsFlags(flags FsFlags) MultiOption {
+	return func(b *MultiBucketBackend) error {
+		b.flags = flags
+		return nil
+	}
+}
+
 type SingleOption func(b *SingleBucketBackend) error

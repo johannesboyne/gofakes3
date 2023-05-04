@@ -142,7 +142,7 @@ func (bi *bucketData) toObject(rangeRequest *gofakes3.ObjectRangeRequest, withBo
 
 		// The data slice should be completely replaced if the bucket item is edited, so
 		// it should be safe to return the data slice directly.
-		contents = s3io.ReaderWithDummyCloser{bytes.NewReader(data)}
+		contents = s3io.ReaderWithDummyCloser{Reader: bytes.NewReader(data)}
 
 	} else {
 		contents = s3io.NoOpReadCloser{}
