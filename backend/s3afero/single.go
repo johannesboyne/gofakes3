@@ -204,6 +204,8 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 		return nil, gofakes3.KeyNotFound(objectName)
 	} else if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
@@ -247,6 +249,8 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()

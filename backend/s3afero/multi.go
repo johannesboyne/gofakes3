@@ -25,7 +25,6 @@ import (
 // It is STRONGLY recommended that the metadata Fs is not contained within the
 // `/buckets` subdirectory as that could make a significant mess, but this is
 // infeasible to validate, so you're encouraged to be extremely careful!
-//
 type MultiBucketBackend struct {
 	lock      sync.Mutex
 	baseFs    afero.Fs
@@ -303,6 +302,8 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 		return nil, gofakes3.KeyNotFound(objectName)
 	} else if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
@@ -341,7 +342,6 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	} else if err != nil {
 		return nil, err
 	}
-
 	defer func() {
 		// If an error occurs, the caller may not have access to Object.Body in order to close it:
 		if obj == nil && rerr != nil {
@@ -352,6 +352,8 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
