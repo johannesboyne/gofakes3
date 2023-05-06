@@ -3,6 +3,7 @@ package s3afero
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -130,13 +131,12 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 		}
 
 		if entry.IsDir() {
-			response.AddPrefix(path.Join(prefixPath, prefixPart))
+			response.AddPrefix(path.Join(prefixPath, prefixPart, entry.Name()) + "/")
 
 		} else {
 			size := entry.Size()
 			mtime := entry.ModTime()
-
-			meta, err := db.metaStore.loadMeta(bucket, objectPath, size, mtime)
+			meta, err := db.ensureMeta(bucket, objectPath, size, mtime)
 			if err != nil {
 				return nil, err
 			}
@@ -162,21 +162,19 @@ func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string,
 		}
 
 		objectPath := filepath.ToSlash(path)
-		objectName := objectPath
-
-		if !prefix.Match(objectName, nil) {
+		if !prefix.Match(objectPath, nil) {
 			return nil
 		}
 
 		size := info.Size()
 		mtime := info.ModTime()
-		meta, err := db.metaStore.loadMeta(bucket, objectName, size, mtime)
+		meta, err := db.ensureMeta(bucket, objectPath, size, mtime)
 		if err != nil {
 			return err
 		}
 
 		response.Add(&gofakes3.Content{
-			Key:          objectName,
+			Key:          objectPath,
 			LastModified: gofakes3.NewContentTime(mtime),
 			ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
 			Size:         size,
@@ -189,6 +187,46 @@ func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string,
 	}
 
 	return response, nil
+}
+
+func (db *SingleBucketBackend) ensureMeta(
+	bucket string,
+	objectPath string,
+	size int64,
+	mtime time.Time,
+) (meta *Metadata, err error) {
+	existingMeta, err := db.metaStore.loadMeta(bucket, objectPath, size, mtime)
+	if errors.Is(err, os.ErrNotExist) {
+		f, err := db.fs.Open(filepath.FromSlash(objectPath))
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, f); err != nil {
+			return nil, err
+		}
+
+		hash, err := hasher.Sum(nil), nil
+		if err != nil {
+			return nil, err
+		}
+
+		return &Metadata{
+			objectPath,
+			mtime,
+			size,
+			hash,
+			map[string]string{},
+		}, nil
+
+	} else if err != nil {
+		return nil, err
+
+	} else {
+		return existingMeta, nil
+	}
 }
 
 func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofakes3.Object, error) {
@@ -204,11 +242,12 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 		return nil, gofakes3.KeyNotFound(objectName)
 	} else if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
-
-	meta, err := db.metaStore.loadMeta(bucketName, objectName, size, mtime)
+	meta, err := db.ensureMeta(bucketName, objectName, size, mtime)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +275,6 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	} else if err != nil {
 		return nil, err
 	}
-
 	defer func() {
 		// If an error occurs, the caller may not have access to Object.Body in order to close it:
 		if err != nil && obj == nil {
@@ -247,6 +285,8 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
@@ -264,7 +304,7 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 		rdr = limitReadCloser(rdr, f.Close, rnge.Length)
 	}
 
-	meta, err := db.metaStore.loadMeta(bucketName, objectName, size, mtime)
+	meta, err := db.ensureMeta(bucketName, objectName, size, mtime)
 	if err != nil {
 		return nil, err
 	}

@@ -38,12 +38,15 @@ type fakeS3Flags struct {
 	autoBucket    bool
 	quiet         bool
 
-	boltDb         string
-	directFsPath   string
-	directFsMeta   string
-	directFsBucket string
-	fsPath         string
-	fsMeta         string
+	boltDb              string
+	directFsPath        string
+	directFsMeta        string
+	directFsBucket      string
+	directFsCreatePaths bool
+
+	fsPath        string
+	fsMeta        string
+	fsCreatePaths bool
 
 	debugCPU  string
 	debugHost string
@@ -63,11 +66,15 @@ func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
 	// Backend specific:
 	flagSet.StringVar(&f.backendKind, "backend", "", "Backend to use to store data (memory, bolt, directfs, fs)")
 	flagSet.StringVar(&f.boltDb, "bolt.db", "locals3.db", "Database path / name when using bolt backend")
+
 	flagSet.StringVar(&f.directFsPath, "directfs.path", "", "File path to serve using S3. You should not modify the contents of this path outside gofakes3 while it is running as it can cause inconsistencies.")
 	flagSet.StringVar(&f.directFsMeta, "directfs.meta", "", "Optional path for storing S3 metadata for your bucket. If not passed, metadata will not persist between restarts of gofakes3.")
 	flagSet.StringVar(&f.directFsBucket, "directfs.bucket", "mybucket", "Name of the bucket for your file path; this will be the only supported bucket by the 'directfs' backend for the duration of your run.")
+	flagSet.BoolVar(&f.directFsCreatePaths, "directfs.create", false, "Create all paths for direct filesystem backend")
+
 	flagSet.StringVar(&f.fsPath, "fs.path", "", "Path to your S3 buckets. Buckets are stored under the '/buckets' subpath.")
 	flagSet.StringVar(&f.fsMeta, "fs.meta", "", "Optional path for storing S3 metadata for your buckets. Defaults to the '/metadata' subfolder of -fs.path if not passed.")
+	flagSet.BoolVar(&f.fsCreatePaths, "fs.create", false, "Create all paths for filesystem backends")
 
 	// Debugging:
 	flagSet.StringVar(&f.debugHost, "debug.host", "", "Run the debug server on this host")
@@ -76,6 +83,20 @@ func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
 	// Deprecated:
 	flagSet.StringVar(&f.boltDb, "db", "locals3.db", "Deprecated; use -bolt.db")
 	flagSet.StringVar(&f.initialBucket, "bucket", "", `Deprecated; use -initialbucket`)
+}
+
+func (f *fakeS3Flags) fsPathFlags() (flags s3afero.FsFlags) {
+	if f.fsCreatePaths {
+		flags |= s3afero.FsPathCreateAll
+	}
+	return flags
+}
+
+func (f *fakeS3Flags) directFsPathFlags() (flags s3afero.FsFlags) {
+	if f.directFsCreatePaths {
+		flags |= s3afero.FsPathCreateAll
+	}
+	return flags
 }
 
 func (f *fakeS3Flags) timeOptions() (source gofakes3.TimeSource, skewLimit time.Duration, err error) {
@@ -163,14 +184,14 @@ func run() error {
 			log.Println("warning: time source not supported by this backend")
 		}
 
-		baseFs, err := s3afero.FsPath(values.fsPath)
+		baseFs, err := s3afero.FsPath(values.fsPath, values.fsPathFlags())
 		if err != nil {
 			return fmt.Errorf("gofakes3: could not create -fs.path: %v", err)
 		}
 
 		var options []s3afero.MultiOption
 		if values.fsMeta != "" {
-			metaFs, err := s3afero.FsPath(values.fsMeta)
+			metaFs, err := s3afero.FsPath(values.fsMeta, values.fsPathFlags())
 			if err != nil {
 				return fmt.Errorf("gofakes3: could not create -fs.meta: %v", err)
 			}
@@ -193,14 +214,14 @@ func run() error {
 			log.Println("warning: time source not supported by this backend")
 		}
 
-		baseFs, err := s3afero.FsPath(values.directFsPath)
+		baseFs, err := s3afero.FsPath(values.directFsPath, values.directFsPathFlags())
 		if err != nil {
 			return fmt.Errorf("gofakes3: could not create -directfs.path: %v", err)
 		}
 
 		var metaFs afero.Fs
 		if values.directFsMeta != "" {
-			metaFs, err = s3afero.FsPath(values.directFsMeta)
+			metaFs, err = s3afero.FsPath(values.directFsMeta, values.directFsPathFlags())
 			if err != nil {
 				return fmt.Errorf("gofakes3: could not create -directfs.meta: %v", err)
 			}
