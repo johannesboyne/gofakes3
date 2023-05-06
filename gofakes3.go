@@ -461,6 +461,12 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 		return ErrNotModified
 	}
 
+	lastModified, _ := time.Parse(http.TimeFormat, obj.Metadata["Last-Modified"])
+	ifModifiedSince, _ := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since"))
+	if !lastModified.IsZero() && !ifModifiedSince.Before(lastModified) {
+		return ErrNotModified
+	}
+
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	return nil
