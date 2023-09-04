@@ -28,13 +28,14 @@ type GoFakeS3 struct {
 	storage   Backend
 	versioned VersionedBackend
 
-	timeSource              TimeSource
-	timeSkew                time.Duration
-	metadataSizeLimit       int
-	integrityCheck          bool
-	failOnUnimplementedPage bool
-	hostBucket              bool
-	autoBucket              bool
+	timeSource              TimeSource    // WithTimeSource
+	timeSkew                time.Duration // WithTimeSkewLimit
+	metadataSizeLimit       int           // WithMetadataSizeLimit
+	integrityCheck          bool          // WithIntegrityCheck
+	failOnUnimplementedPage bool          // WithUnimplementedPageError
+	hostBucket              bool          // WithHostBucket
+	hostBucketBases         []string      // WithHostBucketBase
+	autoBucket              bool          // WithAutoBucket
 	uploader                *uploader
 	log                     Logger
 }
@@ -80,7 +81,9 @@ func (g *GoFakeS3) Server() http.Handler {
 		handler = g.timeSkewMiddleware(handler)
 	}
 
-	if g.hostBucket {
+	if len(g.hostBucketBases) > 0 {
+		handler = g.hostBucketBaseMiddleware(handler)
+	} else if g.hostBucket {
 		handler = g.hostBucketMiddleware(handler)
 	}
 
@@ -113,6 +116,45 @@ func (g *GoFakeS3) hostBucketMiddleware(handler http.Handler) http.Handler {
 		parts := strings.SplitN(rq.Host, ".", 2)
 		bucket := parts[0]
 
+		p := rq.URL.Path
+		rq.URL.Path = "/" + bucket
+		if p != "/" {
+			rq.URL.Path += p
+		}
+		g.log.Print(LogInfo, p, "=>", rq.URL)
+
+		handler.ServeHTTP(w, rq)
+	})
+}
+
+// hostBucketBaseMiddleware forces the server to use VirtualHost-style bucket URLs:
+// https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html
+func (g *GoFakeS3) hostBucketBaseMiddleware(handler http.Handler) http.Handler {
+	bases := make([]string, len(g.hostBucketBases))
+	for idx, base := range g.hostBucketBases {
+		bases[idx] = "." + strings.Trim(base, ".")
+	}
+
+	matchBucket := func(host string) (bucket string, ok bool) {
+		for _, base := range bases {
+			if !strings.HasSuffix(host, base) {
+				continue
+			}
+			bucket = host[:len(host)-len(base)]
+			if idx := strings.IndexByte(bucket, '.'); idx >= 0 {
+				continue
+			}
+			return bucket, true
+		}
+		return "", false
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, rq *http.Request) {
+		bucket, ok := matchBucket(rq.Host)
+		if !ok {
+			handler.ServeHTTP(w, rq)
+			return
+		}
 		p := rq.URL.Path
 		rq.URL.Path = "/" + bucket
 		if p != "/" {
