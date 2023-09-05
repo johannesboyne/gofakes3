@@ -10,6 +10,7 @@ import (
 	httppprof "net/http/pprof"
 	"os"
 	"runtime/pprof"
+	"strings"
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
@@ -29,14 +30,15 @@ func main() {
 }
 
 type fakeS3Flags struct {
-	host          string
-	backendKind   string
-	initialBucket string
-	fixedTimeStr  string
-	noIntegrity   bool
-	hostBucket    bool
-	autoBucket    bool
-	quiet         bool
+	host            string
+	backendKind     string
+	initialBucket   string
+	fixedTimeStr    string
+	noIntegrity     bool
+	hostBucket      bool
+	hostBucketBases HostList
+	autoBucket      bool
+	quiet           bool
 
 	boltDb              string
 	directFsPath        string
@@ -57,8 +59,17 @@ func (f *fakeS3Flags) attach(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.fixedTimeStr, "time", "", "RFC3339 format. If passed, the server's clock will always see this time; does not affect existing stored dates.")
 	flagSet.StringVar(&f.initialBucket, "initialbucket", "", "If passed, this bucket will be created on startup if it does not already exist.")
 	flagSet.BoolVar(&f.noIntegrity, "no-integrity", false, "Pass this flag to disable Content-MD5 validation when uploading.")
-	flagSet.BoolVar(&f.hostBucket, "hostbucket", false, "If passed, the bucket name will be extracted from the first segment of the hostname, rather than the first part of the URL path.")
 	flagSet.BoolVar(&f.autoBucket, "autobucket", false, "If passed, nonexistent buckets will be created on first use instead of raising an error")
+	flagSet.BoolVar(&f.hostBucket, "hostbucket", false, ""+
+		"If passed, the bucket name will be extracted from the first segment of the hostname, "+
+		"rather than the first part of the URL path. Disables path-based mode. If you require both, use "+
+		"-hostbucketbase.")
+	flagSet.Var(&f.hostBucketBases, "hostbucketbase", ""+
+		"If passed, the bucket name will be presumed to be the hostname segment before the "+
+		"host bucket base, i.e. if hostbucketbase is 'example.com' and you request 'foo.example.com', "+
+		"the bucket is presumed to be 'foo'. Any other hostname not matching this pattern will use "+
+		"path routing. Takes precedence over -hostbucket. Can be passed multiple times, or as a single "+
+		"comma separated list")
 
 	// Logging
 	flagSet.BoolVar(&f.quiet, "quiet", false, "If passed, log messages are not printed to stderr")
@@ -256,6 +267,7 @@ func run() error {
 		gofakes3.WithTimeSource(timeSource),
 		gofakes3.WithLogger(logger),
 		gofakes3.WithHostBucket(values.hostBucket),
+		gofakes3.WithHostBucketBase(values.hostBucketBases.Values...),
 		gofakes3.WithAutoBucket(values.autoBucket),
 	)
 
@@ -289,4 +301,25 @@ func profile(values fakeS3Flags) (func(), error) {
 	}
 
 	return fn, nil
+}
+
+type HostList struct {
+	Values []string
+}
+
+func (sl HostList) String() string {
+	return strings.Join(sl.Values, ",")
+}
+
+func (sl HostList) Type() string { return "[]string" }
+
+func (sl *HostList) Set(s string) error {
+	for _, part := range strings.Split(s, ",") {
+		part = strings.Trim(strings.TrimSpace(part), ".")
+		if part == "" {
+			return fmt.Errorf("host is empty")
+		}
+		sl.Values = append(sl.Values, part)
+	}
+	return nil
 }

@@ -19,7 +19,6 @@ func WithTimeSource(timeSource TimeSource) Option {
 // calculate the skew.
 //
 // See DefaultSkewLimit for the starting value, set to '0' to disable.
-//
 func WithTimeSkewLimit(skew time.Duration) Option {
 	return func(g *GoFakeS3) { g.timeSkew = skew }
 }
@@ -60,10 +59,26 @@ func WithRequestID(id uint64) Option {
 // If active, the URL 'http://mybucket.localhost/object' will be routed
 // as if the URL path was '/mybucket/object'.
 //
-// See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html
-// for details.
+// This will apply to all requests. If you want to be more specific, provide
+// WithHostBucketBase.
+//
+// See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html for details.
 func WithHostBucket(enabled bool) Option {
 	return func(g *GoFakeS3) { g.hostBucket = enabled }
+}
+
+// WithHostBucketBase enables or disables bucket rewriting in the router, but only if the
+// host is a subdomain of the base.
+//
+// If set to 'example.com', the URL 'http://mybucket.example.com/object' will be routed as
+// if the URL path was '/mybucket/object', but 'http://example.com/bucket/object' will use
+// path-based bucket routing instead.
+//
+// You may pass multiple bases, they are tested in order.
+//
+// See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html for details.
+func WithHostBucketBase(hosts ...string) Option {
+	return func(g *GoFakeS3) { g.hostBucketBases = hosts }
 }
 
 // WithoutVersioning disables versioning on the passed backend, if it supported it.
