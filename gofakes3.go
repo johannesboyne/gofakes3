@@ -1,7 +1,6 @@
 package gofakes3
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
@@ -36,7 +35,7 @@ type GoFakeS3 struct {
 	hostBucket              bool          // WithHostBucket
 	hostBucketBases         []string      // WithHostBucketBase
 	autoBucket              bool          // WithAutoBucket
-	uploader                *uploader
+	uploader                MultipartBackend
 	log                     Logger
 }
 
@@ -49,12 +48,18 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
-		uploader:          newUploader(),
+		uploader:          newUploader(backend),
 		requestID:         0,
 	}
 
 	// versioned MUST be set before options as one of the options disables it:
 	s3.versioned, _ = backend.(VersionedBackend)
+
+	if mpb, ok := backend.(MultipartBackend); ok {
+		s3.uploader = mpb
+	} else {
+		s3.uploader = newUploader(backend)
+	}
 
 	for _, opt := range options {
 		opt(s3)
@@ -855,9 +860,12 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 		return err
 	}
 
-	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
+	uploadID, err := g.uploader.CreateMultipartUpload(bucket, object, meta, g.timeSource.Now())
+	if err != nil {
+		return err
+	}
 	out := InitiateMultipartUpload{
-		UploadID: upload.ID,
+		UploadID: uploadID,
 		Bucket:   bucket,
 		Key:      object,
 	}
@@ -882,15 +890,6 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
 	if err != nil || size <= 0 {
 		return ErrMissingContentLength
-	}
-
-	upload, err := g.uploader.Get(bucket, object, uploadID)
-	if err != nil {
-		// FIXME: What happens with S3 when you abort a multipart upload while
-		// part uploads are still in progress? In this case, we will retain the
-		// reference to the part even though another request goroutine may
-		// delete it; it will be available for GC when this function finishes.
-		return err
 	}
 
 	defer r.Body.Close()
@@ -920,7 +919,7 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrIncompleteBody
 	}
 
-	etag, err := upload.AddPart(int(partNumber), g.timeSource.Now(), body)
+	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), g.timeSource.Now(), body)
 	if err != nil {
 		return err
 	}
@@ -931,7 +930,7 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "abort multipart upload", bucket, object, uploadID)
-	if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
+	if err := g.uploader.AbortMultipartUpload(bucket, object, uploadID); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -946,22 +945,13 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	upload, err := g.uploader.Complete(bucket, object, uploadID)
+	versionID, etag, err := g.uploader.CompleteMultipartUpload(bucket, object, uploadID, &in)
 	if err != nil {
 		return err
 	}
 
-	fileBody, etag, err := upload.Reassemble(&in)
-	if err != nil {
-		return err
-	}
-
-	result, err := g.storage.PutObject(bucket, object, upload.Meta, bytes.NewReader(fileBody), int64(len(fileBody)))
-	if err != nil {
-		return err
-	}
-	if result.VersionID != "" {
-		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	if versionID != "" {
+		w.Header().Set("x-amz-version-id", string(versionID))
 	}
 
 	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
@@ -988,7 +978,7 @@ func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r 
 		maxUploads = DefaultMaxUploads
 	}
 
-	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
+	out, err := g.uploader.ListMultipartUploads(bucket, marker, prefix, maxUploads)
 	if err != nil {
 		return err
 	}
