@@ -230,6 +230,8 @@ type Backend interface {
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
+
+	CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (CopyObjectResult, error)
 }
 
 // VersionedBackend may be optionally implemented by a Backend in order to support

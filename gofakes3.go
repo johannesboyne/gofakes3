@@ -707,16 +707,10 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	if err != nil {
 		return err
 	}
-	srcObj, err := g.storage.GetObject(srcBucket, srcKey, nil)
+	srcObj, err := g.storage.HeadObject(srcBucket, srcKey)
 	if err != nil {
 		return err
 	}
-
-	if srcObj == nil {
-		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
-		return ErrInternal
-	}
-	defer srcObj.Contents.Close()
 
 	// XXX No support for delete marker
 	// "If the current version of the object is a delete marker, Amazon S3
@@ -729,7 +723,7 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 		}
 	}
 
-	result, err := g.storage.PutObject(bucket, object, meta, srcObj.Contents, srcObj.Size)
+	result, err := g.storage.CopyObject(srcBucket, srcKey, bucket, object, meta)
 	if err != nil {
 		return err
 	}
@@ -737,15 +731,11 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	if srcObj.VersionID != "" {
 		w.Header().Set("x-amz-copy-source-version-id", string(srcObj.VersionID))
 	}
-	if result.VersionID != "" {
-		g.log.Print(LogInfo, "CREATED VERSION:", bucket, object, result.VersionID)
-		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	if srcObj.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(srcObj.VersionID))
 	}
 
-	return g.xmlEncoder(w).Encode(CopyObjectResult{
-		ETag:         `"` + hex.EncodeToString(srcObj.Hash) + `"`,
-		LastModified: NewContentTime(g.timeSource.Now()),
-	})
+	return g.xmlEncoder(w).Encode(result)
 }
 
 func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
