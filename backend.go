@@ -317,7 +317,7 @@ type VersionedBackend interface {
 // gets finalised and pushed to the backend.
 type MultipartBackend interface {
 	CreateMultipartUpload(bucket, object string, meta map[string]string, initiated time.Time) (UploadID, error)
-	UploadPart(bucket, object string, id UploadID, partNumber int, at time.Time, body []byte) (etag string, err error)
+	UploadPart(bucket, object string, id UploadID, partNumber int, at time.Time, contentLength int64, input io.Reader) (etag string, err error)
 
 	ListMultipartUploads(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error)
 	ListParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error)

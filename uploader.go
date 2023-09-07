@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"math/big"
 	"net/url"
 	"strings"
@@ -363,9 +364,16 @@ func (u *uploader) AbortMultipartUpload(bucket, object string, id UploadID) erro
 	return nil
 }
 
-func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int, at time.Time, body []byte) (etag string, err error) {
+func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int, at time.Time, contentLength int64, input io.Reader) (etag string, err error) {
 	if partNumber > MaxUploadPartNumber {
 		return "", ErrInvalidPart
+	}
+	body, err := io.ReadAll(input)
+	if err != nil {
+		return "", err
+	}
+	if len(body) != int(contentLength) {
+		return "", ErrIncompleteBody
 	}
 	mpu, err := u.getUnlocked(bucket, object, id)
 	if err != nil {

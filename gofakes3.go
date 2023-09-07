@@ -910,16 +910,7 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 	}
 
-	body, err := ReadAll(rdr, size)
-	if err != nil {
-		return err
-	}
-
-	if int64(len(body)) != r.ContentLength {
-		return ErrIncompleteBody
-	}
-
-	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), g.timeSource.Now(), body)
+	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), g.timeSource.Now(), r.ContentLength, rdr)
 	if err != nil {
 		return err
 	}
