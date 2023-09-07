@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/internal/s3io"
@@ -336,21 +335,7 @@ func (db *Backend) PutObject(
 }
 
 func (db *Backend) CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result gofakes3.CopyObjectResult, err error) {
-	c, err := db.GetObject(srcBucket, srcKey, nil)
-	if err != nil {
-		return
-	}
-	defer c.Contents.Close()
-
-	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size)
-	if err != nil {
-		return
-	}
-
-	return gofakes3.CopyObjectResult{
-		ETag:         `"` + hex.EncodeToString(c.Hash) + `"`,
-		LastModified: gofakes3.NewContentTime(time.Now()),
-	}, nil
+	return gofakes3.CopyObject(db, srcBucket, srcKey, dstBucket, dstKey, meta)
 }
 
 func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {

@@ -1,8 +1,11 @@
 package gofakes3
 
 import (
+	"encoding/hex"
 	"io"
+	"time"
 
+	"github.com/Mikubill/gofakes3"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 )
 
@@ -309,6 +312,27 @@ type VersionedBackend interface {
 	// The Backend MUST treat a nil prefix identically to a zero prefix, and a
 	// nil page identically to a zero page.
 	ListBucketVersions(bucketName string, prefix *Prefix, page *ListBucketVersionsPage) (*ListBucketVersionsResult, error)
+}
+
+// CopyObject is a helper function useful for quickly implementing CopyObject on
+// a backend that already supports GetObject and PutObject. This isn't very
+// efficient so only use this if performance isn't important.
+func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result gofakes3.CopyObjectResult, err error) {
+	c, err := db.GetObject(srcBucket, srcKey, nil)
+	if err != nil {
+		return
+	}
+	defer c.Contents.Close()
+
+	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size)
+	if err != nil {
+		return
+	}
+
+	return gofakes3.CopyObjectResult{
+		ETag:         `"` + hex.EncodeToString(c.Hash) + `"`,
+		LastModified: gofakes3.NewContentTime(time.Now()),
+	}, nil
 }
 
 func MergeMetadata(db Backend, bucketName string, objectName string, meta map[string]string) error {
