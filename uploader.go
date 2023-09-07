@@ -450,6 +450,9 @@ func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, i
 	if err != nil {
 		return "", "", err
 	}
+
+	// if getUnlocked succeeded, so will this:
+	u.buckets[bucket].remove(id)
 	return result.VersionID, hash, nil
 }
 
