@@ -151,7 +151,8 @@ func (bu *bucketUploads) remove(uploadID UploadID) {
 // persistent multipart upload handling, or it could be satisfied by this
 // naive implementation.
 type uploader struct {
-	storage Backend
+	timeSource TimeSource
+	storage    Backend
 	// uploadIDs use a big.Int to allow unbounded IDs (not that you'd be
 	// expected to ever generate 4.2 billion of these but who are we to judge?)
 	uploadID *big.Int
@@ -160,15 +161,16 @@ type uploader struct {
 	mu      sync.Mutex
 }
 
-func newUploader(b Backend) *uploader {
+func newUploader(b Backend, timeSource TimeSource) *uploader {
 	return &uploader{
-		buckets:  make(map[string]*bucketUploads),
-		storage:  b,
-		uploadID: new(big.Int),
+		buckets:    make(map[string]*bucketUploads),
+		storage:    b,
+		timeSource: timeSource,
+		uploadID:   new(big.Int),
 	}
 }
 
-func (u *uploader) CreateMultipartUpload(bucket, object string, meta map[string]string, initiated time.Time) (UploadID, error) {
+func (u *uploader) CreateMultipartUpload(bucket, object string, meta map[string]string) (UploadID, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
@@ -179,7 +181,7 @@ func (u *uploader) CreateMultipartUpload(bucket, object string, meta map[string]
 		Bucket:    bucket,
 		Object:    object,
 		Meta:      meta,
-		Initiated: initiated,
+		Initiated: u.timeSource.Now(),
 	}
 
 	// FIXME: make sure the uploader responds to DeleteBucket
@@ -364,7 +366,7 @@ func (u *uploader) AbortMultipartUpload(bucket, object string, id UploadID) erro
 	return nil
 }
 
-func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int, at time.Time, contentLength int64, input io.Reader) (etag string, err error) {
+func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int, contentLength int64, input io.Reader) (etag string, err error) {
 	if partNumber > MaxUploadPartNumber {
 		return "", ErrInvalidPart
 	}
@@ -393,7 +395,7 @@ func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int
 		PartNumber:   partNumber,
 		Body:         body,
 		ETag:         etag,
-		LastModified: NewContentTime(at),
+		LastModified: NewContentTime(u.timeSource.Now()),
 	}
 	if partNumber >= len(mpu.parts) {
 		mpu.parts = append(mpu.parts, make([]*multipartUploadPart, partNumber-len(mpu.parts)+1)...)

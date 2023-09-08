@@ -2,7 +2,6 @@ package gofakes3
 
 import (
 	"io"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 )
@@ -316,8 +315,8 @@ type VersionedBackend interface {
 // in-memory implementation which holds all parts in memory until the upload
 // gets finalised and pushed to the backend.
 type MultipartBackend interface {
-	CreateMultipartUpload(bucket, object string, meta map[string]string, initiated time.Time) (UploadID, error)
-	UploadPart(bucket, object string, id UploadID, partNumber int, at time.Time, contentLength int64, input io.Reader) (etag string, err error)
+	CreateMultipartUpload(bucket, object string, meta map[string]string) (UploadID, error)
+	UploadPart(bucket, object string, id UploadID, partNumber int, contentLength int64, input io.Reader) (etag string, err error)
 
 	ListMultipartUploads(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error)
 	ListParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error)

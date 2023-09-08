@@ -48,18 +48,11 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
-		uploader:          newUploader(backend),
 		requestID:         0,
 	}
 
 	// versioned MUST be set before options as one of the options disables it:
 	s3.versioned, _ = backend.(VersionedBackend)
-
-	if mpb, ok := backend.(MultipartBackend); ok {
-		s3.uploader = mpb
-	} else {
-		s3.uploader = newUploader(backend)
-	}
 
 	for _, opt := range options {
 		opt(s3)
@@ -69,6 +62,11 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 	}
 	if s3.timeSource == nil {
 		s3.timeSource = DefaultTimeSource()
+	}
+	if mpb, ok := backend.(MultipartBackend); ok {
+		s3.uploader = mpb
+	} else {
+		s3.uploader = newUploader(backend, s3.timeSource)
 	}
 
 	return s3
@@ -860,7 +858,7 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 		return err
 	}
 
-	uploadID, err := g.uploader.CreateMultipartUpload(bucket, object, meta, g.timeSource.Now())
+	uploadID, err := g.uploader.CreateMultipartUpload(bucket, object, meta)
 	if err != nil {
 		return err
 	}
@@ -910,7 +908,7 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 	}
 
-	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), g.timeSource.Now(), r.ContentLength, rdr)
+	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), r.ContentLength, rdr)
 	if err != nil {
 		return err
 	}
