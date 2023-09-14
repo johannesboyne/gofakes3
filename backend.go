@@ -309,6 +309,22 @@ type VersionedBackend interface {
 	ListBucketVersions(bucketName string, prefix *Prefix, page *ListBucketVersionsPage) (*ListBucketVersionsResult, error)
 }
 
+// MultipartBackend may be optionally implemented by a Backend in order to
+// support S3 multiplart uploads.
+// If you don't implement MultipartBackend, GoFakeS3 will fall back to an
+// in-memory implementation which holds all parts in memory until the upload
+// gets finalised and pushed to the backend.
+type MultipartBackend interface {
+	CreateMultipartUpload(bucket, object string, meta map[string]string) (UploadID, error)
+	UploadPart(bucket, object string, id UploadID, partNumber int, contentLength int64, input io.Reader) (etag string, err error)
+
+	ListMultipartUploads(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error)
+	ListParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error)
+
+	AbortMultipartUpload(bucket, object string, id UploadID) error
+	CompleteMultipartUpload(bucket, object string, id UploadID, input *CompleteMultipartUploadRequest) (versionID VersionID, etag string, err error)
+}
+
 func MergeMetadata(db Backend, bucketName string, objectName string, meta map[string]string) error {
 	// get potential existing object to potentially carry metadata over
 	existingObj, err := db.GetObject(bucketName, objectName, nil)
