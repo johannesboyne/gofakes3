@@ -260,6 +260,10 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 	return result, nil
 }
 
+func (db *Backend) CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result gofakes3.CopyObjectResult, err error) {
+	return gofakes3.CopyObject(db, srcBucket, srcKey, dstBucket, dstKey, meta)
+}
+
 func (db *Backend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {
 	db.lock.Lock()
 	defer db.lock.Unlock()

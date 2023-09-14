@@ -1,7 +1,9 @@
 package gofakes3
 
 import (
+	"encoding/hex"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 )
@@ -230,6 +232,8 @@ type Backend interface {
 	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
+
+	CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (CopyObjectResult, error)
 }
 
 // VersionedBackend may be optionally implemented by a Backend in order to support
@@ -323,6 +327,27 @@ type MultipartBackend interface {
 
 	AbortMultipartUpload(bucket, object string, id UploadID) error
 	CompleteMultipartUpload(bucket, object string, id UploadID, input *CompleteMultipartUploadRequest) (versionID VersionID, etag string, err error)
+}
+
+// CopyObject is a helper function useful for quickly implementing CopyObject on
+// a backend that already supports GetObject and PutObject. This isn't very
+// efficient so only use this if performance isn't important.
+func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result CopyObjectResult, err error) {
+	c, err := db.GetObject(srcBucket, srcKey, nil)
+	if err != nil {
+		return
+	}
+	defer c.Contents.Close()
+
+	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size)
+	if err != nil {
+		return
+	}
+
+	return CopyObjectResult{
+		ETag:         `"` + hex.EncodeToString(c.Hash) + `"`,
+		LastModified: NewContentTime(time.Now()),
+	}, nil
 }
 
 func MergeMetadata(db Backend, bucketName string, objectName string, meta map[string]string) error {
