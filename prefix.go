@@ -51,7 +51,7 @@ func NewFolderPrefix(prefix string) (p Prefix) {
 //
 func (p Prefix) FilePrefix() (path, remaining string, ok bool) {
 	if !p.HasPrefix || !p.HasDelimiter || p.Delimiter != "/" {
-		return "", "", ok
+		return "", "", p.Delimiter == "/"
 	}
 
 	idx := strings.LastIndexByte(p.Prefix, '/')
