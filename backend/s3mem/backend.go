@@ -92,7 +92,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 	if page.Marker != "" {
 		iter.Seek(page.Marker)
-		// If the current item is the Marker, move to the next item
+		// If the current item is the Marker, move to the next item.
 		if iter.Key() == page.Marker {
 			iter.Next()
 		}
