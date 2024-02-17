@@ -216,6 +216,7 @@ func (db *SingleBucketBackend) ensureMeta(
 		return &Metadata{
 			objectPath,
 			mtime,
+			nil,
 			size,
 			hash,
 			map[string]string{},

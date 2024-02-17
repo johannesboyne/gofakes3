@@ -340,7 +340,7 @@ func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta ma
 	}
 	defer c.Contents.Close()
 
-	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size)
+	_, err = db.PutObject(dstBucket, dstKey, meta, c.Tags, c.Contents, c.Size)
 	if err != nil {
 		return
 	}
