@@ -92,7 +92,10 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 	if page.Marker != "" {
 		iter.Seek(page.Marker)
-		iter.Next() // Move to the next item after the Marker
+		// If the current item is the Marker, move to the next item.
+		if iter.Key() == page.Marker {
+			iter.Next()
+		}
 	}
 
 	var cnt int64 = 0
@@ -102,18 +105,18 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 	for iter.Next() {
 		item := iter.Value().(*bucketObject)
 
-		if !prefix.Match(item.data.name, &match) {
+		switch {
+		case !prefix.Match(item.data.name, &match):
 			continue
-		} else if item.data.deleteMarker {
+		case item.data.deleteMarker:
 			continue
-		} else if match.CommonPrefix {
+		case match.CommonPrefix:
 			if match.MatchedPart == lastMatchedPart {
 				continue // Should not count towards keys
 			}
 			response.AddPrefix(match.MatchedPart)
 			lastMatchedPart = match.MatchedPart
-
-		} else {
+		default:
 			response.Add(&gofakes3.Content{
 				Key:          item.data.name,
 				LastModified: gofakes3.NewContentTime(item.data.lastModified),
