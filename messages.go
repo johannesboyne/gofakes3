@@ -55,6 +55,16 @@ type CompletedPart struct {
 type CompleteMultipartUploadRequest struct {
 	Parts []CompletedPart `xml:"Part"`
 }
+type Tag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+type Tagging struct {
+	XMLName xml.Name `xml:"Tagging"`
+	TagSet  struct {
+		Tag []Tag `xml:"Tag"`
+	} `xml:"TagSet"`
+}
 
 func (c CompleteMultipartUploadRequest) partsAreSorted() bool {
 	return sort.IntsAreSorted(c.partIDs())

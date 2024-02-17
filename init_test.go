@@ -248,14 +248,14 @@ func (ts *testServer) backendObjectExists(bucket, key string) bool {
 	return obj != nil
 }
 
-func (ts *testServer) backendPutString(bucket, key string, meta map[string]string, in string) {
+func (ts *testServer) backendPutString(bucket, key string, meta map[string]string, tags map[string]string, in string) {
 	ts.Helper()
-	ts.OKAll(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in), int64(len(in))))
+	ts.OKAll(ts.backend.PutObject(bucket, key, meta, tags, strings.NewReader(in), int64(len(in))))
 }
 
-func (ts *testServer) backendPutBytes(bucket, key string, meta map[string]string, in []byte) {
+func (ts *testServer) backendPutBytes(bucket, key string, meta map[string]string, tags map[string]string, in []byte) {
 	ts.Helper()
-	ts.OKAll(ts.backend.PutObject(bucket, key, meta, bytes.NewReader(in), int64(len(in))))
+	ts.OKAll(ts.backend.PutObject(bucket, key, meta, tags, bytes.NewReader(in), int64(len(in))))
 }
 
 func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.ObjectRangeRequest) string {
