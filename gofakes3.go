@@ -1,7 +1,6 @@
 package gofakes3
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
@@ -28,14 +27,15 @@ type GoFakeS3 struct {
 	storage   Backend
 	versioned VersionedBackend
 
-	timeSource              TimeSource
-	timeSkew                time.Duration
-	metadataSizeLimit       int
-	integrityCheck          bool
-	failOnUnimplementedPage bool
-	hostBucket              bool
-	autoBucket              bool
-	uploader                *uploader
+	timeSource              TimeSource    // WithTimeSource
+	timeSkew                time.Duration // WithTimeSkewLimit
+	metadataSizeLimit       int           // WithMetadataSizeLimit
+	integrityCheck          bool          // WithIntegrityCheck
+	failOnUnimplementedPage bool          // WithUnimplementedPageError
+	hostBucket              bool          // WithHostBucket
+	hostBucketBases         []string      // WithHostBucketBase
+	autoBucket              bool          // WithAutoBucket
+	uploader                MultipartBackend
 	log                     Logger
 }
 
@@ -48,7 +48,6 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		timeSkew:          DefaultSkewLimit,
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
-		uploader:          newUploader(),
 		requestID:         0,
 	}
 
@@ -63,6 +62,11 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 	}
 	if s3.timeSource == nil {
 		s3.timeSource = DefaultTimeSource()
+	}
+	if mpb, ok := backend.(MultipartBackend); ok {
+		s3.uploader = mpb
+	} else {
+		s3.uploader = newUploader(backend, s3.timeSource)
 	}
 
 	return s3
@@ -80,7 +84,9 @@ func (g *GoFakeS3) Server() http.Handler {
 		handler = g.timeSkewMiddleware(handler)
 	}
 
-	if g.hostBucket {
+	if len(g.hostBucketBases) > 0 {
+		handler = g.hostBucketBaseMiddleware(handler)
+	} else if g.hostBucket {
 		handler = g.hostBucketMiddleware(handler)
 	}
 
@@ -113,6 +119,45 @@ func (g *GoFakeS3) hostBucketMiddleware(handler http.Handler) http.Handler {
 		parts := strings.SplitN(rq.Host, ".", 2)
 		bucket := parts[0]
 
+		p := rq.URL.Path
+		rq.URL.Path = "/" + bucket
+		if p != "/" {
+			rq.URL.Path += p
+		}
+		g.log.Print(LogInfo, p, "=>", rq.URL)
+
+		handler.ServeHTTP(w, rq)
+	})
+}
+
+// hostBucketBaseMiddleware forces the server to use VirtualHost-style bucket URLs:
+// https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html
+func (g *GoFakeS3) hostBucketBaseMiddleware(handler http.Handler) http.Handler {
+	bases := make([]string, len(g.hostBucketBases))
+	for idx, base := range g.hostBucketBases {
+		bases[idx] = "." + strings.Trim(base, ".")
+	}
+
+	matchBucket := func(host string) (bucket string, ok bool) {
+		for _, base := range bases {
+			if !strings.HasSuffix(host, base) {
+				continue
+			}
+			bucket = host[:len(host)-len(base)]
+			if idx := strings.IndexByte(bucket, '.'); idx >= 0 {
+				continue
+			}
+			return bucket, true
+		}
+		return "", false
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, rq *http.Request) {
+		bucket, ok := matchBucket(rq.Host)
+		if !ok {
+			handler.ServeHTTP(w, rq)
+			return
+		}
 		p := rq.URL.Path
 		rq.URL.Path = "/" + bucket
 		if p != "/" {
@@ -461,6 +506,12 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 		return ErrNotModified
 	}
 
+	lastModified, _ := time.Parse(http.TimeFormat, obj.Metadata["Last-Modified"])
+	ifModifiedSince, _ := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since"))
+	if !lastModified.IsZero() && !ifModifiedSince.Before(lastModified) {
+		return ErrNotModified
+	}
+
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	return nil
@@ -659,16 +710,10 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	if err != nil {
 		return err
 	}
-	srcObj, err := g.storage.GetObject(srcBucket, srcKey, nil)
+	srcObj, err := g.storage.HeadObject(srcBucket, srcKey)
 	if err != nil {
 		return err
 	}
-
-	if srcObj == nil {
-		g.log.Print(LogErr, "unexpected nil object for key", bucket, object)
-		return ErrInternal
-	}
-	defer srcObj.Contents.Close()
 
 	// XXX No support for delete marker
 	// "If the current version of the object is a delete marker, Amazon S3
@@ -681,7 +726,7 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 		}
 	}
 
-	result, err := g.storage.PutObject(bucket, object, meta, nil, srcObj.Contents, srcObj.Size)
+	result, err := g.storage.CopyObject(srcBucket, srcKey, bucket, object, meta)
 	if err != nil {
 		return err
 	}
@@ -689,15 +734,11 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	if srcObj.VersionID != "" {
 		w.Header().Set("x-amz-copy-source-version-id", string(srcObj.VersionID))
 	}
-	if result.VersionID != "" {
-		g.log.Print(LogInfo, "CREATED VERSION:", bucket, object, result.VersionID)
-		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	if srcObj.VersionID != "" {
+		w.Header().Set("x-amz-version-id", string(srcObj.VersionID))
 	}
 
-	return g.xmlEncoder(w).Encode(CopyObjectResult{
-		ETag:         `"` + hex.EncodeToString(srcObj.Hash) + `"`,
-		LastModified: NewContentTime(g.timeSource.Now()),
-	})
+	return g.xmlEncoder(w).Encode(result)
 }
 
 func (g *GoFakeS3) deleteObject(bucket, object string, w http.ResponseWriter, r *http.Request) error {
@@ -807,9 +848,12 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 		return err
 	}
 
-	upload := g.uploader.Begin(bucket, object, meta, g.timeSource.Now())
+	uploadID, err := g.uploader.CreateMultipartUpload(bucket, object, meta)
+	if err != nil {
+		return err
+	}
 	out := InitiateMultipartUpload{
-		UploadID: upload.ID,
+		UploadID: uploadID,
 		Bucket:   bucket,
 		Key:      object,
 	}
@@ -836,15 +880,6 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrMissingContentLength
 	}
 
-	upload, err := g.uploader.Get(bucket, object, uploadID)
-	if err != nil {
-		// FIXME: What happens with S3 when you abort a multipart upload while
-		// part uploads are still in progress? In this case, we will retain the
-		// reference to the part even though another request goroutine may
-		// delete it; it will be available for GC when this function finishes.
-		return err
-	}
-
 	defer r.Body.Close()
 	var rdr io.Reader = r.Body
 
@@ -863,16 +898,7 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 	}
 
-	body, err := ReadAll(rdr, size)
-	if err != nil {
-		return err
-	}
-
-	if int64(len(body)) != r.ContentLength {
-		return ErrIncompleteBody
-	}
-
-	etag, err := upload.AddPart(int(partNumber), g.timeSource.Now(), body)
+	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), r.ContentLength, rdr)
 	if err != nil {
 		return err
 	}
@@ -944,7 +970,7 @@ func (g *GoFakeS3) getObjectTags(bucket, object string, version string, w http.R
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
 	g.log.Print(LogInfo, "abort multipart upload", bucket, object, uploadID)
-	if _, err := g.uploader.Complete(bucket, object, uploadID); err != nil {
+	if err := g.uploader.AbortMultipartUpload(bucket, object, uploadID); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -959,22 +985,13 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	upload, err := g.uploader.Complete(bucket, object, uploadID)
+	versionID, etag, err := g.uploader.CompleteMultipartUpload(bucket, object, uploadID, &in)
 	if err != nil {
 		return err
 	}
 
-	fileBody, etag, err := upload.Reassemble(&in)
-	if err != nil {
-		return err
-	}
-
-	result, err := g.storage.PutObject(bucket, object, upload.Meta, nil, bytes.NewReader(fileBody), int64(len(fileBody)))
-	if err != nil {
-		return err
-	}
-	if result.VersionID != "" {
-		w.Header().Set("x-amz-version-id", string(result.VersionID))
+	if versionID != "" {
+		w.Header().Set("x-amz-version-id", string(versionID))
 	}
 
 	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
@@ -1001,7 +1018,7 @@ func (g *GoFakeS3) listMultipartUploads(bucket string, w http.ResponseWriter, r 
 		maxUploads = DefaultMaxUploads
 	}
 
-	out, err := g.uploader.List(bucket, marker, prefix, maxUploads)
+	out, err := g.uploader.ListMultipartUploads(bucket, marker, prefix, maxUploads)
 	if err != nil {
 		return err
 	}
@@ -1137,7 +1154,10 @@ func metadataSize(meta map[string]string) int {
 func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (map[string]string, error) {
 	meta := make(map[string]string)
 	for hk, hv := range headers {
-		if strings.HasPrefix(hk, "X-Amz-") || hk == "Content-Type" || hk == "Content-Disposition" {
+		if strings.HasPrefix(hk, "X-Amz-") ||
+			hk == "Content-Type" ||
+			hk == "Content-Disposition" ||
+			hk == "Content-Encoding" {
 			meta[hk] = hv[0]
 		}
 	}

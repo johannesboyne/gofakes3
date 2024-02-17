@@ -31,6 +31,7 @@ type MultiBucketBackend struct {
 	bucketFs  afero.Fs
 	metaStore *metaStore
 	dirMode   os.FileMode
+	flags     FsFlags
 
 	// FIXME(bw): values in here should not be used beyond the configuration
 	// step; maybe this can be cleaned up later using a builder struct or
@@ -47,19 +48,28 @@ func MultiBucket(fs afero.Fs, opts ...MultiOption) (*MultiBucketBackend, error) 
 		return nil, err
 	}
 
-	b := &MultiBucketBackend{
-		baseFs:   fs,
-		bucketFs: afero.NewBasePathFs(fs, "buckets"),
-		dirMode:  0700,
-	}
+	b := &MultiBucketBackend{}
 	for _, opt := range opts {
 		if err := opt(b); err != nil {
 			return nil, err
 		}
 	}
 
+	bucketsFs, err := NewBasePathFs(fs, "buckets", FsPathCreateAll)
+	if err != nil {
+		return nil, err
+	}
+
+	b.baseFs = fs
+	b.bucketFs = bucketsFs
+	b.dirMode = 0700
+
 	if b.configOnly.metaFs == nil {
-		b.configOnly.metaFs = afero.NewBasePathFs(fs, "metadata")
+		metaFs, err := NewBasePathFs(fs, "metadata", FsPathCreateAll)
+		if err != nil {
+			return nil, err
+		}
+		b.configOnly.metaFs = metaFs
 	}
 	b.metaStore = newMetaStore(b.configOnly.metaFs, modTimeFsCalc(fs))
 
@@ -141,7 +151,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 		}
 
 		if entry.IsDir() {
-			response.AddPrefix(path.Join(prefixPath, prefixPart))
+			response.AddPrefix(path.Join(prefixPath, prefixPart, entry.Name()) + "/")
 
 		} else {
 			size := entry.Size()
@@ -292,6 +302,8 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 		return nil, gofakes3.KeyNotFound(objectName)
 	} else if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
@@ -331,7 +343,6 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	} else if err != nil {
 		return nil, err
 	}
-
 	defer func() {
 		// If an error occurs, the caller may not have access to Object.Body in order to close it:
 		if obj == nil && rerr != nil {
@@ -342,6 +353,8 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
+	} else if stat.IsDir() {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
@@ -454,6 +467,10 @@ func (db *MultiBucketBackend) PutObject(
 	}
 
 	return result, nil
+}
+
+func (db *MultiBucketBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result gofakes3.CopyObjectResult, err error) {
+	return gofakes3.CopyObject(db, srcBucket, srcKey, dstBucket, dstKey, meta)
 }
 
 func (db *MultiBucketBackend) DeleteObject(bucketName, objectName string) (result gofakes3.ObjectDeleteResult, rerr error) {

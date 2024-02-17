@@ -277,6 +277,37 @@ func TestCreateObjectWithContentDisposition(t *testing.T) {
 	}
 }
 
+func TestCreateObjectWithContentEncoding(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	_, err := svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+		Body: bytes.NewReader([]byte{ // "hello", gzipped
+			0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xcb, 0x48,
+			0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00,
+			0x00,
+		}),
+		ContentType:     aws.String("text/plain"),
+		ContentEncoding: aws.String("gzip"),
+	})
+	ts.OK(err)
+
+	obj, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("object"),
+	})
+	content, err := io.ReadAll(obj.Body)
+	if err != nil {
+		t.Fatal("error reading body", err)
+	}
+	if !bytes.Equal(content, []byte("hello")) {
+		t.Fatal("incorrect body with Content-Encoding: gzip")
+	}
+}
+
 func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()

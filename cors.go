@@ -11,6 +11,7 @@ var (
 		"Accept-Encoding",
 		"Authorization",
 		"Content-Disposition",
+		"Content-Encoding",
 		"Content-Length",
 		"Content-Type",
 		"X-Amz-Date",

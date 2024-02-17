@@ -82,6 +82,39 @@ func TestHostBucketMiddleware(t *testing.T) {
 	}
 }
 
+func TestHostBucketBaseMiddleware(t *testing.T) {
+	for _, tc := range []struct {
+		bases   []string
+		host    string
+		inPath  string
+		outPath string
+	}{
+		{[]string{"localhost"}, "foo", "/", "/"},
+		{[]string{"localhost"}, "localhost", "/", "/"},
+		{[]string{"localhost"}, "mybucket.fleebderb", "/", "/"},
+		{[]string{"localhost"}, "mybucket.localhost", "/", "/mybucket"},
+		{[]string{"localhost"}, "mybucket.localhost", "/object", "/mybucket/object"},
+	} {
+		t.Run("", func(t *testing.T) {
+			var g GoFakeS3
+			g.hostBucketBases = tc.bases
+			g.log = DiscardLog()
+
+			inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.outPath {
+					t.Fatal(r.URL.Path, "!=", tc.outPath)
+				}
+			})
+
+			handler := g.hostBucketBaseMiddleware(inner)
+			rq := httptest.NewRequest("GET", tc.inPath, nil)
+			rq.Host = tc.host
+			rs := httptest.NewRecorder()
+			handler.ServeHTTP(rs, rq)
+		})
+	}
+}
+
 type failingResponseWriter struct {
 	*httptest.ResponseRecorder
 }

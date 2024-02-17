@@ -298,7 +298,7 @@ func TestMultiCreateBucket(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 
-	fs, err := FsPath(tmp)
+	fs, err := FsPath(tmp, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

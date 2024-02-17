@@ -1,7 +1,9 @@
 package gofakes3
 
 import (
+	"encoding/hex"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 )
@@ -231,6 +233,8 @@ type Backend interface {
 	PutObject(bucketName, key string, meta map[string]string, tags map[string]string, input io.Reader, size int64) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
+
+	CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (CopyObjectResult, error)
 }
 
 // VersionedBackend may be optionally implemented by a Backend in order to support
@@ -308,6 +312,43 @@ type VersionedBackend interface {
 	// The Backend MUST treat a nil prefix identically to a zero prefix, and a
 	// nil page identically to a zero page.
 	ListBucketVersions(bucketName string, prefix *Prefix, page *ListBucketVersionsPage) (*ListBucketVersionsResult, error)
+}
+
+// MultipartBackend may be optionally implemented by a Backend in order to
+// support S3 multiplart uploads.
+// If you don't implement MultipartBackend, GoFakeS3 will fall back to an
+// in-memory implementation which holds all parts in memory until the upload
+// gets finalised and pushed to the backend.
+type MultipartBackend interface {
+	CreateMultipartUpload(bucket, object string, meta map[string]string) (UploadID, error)
+	UploadPart(bucket, object string, id UploadID, partNumber int, contentLength int64, input io.Reader) (etag string, err error)
+
+	ListMultipartUploads(bucket string, marker *UploadListMarker, prefix Prefix, limit int64) (*ListMultipartUploadsResult, error)
+	ListParts(bucket, object string, uploadID UploadID, marker int, limit int64) (*ListMultipartUploadPartsResult, error)
+
+	AbortMultipartUpload(bucket, object string, id UploadID) error
+	CompleteMultipartUpload(bucket, object string, id UploadID, input *CompleteMultipartUploadRequest) (versionID VersionID, etag string, err error)
+}
+
+// CopyObject is a helper function useful for quickly implementing CopyObject on
+// a backend that already supports GetObject and PutObject. This isn't very
+// efficient so only use this if performance isn't important.
+func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result CopyObjectResult, err error) {
+	c, err := db.GetObject(srcBucket, srcKey, nil)
+	if err != nil {
+		return
+	}
+	defer c.Contents.Close()
+
+	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size)
+	if err != nil {
+		return
+	}
+
+	return CopyObjectResult{
+		ETag:         `"` + hex.EncodeToString(c.Hash) + `"`,
+		LastModified: NewContentTime(time.Now()),
+	}, nil
 }
 
 func MergeMetadata(db Backend, bucketName string, objectName string, meta map[string]string) error {
