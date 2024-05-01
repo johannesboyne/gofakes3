@@ -2,33 +2,27 @@
 [![Codecov](https://codecov.io/gh/johannesboyne/gofakes3/branch/master/graph/badge.svg)](https://codecov.io/gh/johannesboyne/gofakes3)
 
 ![Logo](/GoFakeS3.png)
+
 # AWS (GOFAKE)S3
 
-AWS S3 fake server and testing library for extensive S3 test integrations.
-Either by running a test-server, e.g. for testing of AWS Lambda functions
-accessing S3. Or, to have a simple and convencience S3 mock- and test-server.
+AWS S3 fake server and testing library for comprehensive S3 integration testing.
+This tool can be used to run a test server, for example, to support testing AWS Lambda functions that interact with S3. It also serves as a straightforward and convenient S3 mock and test server for various development needs.
 
-## What to use it for?
+## Intended Use
 
-We're using it for the local development of S3 dependent Lambda functions,
-to test AWS S3 golang implementations and access, and
-to test browser based direct uploads to S3 locally.
+**GOFAKE)S3** is primarily designed for:
+- Local development of S3-dependent AWS Lambda functions.
+- Testing implementations with AWS S3 access.
+- Facilitating browser-based direct uploads to S3 in a local testing environment.
 
+## When Not to Use (GOFAKE)S3?
 
-## What not to use it for?
+**(GOFAKE)S3** should not be used as a production service. Its primary purpose is to aid in development and testing:
+- **(GOFAKE)S3** is not designed for production-level data storage or handling.
+- It lacks the robustness required for safe, persistent access to production data.
+- The tool is still under development with significant portions of the AWS S3 API yet to be implemented. Consequently, breaking changes are expected.
 
-Please don't use gofakes3 as a production service. The intended use case for
-gofakes3 is currently to facilitate testing. It's not meant to be used for
-safe, persistent access to production data at the moment.
-
-There's no reason we couldn't set that as a stretch goal at a later date, but
-it's a long way down the road, especially while we have so much of the API left
-to implement; breaking changes are inevitable.
-
-In the meantime, there are more battle-hardened solutions for production
-workloads out there, some of which are listed in the "Similar Notable Projects"
-section below.
-
+For production environments, consider more established solutions. Some recommended alternatives can be found in the "Similar Notable Projects" section below.
 
 ## How to use it?
 
