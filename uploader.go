@@ -377,6 +377,8 @@ func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int
 	if len(body) != int(contentLength) {
 		return "", ErrIncompleteBody
 	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	mpu, err := u.getUnlocked(bucket, object, id)
 	if err != nil {
 		return "", err
@@ -405,6 +407,9 @@ func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int
 }
 
 func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, input *CompleteMultipartUploadRequest) (version VersionID, etag string, err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	mpu, err := u.getUnlocked(bucket, object, id)
 	if err != nil {
 		return "", "", err
