@@ -40,7 +40,7 @@ func TestContentTime(t *testing.T) {
 
 	var v = testMsg{
 		Foo:  "bar",
-		Time: NewContentTime(time.Date(2019, 1, 1, 12, 0, 0, 0, time.UTC)),
+		Time: NewContentTime(time.Date(2019, 1, 1, 7, 0, 0, 0, time.FixedZone("EST", -5*3600))), // 7am EST = 12pm UTC
 	}
 	out, err := xml.Marshal(&v)
 	if err != nil {
