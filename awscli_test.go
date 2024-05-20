@@ -44,20 +44,20 @@ func TestCLILsFiles(t *testing.T) {
 		t.Fatal()
 	}
 
-	cli.backendPutString(defaultBucket, "test-one", nil, "hello")
+	cli.backendPutString(defaultBucket, "test-one", nil, nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		nil, []string{"test-one"})
 
-	cli.backendPutString(defaultBucket, "test-two", nil, "hello")
+	cli.backendPutString(defaultBucket, "test-two", nil, nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		nil, []string{"test-one", "test-two"})
 
 	// only "test-one" and "test-two" should pass the prefix match
-	cli.backendPutString(defaultBucket, "no-match", nil, "hello")
+	cli.backendPutString(defaultBucket, "no-match", nil, nil, "hello")
 	cli.assertLsFiles(defaultBucket, "test-",
 		nil, []string{"test-one", "test-two"})
 
-	cli.backendPutString(defaultBucket, "test/yep", nil, "hello")
+	cli.backendPutString(defaultBucket, "test/yep", nil, nil, "hello")
 	cli.assertLsFiles(defaultBucket, "",
 		[]string{"test/"}, []string{"no-match", "test-one", "test-two"})
 
@@ -74,8 +74,8 @@ func TestCLIRmOne(t *testing.T) {
 	cli := newTestCLI(t)
 	defer cli.Close()
 
-	cli.backendPutString(defaultBucket, "foo", nil, "hello")
-	cli.backendPutString(defaultBucket, "bar", nil, "hello")
+	cli.backendPutString(defaultBucket, "foo", nil, nil, "hello")
+	cli.backendPutString(defaultBucket, "bar", nil, nil, "hello")
 	cli.assertLsFiles(defaultBucket, "", nil, []string{"foo", "bar"})
 
 	cli.rm(cli.fileArg(defaultBucket, "foo"))
@@ -86,9 +86,9 @@ func TestCLIRmMulti(t *testing.T) {
 	cli := newTestCLI(t)
 	defer cli.Close()
 
-	cli.backendPutString(defaultBucket, "foo", nil, "hello")
-	cli.backendPutString(defaultBucket, "bar", nil, "hello")
-	cli.backendPutString(defaultBucket, "baz", nil, "hello")
+	cli.backendPutString(defaultBucket, "foo", nil, nil, "hello")
+	cli.backendPutString(defaultBucket, "bar", nil, nil, "hello")
+	cli.backendPutString(defaultBucket, "baz", nil, nil, "hello")
 	cli.assertLsFiles(defaultBucket, "", nil, []string{"foo", "bar", "baz"})
 
 	cli.rmMulti(defaultBucket, "foo", "bar", "baz")
@@ -117,7 +117,7 @@ func TestCLIDownload(t *testing.T) {
 			cli := newTestCLI(t)
 			defer cli.Close()
 
-			cli.backendPutBytes(defaultBucket, "foo", nil, tc.in)
+			cli.backendPutBytes(defaultBucket, "foo", nil, nil, tc.in)
 			out := cli.download(defaultBucket, "foo")
 			if !bytes.Equal(out, tc.in) {
 				t.Fatal()
