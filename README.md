@@ -72,7 +72,7 @@ _, err = s3Client.PutObject(&s3.PutObjectInput{
 
 ```golang
 backend := s3mem.New()
-faker := gofakes3.New(backend)
+faker := gofakes3.New(s3Backend, gofakes3.WithHostBucket(true))
 ts := httptest.NewServer(faker.Server())
 defer ts.Close()
 
@@ -81,18 +81,27 @@ defer ts.Close()
 // Setup a new config
 cfg, _ := config.LoadDefaultConfig(
 	context.TODO(),
-    config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "SESSION")),
-    config.WithHTTPClient(&http.Client{
-        Transport: &http.Transport{
-            TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-        },
-    }),
-    config.WithEndpointResolverWithOptions(
-        aws.EndpointResolverWithOptionsFunc(func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
-            return aws.Endpoint{URL: ts.URL}, nil
-        }),
-    ),
-)
+	config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "SESSION")),
+	config.WithHTTPClient(&http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			// Override the dial address because the SDK uses the bucket name as a subdomain.
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				dialer := net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}
+				s3URL, _ := url.Parse(s3Server.URL)
+				return dialer.DialContext(ctx, network, s3URL.Host)
+			},
+		},
+	}),
+	config.WithEndpointResolverWithOptions(
+		aws.EndpointResolverWithOptionsFunc(func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{URL: ts.URL}, nil
+		}),
+		),
+	)
 
 // Create an Amazon S3 v2 client, important to use o.UsePathStyle
 // alternatively change local DNS settings, e.g., in /etc/hosts
