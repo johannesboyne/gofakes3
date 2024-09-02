@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"github.com/cevatbarisyilmaz/ara"
 	"io"
 	"io/ioutil"
 	"log"
@@ -143,10 +144,11 @@ type testServer struct {
 	gofakes3.TimeSourceAdvancer
 	*gofakes3.GoFakeS3
 
-	backend   gofakes3.Backend
-	versioned gofakes3.VersionedBackend
-	server    *httptest.Server
-	options   []gofakes3.Option
+	backend       gofakes3.Backend
+	versioned     gofakes3.VersionedBackend
+	server        *httptest.Server
+	options       []gofakes3.Option
+	useHostBucket bool
 
 	// if this is nil, no buckets are created. by default, a starting bucket is
 	// created using the value of the 'defaultBucket' constant.
@@ -161,6 +163,12 @@ func withoutInitialBuckets() testServerOption {
 }
 func withInitialBuckets(buckets ...string) testServerOption {
 	return func(ts *testServer) { ts.initialBuckets = buckets }
+}
+func withHostBucket() testServerOption {
+	return func(ts *testServer) {
+		ts.options = append(ts.options, gofakes3.WithHostBucket(true))
+		ts.useHostBucket = true
+	}
 }
 func withVersioning() testServerOption {
 	return func(ts *testServer) { ts.versioning = true }
@@ -272,11 +280,13 @@ func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.Object
 
 func (ts *testServer) s3Client() *s3.S3 {
 	ts.Helper()
+
 	config := aws.NewConfig()
 	config.WithEndpoint(ts.server.URL)
 	config.WithRegion("region")
+	config.WithHTTPClient(ara.NewClient(ara.NewCustomResolver(map[string][]string{fmt.Sprintf("%s.127.0.0.1", defaultBucket): {"127.0.0.1"}, "localhost": {"127.0.0.1"}})))
 	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(true) // Removes need for subdomain
+	config.WithS3ForcePathStyle(!ts.useHostBucket) // Removes need for subdomain
 	svc := s3.New(session.New(), config)
 	return svc
 }
@@ -371,7 +381,7 @@ func (ts *testServer) uploadPart(bucket, object string, uploadID string, num int
 	return &s3.CompletedPart{ETag: aws.String(*mpu.ETag), PartNumber: aws.Int64(num)}
 }
 
-func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, parts []*s3.CompletedPart, body interface{}) {
+func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, parts []*s3.CompletedPart, body interface{}, hostBucket bool) {
 	ts.Helper()
 
 	svc := ts.s3Client()
@@ -389,8 +399,18 @@ func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, part
 		ts.Fatal("missing location")
 	}
 
-	if *mpu.Location != fmt.Sprintf("%s/%s", ts.server.URL, object) {
-		ts.Fatal("unexpected location:", *mpu.Location)
+	// split into protocol, host, port
+	u, err := url.Parse(ts.server.URL)
+	ts.OK(err)
+
+	if hostBucket {
+		if *mpu.Location != fmt.Sprintf("%s://%s.%s/%s", u.Scheme, bucket, u.Host, object) {
+			ts.Fatal("unexpected location:", *mpu.Location)
+		}
+	} else {
+		if *mpu.Location != fmt.Sprintf("%s/%s/%s", ts.server.URL, bucket, object) {
+			ts.Fatal("unexpected location:", *mpu.Location)
+		}
 	}
 
 	_ = mpu // FIXME: assert some of this

@@ -139,22 +139,42 @@ func TestListMultipartUploadsPrefix(t *testing.T) {
 }
 
 func TestListMultipartUploadParts(t *testing.T) {
-	ts := newTestServer(t)
-	defer ts.Close()
+	doUpload := func(ts *testServer) (string, []*s3.CompletedPart) {
+		id := ts.createMultipartUpload(defaultBucket, "foo", nil)
 
-	id := ts.createMultipartUpload(defaultBucket, "foo", nil)
+		parts := []*s3.CompletedPart{
+			ts.uploadPart(defaultBucket, "foo", id, 1, []byte("abc")),
+			ts.uploadPart(defaultBucket, "foo", id, 2, []byte("def")),
+			ts.uploadPart(defaultBucket, "foo", id, 3, []byte("ghi")),
+		}
 
-	parts := []*s3.CompletedPart{
-		ts.uploadPart(defaultBucket, "foo", id, 1, []byte("abc")),
-		ts.uploadPart(defaultBucket, "foo", id, 2, []byte("def")),
-		ts.uploadPart(defaultBucket, "foo", id, 3, []byte("ghi")),
+		ts.assertListUploadParts(defaultBucket, "foo", id,
+			listUploadPartsOpts{}.withCompletedParts(parts...))
+
+		return id, parts
 	}
 
-	ts.assertListUploadParts(defaultBucket, "foo", id,
-		listUploadPartsOpts{}.withCompletedParts(parts...))
+	t.Run("location: HostBucket", func(t *testing.T) {
+		ts := newTestServer(t, withHostBucket())
+		defer ts.Close()
 
-	ts.assertCompleteUpload(defaultBucket, "foo", id, parts, []byte("abcdefghi"))
+		id, parts := doUpload(ts)
 
-	// No parts should be returned after the upload is completed:
-	ts.assertListUploadPartsFails(gofakes3.ErrNoSuchUpload, defaultBucket, "foo", id, listUploadPartsOpts{})
+		ts.assertCompleteUpload(defaultBucket, "foo", id, parts, []byte("abcdefghi"), true)
+
+		// No parts should be returned after the upload is completed:
+		ts.assertListUploadPartsFails(gofakes3.ErrNoSuchUpload, defaultBucket, "foo", id, listUploadPartsOpts{})
+	})
+
+	t.Run("location: PathBucket", func(t *testing.T) {
+		ts := newTestServer(t)
+		defer ts.Close()
+
+		id, parts := doUpload(ts)
+
+		ts.assertCompleteUpload(defaultBucket, "foo", id, parts, []byte("abcdefghi"), false)
+
+		// No parts should be returned after the upload is completed:
+		ts.assertListUploadPartsFails(gofakes3.ErrNoSuchUpload, defaultBucket, "foo", id, listUploadPartsOpts{})
+	})
 }
