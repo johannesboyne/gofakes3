@@ -139,7 +139,7 @@ func TestListMultipartUploadsPrefix(t *testing.T) {
 }
 
 func TestListMultipartUploadParts(t *testing.T) {
-	doUpload := func(ts *testServer) (string, []*s3.CompletedPart) {
+	doUpload := func(ts *testServer) {
 		id := ts.createMultipartUpload(defaultBucket, "foo", nil)
 
 		parts := []*s3.CompletedPart{
@@ -151,30 +151,21 @@ func TestListMultipartUploadParts(t *testing.T) {
 		ts.assertListUploadParts(defaultBucket, "foo", id,
 			listUploadPartsOpts{}.withCompletedParts(parts...))
 
-		return id, parts
+		ts.assertCompleteUpload(defaultBucket, "foo", id, parts, []byte("abcdefghi"))
+
+		// No parts should be returned after the upload is completed:
+		ts.assertListUploadPartsFails(gofakes3.ErrNoSuchUpload, defaultBucket, "foo", id, listUploadPartsOpts{})
 	}
 
 	t.Run("location: HostBucket", func(t *testing.T) {
 		ts := newTestServer(t, withHostBucket())
 		defer ts.Close()
-
-		id, parts := doUpload(ts)
-
-		ts.assertCompleteUpload(defaultBucket, "foo", id, parts, []byte("abcdefghi"), true)
-
-		// No parts should be returned after the upload is completed:
-		ts.assertListUploadPartsFails(gofakes3.ErrNoSuchUpload, defaultBucket, "foo", id, listUploadPartsOpts{})
+		doUpload(ts)
 	})
 
 	t.Run("location: PathBucket", func(t *testing.T) {
 		ts := newTestServer(t)
 		defer ts.Close()
-
-		id, parts := doUpload(ts)
-
-		ts.assertCompleteUpload(defaultBucket, "foo", id, parts, []byte("abcdefghi"), false)
-
-		// No parts should be returned after the upload is completed:
-		ts.assertListUploadPartsFails(gofakes3.ErrNoSuchUpload, defaultBucket, "foo", id, listUploadPartsOpts{})
+		doUpload(ts)
 	})
 }

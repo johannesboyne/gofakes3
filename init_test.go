@@ -286,7 +286,7 @@ func (ts *testServer) s3Client() *s3.S3 {
 	config.WithRegion("region")
 	config.WithHTTPClient(ara.NewClient(ara.NewCustomResolver(map[string][]string{fmt.Sprintf("%s.127.0.0.1", defaultBucket): {"127.0.0.1"}, "localhost": {"127.0.0.1"}})))
 	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(!ts.useHostBucket) // Removes need for subdomain
+	config.WithS3ForcePathStyle(!ts.useHostBucket)
 	svc := s3.New(session.New(), config)
 	return svc
 }
@@ -381,7 +381,7 @@ func (ts *testServer) uploadPart(bucket, object string, uploadID string, num int
 	return &s3.CompletedPart{ETag: aws.String(*mpu.ETag), PartNumber: aws.Int64(num)}
 }
 
-func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, parts []*s3.CompletedPart, body interface{}, hostBucket bool) {
+func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, parts []*s3.CompletedPart, body interface{}) {
 	ts.Helper()
 
 	svc := ts.s3Client()
@@ -403,7 +403,7 @@ func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, part
 	u, err := url.Parse(ts.server.URL)
 	ts.OK(err)
 
-	if hostBucket {
+	if ts.useHostBucket {
 		if *mpu.Location != fmt.Sprintf("%s://%s.%s/%s", u.Scheme, bucket, u.Host, object) {
 			ts.Fatal("unexpected location:", *mpu.Location)
 		}
