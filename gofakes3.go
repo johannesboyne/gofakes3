@@ -933,10 +933,17 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		w.Header().Set("x-amz-version-id", string(versionID))
 	}
 
+	protocol := "http"
+	if r.TLS != nil {
+		protocol = "https"
+	}
+	location := fmt.Sprintf("%s://%s/%s", protocol, r.Host, object)
+
 	return g.xmlEncoder(w).Encode(&CompleteMultipartUploadResult{
-		ETag:   etag,
-		Bucket: bucket,
-		Key:    object,
+		ETag:     etag,
+		Bucket:   bucket,
+		Key:      object,
+		Location: location,
 	})
 }
 

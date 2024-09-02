@@ -384,6 +384,15 @@ func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, part
 		},
 	})
 	ts.OK(err)
+
+	if mpu.Location == nil {
+		ts.Fatal("missing location")
+	}
+
+	if *mpu.Location != fmt.Sprintf("%s/%s", ts.server.URL, object) {
+		ts.Fatal("unexpected location:", *mpu.Location)
+	}
+
 	_ = mpu // FIXME: assert some of this
 
 	ts.assertObject(bucket, object, nil, body)
