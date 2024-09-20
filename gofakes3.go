@@ -852,7 +852,7 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 	if err != nil {
 		return err
 	}
-	out := InitiateMultipartUpload{
+	out := InitiateMultipartUploadResult{
 		UploadID: uploadID,
 		Bucket:   bucket,
 		Key:      object,
