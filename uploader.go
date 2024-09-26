@@ -28,6 +28,7 @@ A skiplist that maps object keys to upload ids is also maintained to
 support the ListMultipartUploads operation.
 
 From the docs:
+
 	In the response, the uploads are sorted by key. If your application has
 	initiated more than one multipart upload using the same object key,
 	then uploads in the response are first sorted by key. Additionally,
@@ -135,13 +136,13 @@ func (bu *bucketUploads) remove(uploadID UploadID) {
 // Multipart upload support has the following rather severe limitations (which
 // will hopefully be addressed in the future):
 //
-//	- uploads do not interface with the Backend, so they do not
-// 	  currently persist across reboots
+//   - uploads do not interface with the Backend, so they do not
+//     currently persist across reboots
 //
-//	- upload parts are held in memory, so if you want to upload something huge
-//	  in multiple parts (which is pretty much exactly what you'd want multipart
-//	  uploads for), you'll need to make sure your memory is also sufficiently
-//	  huge!
+//   - upload parts are held in memory, so if you want to upload something huge
+//     in multiple parts (which is pretty much exactly what you'd want multipart
+//     uploads for), you'll need to make sure your memory is also sufficiently
+//     huge!
 //
 // At this stage, the current thinking would be to add a second optional
 // Backend interface that allows persistent operations on multipart upload
@@ -447,11 +448,14 @@ func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, i
 	}
 
 	body := make([]byte, 0, size)
-	for _, part := range input.Parts {
-		body = append(body, mpu.parts[part.PartNumber].Body...)
+	hash := md5.New()
+	for _, inPart := range input.Parts {
+		upPart := mpu.parts[inPart.PartNumber]
+		body = append(body, upPart.Body...)
+		hash.Write([]byte(strings.Trim(upPart.ETag, "\"")))
 	}
 
-	hash := fmt.Sprintf("%x", md5.Sum(body))
+	etag = fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), len(input.Parts))
 
 	result, err := u.storage.PutObject(bucket, object, mpu.Meta, bytes.NewReader(body), int64(len(body)))
 	if err != nil {
@@ -460,7 +464,7 @@ func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, i
 
 	// if getUnlocked succeeded, so will this:
 	u.buckets[bucket].remove(id)
-	return result.VersionID, hash, nil
+	return result.VersionID, etag, nil
 }
 
 func (u *uploader) getUnlocked(bucket, object string, id UploadID) (mu *multipartUpload, err error) {

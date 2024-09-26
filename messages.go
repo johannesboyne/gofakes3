@@ -169,7 +169,7 @@ func (er ErrorResult) String() string {
 	return fmt.Sprintf("%s: [%s] %s", er.Key, er.Code, er.Message)
 }
 
-type InitiateMultipartUpload struct {
+type InitiateMultipartUploadResult struct {
 	Bucket   string   `xml:"Bucket"`
 	Key      string   `xml:"Key"`
 	UploadID UploadID `xml:"UploadId"`

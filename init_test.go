@@ -347,9 +347,34 @@ func (ts *testServer) assertMultipartUpload(bucket, object string, body interfac
 		u.PartSize = options.partSize
 	})
 	ts.OK(err)
-	_ = out
+
+	// s3manager will use multipart upload if the body consists of more than 1 part of the specified part size
+	if options.partSize < int64(len(contents)) {
+		if expectedETag := calculateETagByBody(contents, options.partSize); *out.ETag != expectedETag {
+			ts.Fatal("multipart upload etag mismatch:", *out.ETag, "!=", expectedETag)
+		}
+	}
 
 	ts.assertObject(bucket, object, nil, body)
+}
+
+func calculateETagByBody(contents []byte, partSize int64) string {
+	partCount := len(contents) / int(partSize)
+	if len(contents)%int(partSize) != 0 {
+		partCount++
+	}
+
+	hash := md5.New()
+	toHash := contents[:]
+	for len(toHash) > 0 {
+		toHashPartSize := partSize
+		if reminderSize := int64(len(toHash)); reminderSize < partSize {
+			toHashPartSize = reminderSize
+		}
+		hash.Write([]byte(hashMD5Bytes(toHash[:toHashPartSize]).Hex()))
+		toHash = toHash[toHashPartSize:]
+	}
+	return fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), partCount)
 }
 
 func (ts *testServer) createMultipartUpload(bucket, object string, meta map[string]string) (uploadID string) {
@@ -413,9 +438,19 @@ func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, part
 		}
 	}
 
-	_ = mpu // FIXME: assert some of this
+	if expectedETag := calculateETagBodyByParts(parts); *mpu.ETag != expectedETag {
+		ts.Fatal("multipart upload etag mismatch:", *mpu.ETag, "!=", expectedETag)
+	}
 
 	ts.assertObject(bucket, object, nil, body)
+}
+
+func calculateETagBodyByParts(parts []*s3.CompletedPart) string {
+	hash := md5.New()
+	for _, part := range parts {
+		hash.Write([]byte(strings.Trim(*part.ETag, `"`)))
+	}
+	return fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), len(parts))
 }
 
 func (ts *testServer) assertAbortMultipartUpload(bucket, object string, uploadID gofakes3.UploadID) {
