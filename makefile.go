@@ -1,4 +1,5 @@
-//+build tools
+//go:build tools
+// +build tools
 
 // Run this script like so:
 //
@@ -18,7 +19,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/shabbyrobe/gocovmerge"
+	"go.shabbyrobe.org/gocovmerge"
 	"golang.org/x/tools/cover"
 )
 
