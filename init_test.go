@@ -371,7 +371,7 @@ func calculateETagByBody(contents []byte, partSize int64) string {
 		if reminderSize := int64(len(toHash)); reminderSize < partSize {
 			toHashPartSize = reminderSize
 		}
-		hash.Write([]byte(hashMD5Bytes(toHash[:toHashPartSize]).Hex()))
+		hash.Write(hashMD5Bytes(toHash[:toHashPartSize]))
 		toHash = toHash[toHashPartSize:]
 	}
 	return fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), partCount)
@@ -438,17 +438,21 @@ func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, part
 		}
 	}
 
-	if expectedETag := calculateETagBodyByParts(parts); *mpu.ETag != expectedETag {
+	if expectedETag := ts.calculateETagBodyByParts(parts); *mpu.ETag != expectedETag {
 		ts.Fatal("multipart upload etag mismatch:", *mpu.ETag, "!=", expectedETag)
 	}
 
 	ts.assertObject(bucket, object, nil, body)
 }
 
-func calculateETagBodyByParts(parts []*s3.CompletedPart) string {
+func (ts *testServer) calculateETagBodyByParts(parts []*s3.CompletedPart) string {
 	hash := md5.New()
 	for _, part := range parts {
-		hash.Write([]byte(strings.Trim(*part.ETag, `"`)))
+		etagBytes, err := hex.DecodeString(strings.Trim(*part.ETag, `"`))
+		if err != nil {
+			ts.Fatal("failed to decode etag:", err)
+		}
+		hash.Write(etagBytes)
 	}
 	return fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), len(parts))
 }

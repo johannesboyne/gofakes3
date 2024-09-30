@@ -452,7 +452,11 @@ func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, i
 	for _, inPart := range input.Parts {
 		upPart := mpu.parts[inPart.PartNumber]
 		body = append(body, upPart.Body...)
-		hash.Write([]byte(strings.Trim(upPart.ETag, "\"")))
+		hashBytes, err := hex.DecodeString(strings.Trim(upPart.ETag, "\""))
+		if err != nil {
+			return "", "", ErrorMessagef(ErrInternal, "invalid etag for number %d is stored: %s", inPart.PartNumber, err)
+		}
+		hash.Write(hashBytes)
 	}
 
 	etag = fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), len(input.Parts))
