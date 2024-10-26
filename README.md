@@ -118,10 +118,14 @@ issues), but be aware, this software is used internally and for the local
 development only. Thus, it has no demand for correctness, performance or
 security.
 
-There are two ways to run locally: using DNS, or using S3 path mode.
+There are different ways to run locally: e.g., using DNS, using S3 path mode, or V2 setting the ENV-Var:
+
+```
+os.Setenv("AWS_ENDPOINT_URL_S3", "http://localhost:9000")
+```
 
 S3 path mode is the most flexible and least restrictive, but it does require that you
-are able to modify your client code.In Go, the modification would look like so:
+are able to modify your client code. In Go, the modification would look like so:
 
 	config := aws.Config{}
 	config.WithS3ForcePathStyle(true)
