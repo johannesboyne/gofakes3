@@ -12,12 +12,12 @@ import (
 //
 // URLs are assumed to break down into two common path segments, in the
 // following format:
-//   /<bucket>/<object>
+//
+//	/<bucket>/<object>
 //
 // The operation for most of the core functionality is built around HTTP
 // verbs, but outside the core functionality, the clean separation starts
 // to degrade, especially around multipart uploads.
-//
 func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	var (
 		path   = strings.Trim(r.URL.Path, "/")

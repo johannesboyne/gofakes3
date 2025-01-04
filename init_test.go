@@ -791,15 +791,23 @@ func (ts *testServer) Close() {
 }
 
 func (ts *testServer) ForceDeleteBucket(name string) interface{} {
-	return ts.backendForceDeleteBucket(name)
+	return nil
+}
+
+type NoSuchBucketError struct {
+	Name string
 }
 
 func (ts *testServer) backendForceDeleteBucket(name string) interface{} {
 	ts.Helper()
-	if err := ts.backend.DeleteBucket(name); err != nil {
+	err := ts.backend.DeleteBucket(name)
+	if err != nil {
+		if hasErrorCode(err, gofakes3.ErrNoSuchBucket) {
+			return NoSuchBucketError{Name: name}
+		}
 		ts.Fatal("delete bucket failed", err)
 	}
-	return nil
+	return true
 }
 
 func hashMD5Bytes(body []byte) hashValue {

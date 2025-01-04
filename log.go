@@ -37,7 +37,6 @@ const (
 //		}
 //	}
 //
-//
 // For logrus:
 //
 //	type LogrusLog struct {
@@ -56,7 +55,6 @@ const (
 //			panic("unknown level")
 //		}
 //	}
-//
 type Logger interface {
 	Print(level LogLevel, v ...interface{})
 }
