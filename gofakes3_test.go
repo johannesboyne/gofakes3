@@ -509,6 +509,22 @@ func TestDeleteBucket(t *testing.T) {
 			t.Fatal("expected ErrBucketNotEmpty, found", err)
 		}
 	})
+
+	t.Run("force-delete-does-not-fail-if-not-empty", func(t *testing.T) {
+		ts := newTestServer(t, withoutInitialBuckets())
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.backendCreateBucket("test")
+		ts.backendPutString("test", "test", nil, "test")
+		_, err := svc.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("test"),
+		})
+		if !hasErrorCode(err, gofakes3.ErrBucketNotEmpty) {
+			t.Fatal("expected ErrBucketNotEmpty, found", err)
+		}
+	})
+
 }
 
 func TestDeleteMulti(t *testing.T) {
