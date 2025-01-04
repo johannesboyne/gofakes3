@@ -243,6 +243,46 @@ func (db *Backend) DeleteBucket(name string) error {
 	})
 }
 
+func (db *Backend) ForceDeleteBucket(name string) error {
+	nameBts := []byte(name)
+
+	if bytes.Equal(nameBts, db.metaBucketName) {
+		return gofakes3.ResourceError(gofakes3.ErrInvalidBucketName, name)
+	}
+
+	return db.bolt.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(nameBts)
+		if b == nil {
+			return gofakes3.BucketNotFound(name)
+		}
+
+		// Delete all objects in the bucket
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if err := b.Delete(k); err != nil {
+				return fmt.Errorf("gofakes3: delete failed for object %q in bucket %q", k, name)
+			}
+		}
+
+		// Delete bucket metadata
+		metaBucket, err := db.metaBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		// FIXME: assumes a legacy database, where the bucket may not exist. Clean
+		// this up when there is a DB upgrade script.
+		if metaBucket != nil {
+			if err := metaBucket.deleteS3Bucket(name); err != nil {
+				return err
+			}
+		}
+
+		// Delete the bucket itself
+		return tx.DeleteBucket(nameBts)
+	})
+}
+
 func (db *Backend) BucketExists(name string) (exists bool, err error) {
 	err = db.bolt.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(name))
