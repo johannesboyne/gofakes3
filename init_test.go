@@ -790,6 +790,7 @@ func (ts *testServer) Close() {
 	ts.server.Close()
 }
 
+// will return nil/no error if the bucket does not exist, as nothing to delete
 func (ts *testServer) ForceDeleteBucket(name string) interface{} {
 	return nil
 }
