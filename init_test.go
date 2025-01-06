@@ -243,17 +243,17 @@ func (ts *testServer) backendCreateBucket(bucket string) {
 	}
 }
 
-func (ts *testServer) backendObjectExists(bucket, key string) bool {
+func (ts *testServer) backendObjectExists(bucket, key string) (bool, bool) {
 	ts.Helper()
 	obj, err := ts.backend.HeadObject(bucket, key)
 	if err != nil {
 		if hasErrorCode(err, gofakes3.ErrNoSuchKey) {
-			return false
+			return false, false
 		} else {
 			ts.Fatal(err)
 		}
 	}
-	return obj != nil
+	return obj != nil, false
 }
 
 func (ts *testServer) backendPutString(bucket, key string, meta map[string]string, in string) {
@@ -771,7 +771,7 @@ func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, 
 	}
 
 	var rs listBucketResult
-	if err := (svc.ListObjectsV2Pages(in, func(out *s3.ListObjectsV2Output, lastPage bool) bool {
+	if err := svc.ListObjectsV2Pages(in, func(out *s3.ListObjectsV2Output, lastPage bool) bool {
 		pages++
 		if pages > pageLimit {
 			panic("stuck in a page loop")
@@ -779,7 +779,7 @@ func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, 
 		rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
 		rs.Contents = append(rs.Contents, out.Contents...)
 		return !lastPage
-	})); err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -788,6 +788,27 @@ func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, 
 
 func (ts *testServer) Close() {
 	ts.server.Close()
+}
+
+// will return nil/no error if the bucket does not exist, as nothing to delete
+func (ts *testServer) ForceDeleteBucket(name string) interface{} {
+	return nil
+}
+
+type NoSuchBucketError struct {
+	Name string
+}
+
+func (ts *testServer) backendForceDeleteBucket(name string) interface{} {
+	ts.Helper()
+	err := ts.backend.DeleteBucket(name)
+	if err != nil {
+		if hasErrorCode(err, gofakes3.ErrNoSuchBucket) {
+			return NoSuchBucketError{Name: name}
+		}
+		ts.Fatal("delete bucket failed", err)
+	}
+	return true
 }
 
 func hashMD5Bytes(body []byte) hashValue {

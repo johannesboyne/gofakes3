@@ -180,6 +180,11 @@ type Backend interface {
 	// AWS does not validate the bucket's name for anything other than existence.
 	DeleteBucket(name string) error
 
+	// ForceDeleteBucket must delete a bucket and all its contents, regardless of
+	// whether the bucket is empty or not. This is useful for testing purposes
+	// where you need to clean up after yourself.
+	ForceDeleteBucket(name string) error
+
 	// GetObject must return a gofakes3.ErrNoSuchKey error if the object does
 	// not exist. See gofakes3.KeyNotFound() for a convenient way to create
 	// one.

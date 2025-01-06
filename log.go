@@ -5,9 +5,10 @@ import "log"
 type LogLevel string
 
 const (
-	LogErr  LogLevel = "ERR"
-	LogWarn LogLevel = "WARN"
-	LogInfo LogLevel = "INFO"
+	LogErr   LogLevel = "ERR"
+	LogWarn  LogLevel = "WARN"
+	LogInfo  LogLevel = "INFO"
+	LogDebug LogLevel = "DEBUG"
 )
 
 // Logger provides a very minimal target for logging implementations to hit to
@@ -36,7 +37,6 @@ const (
 //		}
 //	}
 //
-//
 // For logrus:
 //
 //	type LogrusLog struct {
@@ -55,7 +55,6 @@ const (
 //			panic("unknown level")
 //		}
 //	}
-//
 type Logger interface {
 	Print(level LogLevel, v ...interface{})
 }

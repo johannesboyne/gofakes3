@@ -21,6 +21,9 @@ func prefixFromQuery(query url.Values) Prefix {
 	}
 	_, prefix.HasPrefix = query["prefix"]
 	_, prefix.HasDelimiter = query["delimiter"]
+
+	prefix.HasPrefix = prefix.HasPrefix && prefix.Prefix != ""
+	prefix.HasDelimiter = prefix.HasDelimiter && prefix.Delimiter != ""
 	return prefix
 }
 
@@ -45,10 +48,10 @@ func NewFolderPrefix(prefix string) (p Prefix) {
 // ok will be false.
 //
 // For example:
+//
 //	/foo/bar/  : path: /foo/bar  remaining: ""
 //	/foo/bar/b : path: /foo/bar  remaining: "b"
 //	/foo/bar   : path: /foo      remaining: "bar"
-//
 func (p Prefix) FilePrefix() (path, remaining string, ok bool) {
 	if !p.HasPrefix || !p.HasDelimiter || p.Delimiter != "/" {
 		return "", "", p.Delimiter == "/"
@@ -70,7 +73,6 @@ func (p Prefix) FilePrefix() (path, remaining string, ok bool) {
 //
 // To check whether the key belongs in Contents or CommonPrefixes, compare the
 // result to key.
-//
 func (p Prefix) Match(key string, match *PrefixMatch) (ok bool) {
 	if !p.HasPrefix && !p.HasDelimiter {
 		// If there is no prefix in the search, the match is the prefix:

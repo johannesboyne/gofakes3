@@ -202,7 +202,7 @@ func TestCreateObjectMD5(t *testing.T) {
 		}
 	}
 
-	if ts.backendObjectExists(defaultBucket, "invalid") {
+	if exists, _ := ts.backendObjectExists(defaultBucket, "invalid"); exists {
 		t.Fatal("unexpected object")
 	}
 }
@@ -509,6 +509,22 @@ func TestDeleteBucket(t *testing.T) {
 			t.Fatal("expected ErrBucketNotEmpty, found", err)
 		}
 	})
+
+	t.Run("force-delete-does-not-fail-if-not-empty", func(t *testing.T) {
+		ts := newTestServer(t, withoutInitialBuckets())
+		defer ts.Close()
+		svc := ts.s3Client()
+
+		ts.backendCreateBucket("test")
+		ts.backendPutString("test", "test", nil, "test")
+		_, err := svc.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("test"),
+		})
+		if !hasErrorCode(err, gofakes3.ErrBucketNotEmpty) {
+			t.Fatal("expected ErrBucketNotEmpty, found", err)
+		}
+	})
+
 }
 
 func TestDeleteMulti(t *testing.T) {
@@ -573,6 +589,35 @@ func TestDeleteMulti(t *testing.T) {
 		assertDeletedKeys(t, rs, "bar", "foo")
 		ts.assertLs(defaultBucket, "", nil, []string{"baz"})
 	})
+}
+
+func TestForceDeleteBucket_BucketExists(t *testing.T) {
+	// Create a test server with no initial buckets
+	ts := newTestServer(t, withoutInitialBuckets())
+	ts.Helper()
+	bucketName := "test-bucket"
+	ts.backendCreateBucket(bucketName)
+
+	// Force delete the bucket
+	err := ts.ForceDeleteBucket(bucketName)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	exists, _ := ts.backendObjectExists(bucketName, "test-bucket")
+	if !exists {
+
+	}
+}
+
+func TestForceDeleteBucket_BucketDoesNotExist(t *testing.T) {
+	ts := newTestServer(t, withoutInitialBuckets())
+
+	bucketName := "nonexistent-bucket"
+	err := ts.ForceDeleteBucket(bucketName)
+	if err == gofakes3.ErrNonExistentBucket {
+		t.Fatalf("expected error %v, got %v", gofakes3.ErrNoSuchBucket, err)
+	}
 }
 
 func TestGetBucketLocation(t *testing.T) {

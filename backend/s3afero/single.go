@@ -459,6 +459,43 @@ func (db *SingleBucketBackend) DeleteBucket(name string) error {
 	return gofakes3.ErrNotImplemented
 }
 
+func (db *SingleBucketBackend) ForceDeleteBucket(name string) error {
+	if name != db.name {
+		return gofakes3.BucketNotFound(name)
+	}
+
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// Delete all objects in the bucket
+	var objects []string
+	err := afero.Walk(db.fs, ".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			objects = append(objects, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, object := range objects {
+		if err := db.deleteObjectLocked(name, object); err != nil {
+			return err
+		}
+	}
+
+	// Delete the bucket itself
+	if err := db.fs.RemoveAll("."); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (db *SingleBucketBackend) BucketExists(name string) (exists bool, err error) {
 	return db.name == name, nil
 }
