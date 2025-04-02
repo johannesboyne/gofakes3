@@ -10,6 +10,7 @@ var (
 		"Accept",
 		"Accept-Encoding",
 		"Authorization",
+		"cache-control",
 		"Content-Disposition",
 		"Content-Encoding",
 		"Content-Length",
@@ -24,24 +25,60 @@ var (
 		"x-amz-meta-private",
 		"x-amz-meta-to",
 		"x-amz-security-token",
+		"x-requested-with",
 	}
 	corsHeadersString = strings.Join(corsHeaders, ", ")
 )
 
 type withCORS struct {
-	r   http.Handler
-	log Logger
+	handler http.Handler
+
+	methods string
+	origin  string
+	headers string
+	expose  string
+}
+
+func wrapCORS(handler http.Handler) http.Handler {
+	return &withCORS{
+		handler: handler,
+		methods: "POST, GET, OPTIONS, PUT, DELETE, HEAD",
+		origin:  "*",
+		headers: corsHeadersString,
+		expose:  "ETag",
+	}
+}
+
+func wrapInsecureCORS(handler http.Handler) http.Handler {
+	return &withCORS{
+		handler: handler,
+		methods: "*",
+		origin:  "*",
+		headers: "*",
+		expose:  "*",
+	}
 }
 
 func (s *withCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", corsHeadersString)
-	w.Header().Set("Access-Control-Expose-Headers", "ETag")
+	isPreflight := r.Method == "OPTIONS" &&
+		r.Header.Get("Access-Control-Request-Method") != "" &&
+		r.Header.Get("Origin") != ""
 
-	if r.Method == "OPTIONS" {
+	if isPreflight {
+		if s.origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", s.origin)
+		}
+		if s.methods != "" {
+			w.Header().Set("Access-Control-Allow-Methods", s.methods)
+		}
+		if s.headers != "" {
+			w.Header().Set("Access-Control-Allow-Headers", s.headers)
+		}
+		if s.expose != "" {
+			w.Header().Set("Access-Control-Expose-Headers", s.expose)
+		}
 		return
 	}
 
-	s.r.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }

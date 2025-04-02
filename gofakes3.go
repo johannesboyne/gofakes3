@@ -27,14 +27,15 @@ type GoFakeS3 struct {
 	storage   Backend
 	versioned VersionedBackend
 
-	timeSource              TimeSource    // WithTimeSource
-	timeSkew                time.Duration // WithTimeSkewLimit
-	metadataSizeLimit       int           // WithMetadataSizeLimit
-	integrityCheck          bool          // WithIntegrityCheck
-	failOnUnimplementedPage bool          // WithUnimplementedPageError
-	hostBucket              bool          // WithHostBucket
-	hostBucketBases         []string      // WithHostBucketBase
-	autoBucket              bool          // WithAutoBucket
+	wrapCORS                func(h http.Handler) http.Handler // WithInsecureCORS
+	timeSource              TimeSource                        // WithTimeSource
+	timeSkew                time.Duration                     // WithTimeSkewLimit
+	metadataSizeLimit       int                               // WithMetadataSizeLimit
+	integrityCheck          bool                              // WithIntegrityCheck
+	failOnUnimplementedPage bool                              // WithUnimplementedPageError
+	hostBucket              bool                              // WithHostBucket
+	hostBucketBases         []string                          // WithHostBucketBase
+	autoBucket              bool                              // WithAutoBucket
 	uploader                MultipartBackend
 	log                     Logger
 }
@@ -49,6 +50,7 @@ func New(backend Backend, options ...Option) *GoFakeS3 {
 		metadataSizeLimit: DefaultMetadataSizeLimit,
 		integrityCheck:    true,
 		requestID:         0,
+		wrapCORS:          wrapCORS,
 	}
 
 	// versioned MUST be set before options as one of the options disables it:
@@ -78,7 +80,7 @@ func (g *GoFakeS3) nextRequestID() uint64 {
 
 // Create the AWS S3 API
 func (g *GoFakeS3) Server() http.Handler {
-	var handler http.Handler = &withCORS{r: http.HandlerFunc(g.routeBase), log: g.log}
+	var handler http.Handler = g.wrapCORS(http.HandlerFunc(g.routeBase))
 
 	if g.timeSkew != 0 {
 		handler = g.timeSkewMiddleware(handler)
