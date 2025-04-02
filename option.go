@@ -101,3 +101,8 @@ func WithUnimplementedPageError() Option {
 func WithAutoBucket(enabled bool) Option {
 	return func(g *GoFakeS3) { g.autoBucket = enabled }
 }
+
+// WithInsecureCORS responds with * for all Access-Control-Allow headers.
+func WithInsecureCORS() Option {
+	return func(g *GoFakeS3) { g.wrapCORS = wrapInsecureCORS }
+}
