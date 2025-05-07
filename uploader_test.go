@@ -1,9 +1,9 @@
 package gofakes3_test
 
 import (
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
 )
 
@@ -142,7 +142,7 @@ func TestListMultipartUploadParts(t *testing.T) {
 	doUpload := func(ts *testServer) {
 		id := ts.createMultipartUpload(defaultBucket, "foo", nil)
 
-		parts := []*s3.CompletedPart{
+		parts := []s3types.CompletedPart{
 			ts.uploadPart(defaultBucket, "foo", id, 1, []byte("abc")),
 			ts.uploadPart(defaultBucket, "foo", id, 2, []byte("def")),
 			ts.uploadPart(defaultBucket, "foo", id, 3, []byte("ghi")),

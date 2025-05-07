@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // Does GetBucketVersioning return ErrNoSuchBucket when a nonexistent bucket is used?
@@ -23,14 +23,13 @@ func (s S300007BucketVersioningNoSuchBucket) Run(ctx *Context) error {
 	bucket := hex.EncodeToString(b[:])
 
 	{ // GetBucketVersioning
-		rs, err := client.GetBucketVersioning(&s3.GetBucketVersioningInput{
+		rs, err := client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{
 			Bucket: aws.String(bucket),
 		})
 		_ = rs
-		if aerr := (awserr.Error)(nil); errors.As(err, &aerr) {
-			if aerr.Code() != s3.ErrCodeNoSuchBucket {
-				return fmt.Errorf("expected NoSuchBucket, found %s", aerr.Code())
-			}
+		var aerr *s3types.NoSuchBucket
+		if !errors.As(err, &aerr) {
+			return fmt.Errorf("expected NoSuchBucket, found %s", err)
 		} else if err != nil {
 			return err
 		} else {
@@ -39,17 +38,16 @@ func (s S300007BucketVersioningNoSuchBucket) Run(ctx *Context) error {
 	}
 
 	{ // PutBucketVersioning
-		rs, err := client.PutBucketVersioning(&s3.PutBucketVersioningInput{
+		rs, err := client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
 			Bucket: aws.String("gofakes3.shabbyrobe.org"),
-			VersioningConfiguration: &s3.VersioningConfiguration{
-				Status: aws.String("enorbled"),
+			VersioningConfiguration: &s3types.VersioningConfiguration{
+				Status: s3types.BucketVersioningStatusEnabled,
 			},
 		})
 		_ = rs
-		if aerr := (awserr.Error)(nil); errors.As(err, &aerr) {
-			if aerr.Code() != s3.ErrCodeNoSuchBucket {
-				return fmt.Errorf("expected NoSuchBucket, found %s", aerr.Code())
-			}
+		var aerr *s3types.NoSuchBucket
+		if !errors.As(err, &aerr) {
+			return fmt.Errorf("expected NoSuchBucket, found %s", err.Error())
 		} else if err != nil {
 			return err
 		} else {
