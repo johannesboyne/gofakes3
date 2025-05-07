@@ -1117,8 +1117,6 @@ func (g *GoFakeS3) xmlDecodeBody(rdr io.ReadCloser, into interface{}) error {
 }
 
 func formatHeaderTime(t time.Time) string {
-	// https://github.com/aws/aws-sdk-go/issues/1937 - FIXED
-	// https://github.com/aws/aws-sdk-go-v2/issues/178 - Still open
 	// .Format("Mon, 2 Jan 2006 15:04:05 MST")
 
 	tc := t.In(time.UTC)

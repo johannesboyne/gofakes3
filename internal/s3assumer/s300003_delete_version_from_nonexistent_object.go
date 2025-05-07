@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // It is not clear from the docs at
@@ -15,7 +15,6 @@ import (
 // that no error is returned; this is consistent with DeleteObject.
 //
 // This test confirms that this is indeed the case.
-//
 type S300003DeleteVersionFromNonexistentObject struct{}
 
 func (s S300003DeleteVersionFromNonexistentObject) Run(ctx *Context) error {
@@ -30,7 +29,7 @@ func (s S300003DeleteVersionFromNonexistentObject) Run(ctx *Context) error {
 	}
 
 	body := ctx.RandBytes(32)
-	vrs, err := client.PutObject(&s3.PutObjectInput{
+	vrs, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Key:    aws.String(key),
 		Bucket: bucket,
 		Body:   bytes.NewReader(body),
@@ -41,14 +40,14 @@ func (s S300003DeleteVersionFromNonexistentObject) Run(ctx *Context) error {
 
 	// We need to use a real version ID because they have significance on AWS even
 	// though the meaning is opaque:
-	versionID := aws.StringValue(vrs.VersionId)
+	versionID := aws.ToString(vrs.VersionId)
 	if versionID == "" {
 		return fmt.Errorf("version ID missing")
 	}
 
 	// Delete should succeed the first time. No versions for the object remain and
 	// the object should no longer exist.
-	if _, err := client.DeleteObject(&s3.DeleteObjectInput{
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Key:       aws.String(key),
 		Bucket:    bucket,
 		VersionId: aws.String(versionID),
@@ -56,7 +55,7 @@ func (s S300003DeleteVersionFromNonexistentObject) Run(ctx *Context) error {
 		return err
 	}
 
-	rs, err := client.ListObjectVersions(&s3.ListObjectVersionsInput{
+	rs, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 		Bucket: bucket,
 		Prefix: aws.String(key),
 	})
@@ -69,7 +68,7 @@ func (s S300003DeleteVersionFromNonexistentObject) Run(ctx *Context) error {
 
 	// Now we should get the answer about what S3 actually does when you try to delete
 	// a version for an object that is known not to exist:
-	if _, err := client.DeleteObject(&s3.DeleteObjectInput{
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Key:       aws.String(key),
 		Bucket:    bucket,
 		VersionId: aws.String(versionID),

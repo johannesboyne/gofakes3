@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/johannesboyne/gofakes3"
 )
 
@@ -23,7 +24,7 @@ func TestAutoBucketPutObject(t *testing.T) {
 	defer autoSrv.Close()
 	svc := autoSrv.s3Client()
 
-	_, err := svc.PutObject(&s3.PutObjectInput{
+	_, err := svc.PutObject(t.Context(), &s3.PutObjectInput{
 		Bucket: aws.String(autoBucket),
 		Key:    aws.String("object"),
 		Body:   bytes.NewReader([]byte("hello")),
@@ -39,7 +40,7 @@ func TestAutoBucketGetObject(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	_, err := svc.GetObject(&s3.GetObjectInput{
+	_, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
 		Bucket: aws.String(autoBucket),
 		Key:    aws.String("object"),
 	})
@@ -53,7 +54,7 @@ func TestAutoBucketDeleteObject(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	_, err := svc.DeleteObject(&s3.DeleteObjectInput{
+	_, err := svc.DeleteObject(t.Context(), &s3.DeleteObjectInput{
 		Bucket: aws.String(autoBucket),
 		Key:    aws.String("object"),
 	})
@@ -67,7 +68,7 @@ func TestAutoBucketGetBucketLocation(t *testing.T) {
 	defer autoSrv.Close()
 	svc := autoSrv.s3Client()
 
-	_, err := svc.GetBucketLocation(&s3.GetBucketLocationInput{
+	_, err := svc.GetBucketLocation(t.Context(), &s3.GetBucketLocationInput{
 		Bucket: aws.String(autoBucket),
 	})
 	if err != nil {
@@ -80,7 +81,7 @@ func TestAutoBucketDeleteObjectVersion(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	_, err := svc.DeleteObject(&s3.DeleteObjectInput{
+	_, err := svc.DeleteObject(t.Context(), &s3.DeleteObjectInput{
 		Bucket:    aws.String(autoBucket),
 		Key:       aws.String("object"),
 		VersionId: aws.String("version"),
@@ -95,9 +96,9 @@ func TestAutoBucketDeleteObjectsVersion(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	_, err := svc.DeleteObjects(&s3.DeleteObjectsInput{
-		Delete: &s3.Delete{
-			Objects: []*s3.ObjectIdentifier{
+	_, err := svc.DeleteObjects(t.Context(), &s3.DeleteObjectsInput{
+		Delete: &s3types.Delete{
+			Objects: []s3types.ObjectIdentifier{
 				{Key: aws.String("object1"), VersionId: aws.String("version1")},
 				{Key: aws.String("object2"), VersionId: aws.String("version2")},
 			},
@@ -114,7 +115,7 @@ func TestAutoBucketListMultipartUploads(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	_, err := svc.ListMultipartUploads(&s3.ListMultipartUploadsInput{
+	_, err := svc.ListMultipartUploads(t.Context(), &s3.ListMultipartUploadsInput{
 		Bucket: aws.String(autoBucket),
 	})
 	if !hasErrorCode(err, gofakes3.ErrNoSuchUpload) {
@@ -127,7 +128,7 @@ func TestAutoBucketGetBucketVersioning(t *testing.T) {
 	defer ts.Close()
 	svc := ts.s3Client()
 
-	_, err := svc.GetBucketVersioning(&s3.GetBucketVersioningInput{
+	_, err := svc.GetBucketVersioning(t.Context(), &s3.GetBucketVersioningInput{
 		Bucket: aws.String(autoBucket),
 	})
 	if err != nil {

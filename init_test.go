@@ -6,10 +6,12 @@ package gofakes3_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -39,6 +41,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	s3manager "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/cevatbarisyilmaz/ara"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
@@ -280,16 +288,18 @@ func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.Object
 	return string(data)
 }
 
-func (ts *testServer) s3Client() *s3.S3 {
+func (ts *testServer) s3Client() *s3.Client {
 	ts.Helper()
 
-	config := aws.NewConfig()
-	config.WithEndpoint(ts.server.URL)
-	config.WithRegion("region")
-	config.WithHTTPClient(ara.NewClient(ara.NewCustomResolver(map[string][]string{fmt.Sprintf("%s.127.0.0.1", defaultBucket): {"127.0.0.1"}, "localhost": {"127.0.0.1"}})))
-	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(!ts.useHostBucket)
-	svc := s3.New(session.New(), config)
+	config := aws.Config{
+		BaseEndpoint: aws.String(ts.server.URL),
+		Region:       "region",
+		HTTPClient:   ara.NewClient(ara.NewCustomResolver(map[string][]string{fmt.Sprintf("%s.127.0.0.1", defaultBucket): {"127.0.0.1"}, "localhost": {"127.0.0.1"}})),
+		Credentials:  credentials.NewStaticCredentialsProvider("dummy-access", "dummy-secret", ""),
+	}
+	svc := s3.NewFromConfig(config, func(o *s3.Options) {
+		o.UsePathStyle = !ts.useHostBucket
+	})
 	return svc
 }
 
@@ -297,7 +307,7 @@ func (ts *testServer) assertLs(bucket string, prefix string, expectedPrefixes []
 	ts.Helper()
 
 	client := ts.s3Client()
-	rs, err := client.ListObjects(&s3.ListObjectsInput{
+	rs, err := client.ListObjects(context.TODO(), &s3.ListObjectsInput{
 		Bucket:    aws.String(bucket),
 		Delimiter: aws.String("/"),
 		Prefix:    aws.String(prefix),
@@ -333,18 +343,18 @@ func (ts *testServer) assertMultipartUpload(bucket, object string, body interfac
 		options.partSize = defaultUploadPartSize
 	}
 
-	s3 := ts.s3Client()
-	uploader := s3manager.NewUploaderWithClient(s3)
+	s3Client := ts.s3Client()
+	uploader := s3manager.NewUploader(s3Client)
 
 	contents := readBody(ts.TT, body)
-	upParams := &s3manager.UploadInput{
+	upParams := &s3.PutObjectInput{
 		Bucket:     aws.String(bucket),
 		Key:        aws.String(object),
 		Body:       bytes.NewReader(contents),
 		ContentMD5: aws.String(hashMD5Bytes(contents).Base64()),
 	}
 
-	out, err := uploader.Upload(upParams, func(u *s3manager.Uploader) {
+	out, err := uploader.Upload(context.TODO(), upParams, func(u *s3manager.Uploader) {
 		u.LeavePartsOnError = true
 		u.PartSize = options.partSize
 	})
@@ -383,7 +393,7 @@ func (ts *testServer) createMultipartUpload(bucket, object string, meta map[stri
 	ts.Helper()
 
 	svc := ts.s3Client()
-	mpu, err := svc.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+	mpu, err := svc.CreateMultipartUpload(context.TODO(), &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(object),
 	})
@@ -391,32 +401,32 @@ func (ts *testServer) createMultipartUpload(bucket, object string, meta map[stri
 	return *mpu.UploadId
 }
 
-func (ts *testServer) uploadPart(bucket, object string, uploadID string, num int64, body []byte) *s3.CompletedPart {
+func (ts *testServer) uploadPart(bucket, object string, uploadID string, num int32, body []byte) s3types.CompletedPart {
 	ts.Helper()
 
 	hash := hashMD5Bytes(body)
 	svc := ts.s3Client()
-	mpu, err := svc.UploadPart(&s3.UploadPartInput{
+	mpu, err := svc.UploadPart(context.TODO(), &s3.UploadPartInput{
 		Bucket:     aws.String(bucket),
 		Key:        aws.String(object),
 		Body:       bytes.NewReader(body),
 		UploadId:   aws.String(uploadID),
-		PartNumber: aws.Int64(num),
+		PartNumber: aws.Int32(num),
 		ContentMD5: aws.String(hash.Base64()),
 	})
 	ts.OK(err)
-	return &s3.CompletedPart{ETag: aws.String(*mpu.ETag), PartNumber: aws.Int64(num)}
+	return s3types.CompletedPart{ETag: aws.String(*mpu.ETag), PartNumber: aws.Int32(num)}
 }
 
-func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, parts []*s3.CompletedPart, body interface{}) {
+func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, parts []s3types.CompletedPart, body interface{}) {
 	ts.Helper()
 
 	svc := ts.s3Client()
-	mpu, err := svc.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+	mpu, err := svc.CompleteMultipartUpload(context.TODO(), &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      aws.String(object),
 		UploadId: aws.String(uploadID),
-		MultipartUpload: &s3.CompletedMultipartUpload{
+		MultipartUpload: &s3types.CompletedMultipartUpload{
 			Parts: parts,
 		},
 	})
@@ -447,7 +457,7 @@ func (ts *testServer) assertCompleteUpload(bucket, object, uploadID string, part
 	ts.assertObject(bucket, object, nil, body)
 }
 
-func (ts *testServer) calculateETagBodyByParts(parts []*s3.CompletedPart) string {
+func (ts *testServer) calculateETagBodyByParts(parts []s3types.CompletedPart) string {
 	hash := md5.New()
 	for _, part := range parts {
 		etagBytes, err := hex.DecodeString(strings.Trim(*part.ETag, `"`))
@@ -463,7 +473,7 @@ func (ts *testServer) assertAbortMultipartUpload(bucket, object string, uploadID
 	ts.Helper()
 
 	svc := ts.s3Client()
-	rs, err := svc.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+	rs, err := svc.AbortMultipartUpload(context.TODO(), &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      aws.String(object),
 		UploadId: aws.String(string(uploadID)),
@@ -475,13 +485,14 @@ func (ts *testServer) assertAbortMultipartUpload(bucket, object string, uploadID
 		// is to try to list the parts, which should indicate if the upload was
 		// successfully removed. Once the upload API becomes a first class
 		// citizen, we should be able to call it directly.
-		rs, err := svc.ListParts(&s3.ListPartsInput{
+		rs, err := svc.ListParts(context.TODO(), &s3.ListPartsInput{
 			Bucket:   aws.String(bucket),
 			Key:      aws.String(object),
 			UploadId: aws.String(string(uploadID)),
 		})
 		_ = rs
-		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() == string(gofakes3.ErrNoSuchUpload) {
+		var nosuErr smithy.APIError
+		if errors.As(err, &nosuErr) && nosuErr.ErrorCode() == string(gofakes3.ErrNoSuchUpload) {
 			return
 		}
 		ts.Fatal("expected NotFound error, found", err)
@@ -490,14 +501,14 @@ func (ts *testServer) assertAbortMultipartUpload(bucket, object string, uploadID
 
 type listUploadPartsOpts struct {
 	Prefix *gofakes3.Prefix
-	Marker int64
-	Limit  int64
+	Marker string
+	Limit  int32
 
 	// Supports s3.CompletedPart or s3.Part:
 	Parts []interface{}
 }
 
-func (opts listUploadPartsOpts) withCompletedParts(parts ...*s3.CompletedPart) listUploadPartsOpts {
+func (opts listUploadPartsOpts) withCompletedParts(parts ...s3types.CompletedPart) listUploadPartsOpts {
 	for _, p := range parts {
 		opts.Parts = append(opts.Parts, p)
 	}
@@ -511,10 +522,10 @@ func (opts listUploadPartsOpts) input(bucket, object string, uploadID string) *s
 		UploadId: aws.String(uploadID),
 	}
 	if opts.Limit > 0 {
-		rq.MaxParts = aws.Int64(opts.Limit)
+		rq.MaxParts = aws.Int32(opts.Limit)
 	}
-	if opts.Marker > 0 {
-		rq.PartNumberMarker = aws.Int64(opts.Marker)
+	if opts.Marker != "" {
+		rq.PartNumberMarker = aws.String(opts.Marker)
 	}
 	return rq
 }
@@ -523,7 +534,7 @@ func (ts *testServer) assertListUploadPartsFails(code gofakes3.ErrorCode, bucket
 	ts.Helper()
 
 	svc := ts.s3Client()
-	_, err := svc.ListParts(opts.input(bucket, object, uploadID))
+	_, err := svc.ListParts(context.TODO(), opts.input(bucket, object, uploadID))
 	if !hasErrorCode(err, code) {
 		ts.Fatal("expected", code, "found", err)
 	}
@@ -534,7 +545,7 @@ func (ts *testServer) assertListUploadParts(bucket, object string, uploadID stri
 
 	rq := opts.input(bucket, object, uploadID)
 	svc := ts.s3Client()
-	rs, err := svc.ListParts(rq)
+	rs, err := svc.ListParts(context.TODO(), rq)
 	ts.OK(err)
 
 	if *rs.Bucket != bucket {
@@ -552,7 +563,7 @@ func (ts *testServer) assertListUploadParts(bucket, object string, uploadID stri
 
 	for idx, found := range rs.Parts {
 		switch expected := opts.Parts[idx].(type) {
-		case *s3.CompletedPart:
+		case s3types.CompletedPart:
 			if *expected.ETag != *found.ETag {
 				ts.Fatal("part", idx, "ETag mismatch:", expected.ETag, "!=", found.ETag)
 			}
@@ -560,7 +571,7 @@ func (ts *testServer) assertListUploadParts(bucket, object string, uploadID stri
 				ts.Fatal("part", idx, "PartNumber mismatch:", expected.PartNumber, "!=", found.PartNumber)
 			}
 
-		case *s3.Part:
+		case s3types.Part:
 			if !reflect.DeepEqual(expected, found) {
 				ts.Fatal("part", idx, "mismatch:", expected, "!=", found)
 			}
@@ -574,7 +585,7 @@ func (ts *testServer) assertListUploadParts(bucket, object string, uploadID stri
 type listUploadsOpts struct {
 	Prefix *gofakes3.Prefix
 	Marker string
-	Limit  int64
+	Limit  int32
 
 	Prefixes []string
 	Uploads  []string
@@ -593,7 +604,7 @@ func (ts *testServer) assertListMultipartUploads(
 	svc := ts.s3Client()
 	rq := &s3.ListMultipartUploadsInput{
 		Bucket:     aws.String(bucket),
-		MaxUploads: aws.Int64(opts.Limit),
+		MaxUploads: aws.Int32(opts.Limit),
 	}
 
 	var expectedKeyMarker, expectedUploadIDMarker string
@@ -614,7 +625,7 @@ func (ts *testServer) assertListMultipartUploads(
 		expectedPrefix, expectedDelimiter = opts.Prefix.Prefix, opts.Prefix.Delimiter
 	}
 
-	rs, err := svc.ListMultipartUploads(rq)
+	rs, err := svc.ListMultipartUploads(context.TODO(), rq)
 	ts.OK(err)
 
 	{ // assert response fields match input
@@ -643,7 +654,7 @@ func (ts *testServer) assertListMultipartUploads(
 		if foundUploadIDMarker != expectedUploadIDMarker {
 			ts.Fatal("unexpected upload ID marker", foundUploadIDMarker, "!=", expectedUploadIDMarker)
 		}
-		var foundUploads int64
+		var foundUploads int32
 		if rs.MaxUploads != nil {
 			foundUploads = *rs.MaxUploads
 		}
@@ -702,24 +713,21 @@ func (ts *testServer) assertObject(bucket string, object string, meta map[string
 }
 
 type listBucketResult struct {
-	CommonPrefixes []*s3.CommonPrefix
-	Contents       []*s3.Object
+	CommonPrefixes []s3types.CommonPrefix
+	Contents       []s3types.Object
 }
 
-func (ts *testServer) mustListBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int64, marker string) *listBucketResult {
+func (ts *testServer) mustListBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int32, marker string) *listBucketResult {
 	r, err := ts.listBucketV1Pages(prefix, maxKeys, marker)
 	ts.OK(err)
 	return r
 }
 
-func (ts *testServer) listBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int64, marker string) (*listBucketResult, error) {
-	const pageLimit = 20
-
+func (ts *testServer) listBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int32, marker string) (*listBucketResult, error) {
 	svc := ts.s3Client()
-	pages := 0
 	in := &s3.ListObjectsInput{
 		Bucket:  aws.String(defaultBucket),
-		MaxKeys: aws.Int64(maxKeys),
+		MaxKeys: aws.Int32(maxKeys),
 	}
 	if prefix != nil && prefix.HasDelimiter {
 		in.Delimiter = aws.String(prefix.Delimiter)
@@ -732,35 +740,29 @@ func (ts *testServer) listBucketV1Pages(prefix *gofakes3.Prefix, maxKeys int64, 
 	}
 
 	var rs listBucketResult
-	if err := (svc.ListObjectsPages(in, func(out *s3.ListObjectsOutput, lastPage bool) bool {
-		pages++
-		if pages > pageLimit {
-			panic("stuck in a page loop")
-		}
-		rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
-		rs.Contents = append(rs.Contents, out.Contents...)
-		return !lastPage
-	})); err != nil {
+	out, err := svc.ListObjects(context.TODO(), in)
+	if err != nil {
 		return nil, err
 	}
+	rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
+	rs.Contents = append(rs.Contents, out.Contents...)
 
 	return &rs, nil
 }
 
-func (ts *testServer) mustListBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, marker string) *listBucketResult {
+func (ts *testServer) mustListBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int32, marker string) *listBucketResult {
 	r, err := ts.listBucketV2Pages(prefix, maxKeys, marker)
 	ts.OK(err)
 	return r
 }
 
-func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, startAfter string) (*listBucketResult, error) {
+func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int32, startAfter string) (*listBucketResult, error) {
 	const pageLimit = 20
 
 	svc := ts.s3Client()
-	pages := 0
 	in := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(defaultBucket),
-		MaxKeys: aws.Int64(maxKeys),
+		MaxKeys: aws.Int32(maxKeys),
 	}
 	if prefix != nil && prefix.HasDelimiter {
 		in.Delimiter = aws.String(prefix.Delimiter)
@@ -773,17 +775,12 @@ func (ts *testServer) listBucketV2Pages(prefix *gofakes3.Prefix, maxKeys int64, 
 	}
 
 	var rs listBucketResult
-	if err := svc.ListObjectsV2Pages(in, func(out *s3.ListObjectsV2Output, lastPage bool) bool {
-		pages++
-		if pages > pageLimit {
-			panic("stuck in a page loop")
-		}
-		rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
-		rs.Contents = append(rs.Contents, out.Contents...)
-		return !lastPage
-	}); err != nil {
+	out, err := svc.ListObjectsV2(context.TODO(), in)
+	if err != nil {
 		return nil, err
 	}
+	rs.CommonPrefixes = append(rs.CommonPrefixes, out.CommonPrefixes...)
+	rs.Contents = append(rs.Contents, out.Contents...)
 
 	return &rs, nil
 }
@@ -893,21 +890,13 @@ func strs(s ...string) []string {
 	return s
 }
 
-// hasErrorCode is like gofakes3.HasErrorCode, but supports awserr.Error as
-// well, which we can't do directly in gofakes3 to avoid the dependency.
 func hasErrorCode(err error, code gofakes3.ErrorCode) bool {
-	if awsErr, ok := err.(awserr.Error); ok {
-		return awsErr.Code() == string(code)
-	} else {
-		return gofakes3.HasErrorCode(err, code)
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		awsCode := apiErr.ErrorCode()
+		return awsCode == string(code)
 	}
-}
-
-func s3HasErrorCode(err error, code gofakes3.ErrorCode) bool {
-	if err, ok := err.(awserr.Error); ok {
-		return code == gofakes3.ErrorCode(err.Code())
-	}
-	return false
+	return gofakes3.HasErrorCode(err, code)
 }
 
 func httpClient() *http.Client {

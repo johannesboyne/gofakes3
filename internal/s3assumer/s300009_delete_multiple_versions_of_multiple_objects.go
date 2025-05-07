@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S300009DeleteMultipleVersionsOfMultipleObjects struct{}
@@ -27,7 +28,7 @@ func (s S300009DeleteMultipleVersionsOfMultipleObjects) Run(ctx *Context) error 
 	for _, key := range keys {
 		for i := 0; i < 2; i++ {
 			body := ctx.RandBytes(32)
-			vrs, err := client.PutObject(&s3.PutObjectInput{
+			vrs, err := client.PutObject(ctx, &s3.PutObjectInput{
 				Key:    aws.String(key),
 				Bucket: bucket,
 				Body:   bytes.NewReader(body),
@@ -35,19 +36,19 @@ func (s S300009DeleteMultipleVersionsOfMultipleObjects) Run(ctx *Context) error 
 			if err != nil {
 				return err
 			}
-			versions[key] = append(versions[key], aws.StringValue(vrs.VersionId))
+			versions[key] = append(versions[key], aws.ToString(vrs.VersionId))
 		}
 	}
 
-	objVrs := make([]*s3.ObjectIdentifier, 0, 4)
+	objVrs := make([]s3types.ObjectIdentifier, 0, 4)
 	for _, key := range keys {
 		for _, vrs := range versions[key] {
-			objVrs = append(objVrs, &s3.ObjectIdentifier{Key: aws.String(key), VersionId: aws.String(vrs)})
+			objVrs = append(objVrs, s3types.ObjectIdentifier{Key: aws.String(key), VersionId: aws.String(vrs)})
 		}
 	}
 
 	{ // Sanity check version length
-		rs, err := client.ListObjectVersions(&s3.ListObjectVersionsInput{
+		rs, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 			Bucket: bucket,
 			Prefix: aws.String(prefix),
 		})
@@ -61,9 +62,9 @@ func (s S300009DeleteMultipleVersionsOfMultipleObjects) Run(ctx *Context) error 
 		}
 	}
 
-	res, err := client.DeleteObjects(&s3.DeleteObjectsInput{
+	res, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 		Bucket: bucket,
-		Delete: &s3.Delete{
+		Delete: &s3types.Delete{
 			Objects: objVrs,
 		},
 	})
@@ -72,7 +73,7 @@ func (s S300009DeleteMultipleVersionsOfMultipleObjects) Run(ctx *Context) error 
 	}
 
 	{ // Sanity check version length
-		rs, err := client.ListObjectVersions(&s3.ListObjectVersionsInput{
+		rs, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 			Bucket: bucket,
 			Prefix: aws.String(prefix),
 		})
@@ -82,7 +83,7 @@ func (s S300009DeleteMultipleVersionsOfMultipleObjects) Run(ctx *Context) error 
 
 		// We have deleted all of the objects so we don't expect any version
 		if len(rs.Versions) > 0 {
-			return fmt.Errorf("unexpected number of objects %d but expected %d:\n%s", len(rs.Versions), 0, rs)
+			return fmt.Errorf("unexpected number of objects %d but expected %d:\n", len(rs.Versions), 0)
 		}
 	}
 

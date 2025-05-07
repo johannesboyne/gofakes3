@@ -2,10 +2,10 @@ package gofakes3
 
 import (
 	"encoding/hex"
+	"errors"
+
 	"io"
 	"time"
-
-	"github.com/aws/aws-sdk-go/aws/awserr"
 )
 
 const (
@@ -426,7 +426,8 @@ func MergeMetadata(db Backend, bucketName string, objectName string, meta map[st
 	// get potential existing object to potentially carry metadata over
 	existingObj, err := db.GetObject(bucketName, objectName, nil)
 	if err != nil {
-		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() != string(ErrNoSuchKey) {
+		var nsk *ErrorResponse
+		if errors.As(err, &nsk) && nsk.Code != "NoSuchKey" {
 			return err
 		}
 	}

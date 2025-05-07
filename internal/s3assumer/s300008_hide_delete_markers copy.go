@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S300008HideDeleteMarkers struct{}
@@ -27,7 +28,7 @@ func (s S300008HideDeleteMarkers) Run(ctx *Context) error {
 	for _, key := range keys {
 		for i := 0; i < 2; i++ {
 			body := ctx.RandBytes(32)
-			vrs, err := client.PutObject(&s3.PutObjectInput{
+			vrs, err := client.PutObject(ctx, &s3.PutObjectInput{
 				Key:    aws.String(key),
 				Bucket: bucket,
 				Body:   bytes.NewReader(body),
@@ -35,15 +36,15 @@ func (s S300008HideDeleteMarkers) Run(ctx *Context) error {
 			if err != nil {
 				return err
 			}
-			versions[key] = append(versions[key], aws.StringValue(vrs.VersionId))
+			versions[key] = append(versions[key], aws.ToString(vrs.VersionId))
 		}
 	}
 
 	// delete one of the objects
-	_, err := client.DeleteObjects(&s3.DeleteObjectsInput{
+	_, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 		Bucket: bucket,
-		Delete: &s3.Delete{
-			Objects: []*s3.ObjectIdentifier{
+		Delete: &s3types.Delete{
+			Objects: []s3types.ObjectIdentifier{
 				{
 					Key: aws.String(keys[0]),
 				},
@@ -55,7 +56,7 @@ func (s S300008HideDeleteMarkers) Run(ctx *Context) error {
 	}
 
 	// make ordinary list request. It should return only the keys[1].
-	page1, err := client.ListObjects(&s3.ListObjectsInput{
+	page1, err := client.ListObjects(ctx, &s3.ListObjectsInput{
 		Bucket: bucket,
 		Prefix: aws.String(prefix),
 	})
@@ -68,8 +69,8 @@ func (s S300008HideDeleteMarkers) Run(ctx *Context) error {
 		return fmt.Errorf("unexpected number of objects %d but expected %d", l, 1)
 	}
 
-	if aws.StringValue(page1.Contents[0].Key) != keys[1] {
-		return fmt.Errorf("unexpected key %q but expected %q", aws.StringValue(page1.Contents[0].Key), keys[1])
+	if aws.ToString(page1.Contents[0].Key) != keys[1] {
+		return fmt.Errorf("unexpected key %q but expected %q", aws.ToString(page1.Contents[0].Key), keys[1])
 	}
 
 	return nil
