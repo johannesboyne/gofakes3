@@ -26,7 +26,78 @@ For production environments, consider more established solutions. Some recommend
 
 ## How to use it?
 
-### Example (aws-sdk-go version 1)
+### Example with AWS SDK v2 (Recommended)
+
+```golang
+import (
+	"context"
+	"crypto/tls"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
+)
+
+// Set up gofakes3 server
+backend := s3mem.New()
+faker := gofakes3.New(backend)
+ts := httptest.NewServer(faker.Server())
+defer ts.Close()
+
+// Setup AWS SDK v2 config
+cfg, err := config.LoadDefaultConfig(
+	context.TODO(),
+	config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("ACCESS_KEY", "SECRET_KEY", "")),
+	config.WithHTTPClient(&http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}),
+	config.WithEndpointResolverWithOptions(
+		aws.EndpointResolverWithOptionsFunc(func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{URL: ts.URL}, nil
+		}),
+	),
+)
+if err != nil {
+	panic(err)
+}
+
+// Create an Amazon S3 v2 client, important to use o.UsePathStyle
+client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	o.UsePathStyle = true
+})
+
+// Create a new bucket
+_, err = client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+	Bucket: aws.String("newbucket"),
+})
+if err != nil {
+	panic(err)
+}
+
+// Upload an object
+_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+	Body:   strings.NewReader(`{"configuration": {"main_color": "#333"}, "screens": []}`),
+	Bucket: aws.String("newbucket"),
+	Key:    aws.String("test.txt"),
+})
+if err != nil {
+	panic(err)
+}
+
+// ... accessing of test.txt through any S3 client would now be possible
+```
+
+### Example with AWS SDK v1 (Legacy)
 
 ```golang
 // fake s3
@@ -68,95 +139,106 @@ _, err = s3Client.PutObject(&s3.PutObjectInput{
 // ... accessing of test.txt through any S3 client would now be possible
 ```
 
-### Example for V2 (aws-sdk-go-v2)
-
-```golang
-backend := s3mem.New()
-faker := gofakes3.New(s3Backend, gofakes3.WithHostBucket(true))
-ts := httptest.NewServer(faker.Server())
-defer ts.Close()
-
-// Difference in configuring the client
-
-// Setup a new config
-cfg, _ := config.LoadDefaultConfig(
-	context.TODO(),
-	config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "SESSION")),
-	config.WithHTTPClient(&http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			// Override the dial address because the SDK uses the bucket name as a subdomain.
-			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				dialer := net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}
-				s3URL, _ := url.Parse(s3Server.URL)
-				return dialer.DialContext(ctx, network, s3URL.Host)
-			},
-		},
-	}),
-	config.WithEndpointResolverWithOptions(
-		aws.EndpointResolverWithOptionsFunc(func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
-			return aws.Endpoint{URL: ts.URL}, nil
-		}),
-		),
-	)
-
-// Create an Amazon S3 v2 client, important to use o.UsePathStyle
-// alternatively change local DNS settings, e.g., in /etc/hosts
-// to support requests to http://<bucketname>.127.0.0.1:32947/...
-client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-	o.UsePathStyle = true
-})
-
-```
-
 
 Please feel free to check it out and to provide useful feedback (using github
 issues), but be aware, this software is used internally and for the local
 development only. Thus, it has no demand for correctness, performance or
 security.
 
-There are different ways to run locally: e.g., using DNS, using S3 path mode, or V2 setting the ENV-Var:
+## Connection Options
 
+There are different ways to connect to your local GoFakeS3 server:
+
+### 1. Path-Style Addressing (Recommended)
+
+Path-style is the most flexible and least restrictive approach, where the bucket name appears in the URL path:
+```
+http://localhost:9000/mybucket/myobject
+```
+
+With AWS SDK v2, configure this using:
+```golang
+client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+    o.UsePathStyle = true
+})
+```
+
+### 2. Virtual-Hosted Style Addressing
+
+In this mode, the bucket name is part of the hostname:
+```
+http://mybucket.localhost:9000/myobject
+```
+
+This requires DNS configuration. If using `localhost` as your endpoint, add the following to `/etc/hosts` for *every bucket you want to use*:
+```
+127.0.0.1 mybucket.localhost
+```
+
+With AWS SDK v2, this is the default mode when not setting `UsePathStyle`:
+```golang
+client := s3.NewFromConfig(cfg)
+```
+
+### 3. Environment Variable (AWS SDK v2)
+
+With AWS SDK v2, you can also set an environment variable to specify the endpoint:
 ```
 os.Setenv("AWS_ENDPOINT_URL_S3", "http://localhost:9000")
 ```
 
-S3 path mode is the most flexible and least restrictive, but it does require that you
-are able to modify your client code. In Go, the modification would look like so:
-
-	config := aws.Config{}
-	config.WithS3ForcePathStyle(true)
-
-S3 path mode works over the network by default for all bucket names.
-
-If you are unable to modify the code, DNS mode can be used, but it comes with further
-restrictions and requires you to be able to modify your local DNS resolution.
-
-If using `localhost` as your endpoint, you will need to add the following to
-`/etc/hosts` for *every bucket you want to fake*:
-
-    127.0.0.1 <bucket-name>.localhost
-
-It is trickier if you want other machines to be able to use your fake S3 server
-as you need to be able to modify their DNS resolution as well.
+This approach works with code that doesn't directly configure the S3 client.
 
 
 ## Exemplary usage
 
-### Lambda Example
+### Lambda Example with AWS SDK v3 for JavaScript
 
 ```javascript
-var AWS   = require('aws-sdk')
+// Using AWS SDK v3 for JavaScript
+import { S3Client, CreateBucketCommand } from '@aws-sdk/client-s3';
+
+// Create an S3 client with custom endpoint
+const s3Client = new S3Client({
+  region: 'us-east-1',
+  endpoint: 'http://localhost:9000',
+  forcePathStyle: true, // Required for GoFakeS3
+  credentials: { 
+    accessKeyId: 'ACCESS_KEY',
+    secretAccessKey: 'SECRET_KEY'
+  }
+});
+
+// Lambda handler using async/await
+export const handler = async (event, context) => {
+  try {
+    const command = new CreateBucketCommand({
+      Bucket: 'my-bucket'
+    });
+    
+    const response = await s3Client.send(command);
+    return response;
+  } catch (error) {
+    console.error('Error:', error);
+    throw error;
+  }
+};
+```
+
+### Legacy Lambda Example (AWS SDK v2 for JavaScript)
+
+```javascript
+var AWS = require('aws-sdk')
 
 var ep = new AWS.Endpoint('http://localhost:9000');
-var s3 = new AWS.S3({endpoint: ep});
+var s3 = new AWS.S3({
+  endpoint: ep,
+  s3ForcePathStyle: true // Recommended for GoFakeS3
+});
 
 exports.handle = function (e, ctx) {
   s3.createBucket({
-    Bucket: '<bucket-name>',
+    Bucket: 'my-bucket',
   }, function(err, data) {
     if (err) return console.log(err, err.stack);
     ctx.succeed(data)

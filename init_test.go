@@ -283,10 +283,24 @@ func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.Object
 func (ts *testServer) s3Client() *s3.Client {
 	ts.Helper()
 
+	// Parse server URL to get the correct hostname for resolver configuration
+	u, err := url.Parse(ts.server.URL)
+	if err != nil {
+		ts.Fatal(err)
+	}
+	hostname := u.Hostname()
+
+	// In SDK v2, we need to use the actual hostname from the URL 
+	// instead of hardcoded "127.0.0.1"
+	resolverMap := map[string][]string{
+		fmt.Sprintf("%s.%s", defaultBucket, hostname): {hostname},
+		"localhost": {hostname},
+	}
+
 	config := aws.Config{
 		BaseEndpoint: aws.String(ts.server.URL),
 		Region:       "region",
-		HTTPClient:   ara.NewClient(ara.NewCustomResolver(map[string][]string{fmt.Sprintf("%s.127.0.0.1", defaultBucket): {"127.0.0.1"}, "localhost": {"127.0.0.1"}})),
+		HTTPClient:   ara.NewClient(ara.NewCustomResolver(resolverMap)),
 		Credentials:  credentials.NewStaticCredentialsProvider("dummy-access", "dummy-secret", ""),
 	}
 	svc := s3.NewFromConfig(config, func(o *s3.Options) {
