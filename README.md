@@ -71,45 +71,64 @@ _, err = s3Client.PutObject(&s3.PutObjectInput{
 ### Example for V2 (aws-sdk-go-v2)
 
 ```golang
-backend := s3mem.New()
-faker := gofakes3.New(s3Backend, gofakes3.WithHostBucket(true))
-ts := httptest.NewServer(faker.Server())
-defer ts.Close()
+func TestCreateBucketV2Simple(t *testing.T) {
+	backend := s3mem.New()
+	faker := gofakes3.New(backend)
+	ts := httptest.NewServer(faker.Server())
+	defer ts.Close()
 
-// Difference in configuring the client
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+		tr.Proxy = http.ProxyFromEnvironment
+		tr.TLSClientConfig.InsecureSkipVerify = true
+		tr.ExpectContinueTimeout = 0
+		tr.MaxIdleConns = 10
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialer := net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}
+			s3URL, errURL := url.Parse(ts.URL)
+			if errURL != nil {
+				log.Printf("url=%s parse error: %v", ts.URL, errURL)
+				return nil, errURL
+			}
+			newAddr := s3URL.Host
+			return dialer.DialContext(ctx, network, newAddr)
+		}
+	})
 
-// Setup a new config
-cfg, _ := config.LoadDefaultConfig(
-	context.TODO(),
-	config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "SESSION")),
-	config.WithHTTPClient(&http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			// Override the dial address because the SDK uses the bucket name as a subdomain.
-			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				dialer := net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}
-				s3URL, _ := url.Parse(s3Server.URL)
-				return dialer.DialContext(ctx, network, s3URL.Host)
-			},
-		},
-	}),
-	config.WithEndpointResolverWithOptions(
-		aws.EndpointResolverWithOptionsFunc(func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
-			return aws.Endpoint{URL: ts.URL}, nil
-		}),
-		),
+	cfg, errCfg := config.LoadDefaultConfig(
+		context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "SESSION")),
+		config.WithHTTPClient(httpClient),
 	)
 
-// Create an Amazon S3 v2 client, important to use o.UsePathStyle
-// alternatively change local DNS settings, e.g., in /etc/hosts
-// to support requests to http://<bucketname>.127.0.0.1:32947/...
-client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-	o.UsePathStyle = true
-})
+	if errCfg != nil {
+		log.Fatalf("LoadDefaultConfig: %v", errCfg)
+	}
 
+	// Create an Amazon S3 v2 client, important to use o.UsePathStyle
+	// alternatively change local DNS settings, e.g., in /etc/hosts
+	// to support requests to http://<bucketname>.127.0.0.1:32947/...
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+
+	//
+	// now create the bucket
+	//
+
+	bucket := "newbucket"
+
+	input := &s3.CreateBucketInput{
+		Bucket: aws.String(bucket),
+	}
+
+	if _, err := client.CreateBucket(context.TODO(), input); err != nil {
+		t.Errorf("create bucket error: bucket=%s: %v", bucket, err)
+	}
+}
 ```
 
 
