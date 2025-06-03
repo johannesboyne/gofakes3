@@ -1,0 +1,27 @@
+name: "Test"
+on:
+  push:
+    branches:
+      - "master"
+  pull_request:
+    branches:
+      - "*"
+permissions:
+  contents: "read"
+jobs:
+  unittest:
+    name: "Unit"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 10
+    steps:
+      - uses: "actions/checkout@v4"
+      - uses: "actions/setup-go@v5"
+      - name: "Unit tests with coverage"
+        run: "go test ./... -race -count=1 -coverprofile=coverage.txt -covermode=atomic -coverpkg=./..."
+      - name: "Coverage"
+        uses: "codecov/codecov-action@ad3126e916f78f00edff4ed0317cf185271ccc2d" # v5.4.2
+        with:
+          files: "./coverage.txt"
+          token: "${{ secrets.CODECOV_TOKEN }}"
+          fail_ci_if_error: false
+
