@@ -13,17 +13,17 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
-func main() {
+func server() {
 	// Create a new S3 backend (using in-memory for this example)
 	backend := s3mem.New()
 
 	// Create a standard logger that writes to stderr
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	
+
 	// Create the fake S3 server
 	faker := gofakes3.New(backend,
 		// Optionally enable features like host bucket addressing or auto bucket creation
-		gofakes3.WithAutoBucket(true),            // Automatically create buckets when they're accessed
+		gofakes3.WithAutoBucket(true),                // Automatically create buckets when they're accessed
 		gofakes3.WithLogger(gofakes3.StdLog(logger)), // Log messages using the standard logger
 	)
 
