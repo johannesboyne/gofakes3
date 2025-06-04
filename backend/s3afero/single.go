@@ -208,10 +208,7 @@ func (db *SingleBucketBackend) ensureMeta(
 			return nil, err
 		}
 
-		hash, err := hasher.Sum(nil), nil
-		if err != nil {
-			return nil, err
-		}
+		hash := hasher.Sum(nil)
 
 		return &Metadata{
 			objectPath,
