@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"net/http/httptest"
 	"os"
 
@@ -22,7 +21,7 @@ func main() {
 	// Step 1: Create a new gofakes3 server with in-memory backend
 	backend := s3mem.New()
 	logger := log.New(os.Stderr, "[GoFakeS3] ", log.LstdFlags)
-	faker := gofakes3.New(backend, 
+	faker := gofakes3.New(backend,
 		gofakes3.WithLogger(gofakes3.StdLog(logger)),
 	)
 	ts := httptest.NewServer(faker.Server())
@@ -97,7 +96,7 @@ func main() {
 	}
 	fmt.Printf("Objects in bucket %s:\n", bucketName)
 	for _, obj := range listResp.Contents {
-		fmt.Printf("- %s (size: %d bytes, last modified: %s)\n", 
+		fmt.Printf("- %s (size: %d bytes, last modified: %s)\n",
 			*obj.Key, obj.Size, obj.LastModified)
 	}
 
@@ -110,6 +109,6 @@ func main() {
 		log.Fatalf("Failed to delete object: %v", err)
 	}
 	fmt.Printf("Deleted object: %s/%s\n", bucketName, objectKey)
-	
+
 	fmt.Println("Example completed successfully!")
 }

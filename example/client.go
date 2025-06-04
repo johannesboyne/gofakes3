@@ -15,21 +15,21 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-func main() {
+func client() {
 	// Server URL - defaults to localhost:9000, but can be overridden
 	serverURL := "http://localhost:9000"
 	if len(os.Args) > 1 {
 		serverURL = os.Args[1]
 	}
-	
+
 	fmt.Printf("Connecting to GoFakeS3 server at: %s\n", serverURL)
 
 	// Configure AWS SDK v2
 	cfg, err := config.LoadDefaultConfig(
 		context.TODO(),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			"YOUR-ACCESSKEYID", 
-			"YOUR-SECRETACCESSKEY", 
+			"YOUR-ACCESSKEYID",
+			"YOUR-SECRETACCESSKEY",
 			"",
 		)),
 		config.WithEndpointResolverWithOptions(
@@ -55,7 +55,7 @@ func main() {
 	// Upload a file
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -69,7 +69,7 @@ func main() {
 	// Download the file
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
-	
+
 	getResp, err := client.GetObject(ctx2, &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -88,14 +88,14 @@ func main() {
 	// List all objects in the bucket
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel3()
-	
+
 	listResp, err := client.ListObjectsV2(ctx3, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucketName),
 	})
 	if err != nil {
 		log.Fatalf("Failed to list objects: %v", err)
 	}
-	
+
 	fmt.Printf("Objects in bucket %s:\n", bucketName)
 	if len(listResp.Contents) == 0 {
 		fmt.Println("  No objects found")
@@ -104,7 +104,7 @@ func main() {
 			fmt.Printf("  - %s (size: %d bytes)\n", *obj.Key, obj.Size)
 		}
 	}
-	
+
 	// Client operations completed successfully
 	fmt.Println("Client operations completed successfully!")
 }
