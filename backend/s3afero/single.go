@@ -216,6 +216,7 @@ func (db *SingleBucketBackend) ensureMeta(
 		return &Metadata{
 			objectPath,
 			mtime,
+			nil,
 			size,
 			hash,
 			map[string]string{},
@@ -256,6 +257,7 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 		Name:     objectName,
 		Hash:     meta.Hash,
 		Metadata: meta.Meta,
+		Tags:     meta.Tags,
 		Size:     size,
 		Contents: s3io.NoOpReadCloser{},
 	}, nil
@@ -322,6 +324,7 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 func (db *SingleBucketBackend) PutObject(
 	bucketName, objectName string,
 	meta map[string]string,
+	tags map[string]string,
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
 
@@ -383,6 +386,7 @@ func (db *SingleBucketBackend) PutObject(
 		File:    objectName,
 		Hash:    hasher.Sum(nil),
 		Meta:    meta,
+		Tags:    tags,
 		Size:    stat.Size(),
 		ModTime: stat.ModTime(),
 	}

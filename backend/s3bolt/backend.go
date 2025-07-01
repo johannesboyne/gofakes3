@@ -334,6 +334,7 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 func (db *Backend) PutObject(
 	bucketName, objectName string,
 	meta map[string]string,
+	tags map[string]string,
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
 
@@ -359,6 +360,7 @@ func (db *Backend) PutObject(
 		data, err := bson.Marshal(&boltObject{
 			Name:         objectName,
 			Metadata:     meta,
+			Tags:         tags,
 			Size:         int64(len(bts)),
 			LastModified: mod,
 			Contents:     bts,
