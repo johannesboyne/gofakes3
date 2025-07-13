@@ -461,7 +461,7 @@ func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, i
 
 	etag = fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), len(input.Parts))
 
-	result, err := u.storage.PutObject(bucket, object, mpu.Meta, bytes.NewReader(body), int64(len(body)))
+	result, err := u.storage.PutObject(bucket, object, mpu.Meta, bytes.NewReader(body), int64(len(body)), nil)
 	if err != nil {
 		return "", "", err
 	}

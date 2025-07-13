@@ -118,7 +118,6 @@ type bucketData struct {
 	deleteMarker bool
 	body         []byte
 	hash         []byte
-	etag         string
 	metadata     map[string]string
 }
 

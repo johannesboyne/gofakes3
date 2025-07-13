@@ -2,7 +2,6 @@ package s3afero
 
 import (
 	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -12,9 +11,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/afero"
+
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/internal/s3io"
-	"github.com/spf13/afero"
 )
 
 // MultiBucketBackend is a gofakes3.Backend that allows you to create multiple
@@ -165,7 +165,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 			response.Add(&gofakes3.Content{
 				Key:          objectPath,
 				LastModified: gofakes3.NewContentTime(mtime),
-				ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
+				ETag:         gofakes3.FormatETag(meta.Hash),
 				Size:         size,
 			})
 		}
@@ -212,7 +212,7 @@ func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, 
 		response.Add(&gofakes3.Content{
 			Key:          objectName,
 			LastModified: gofakes3.NewContentTime(mtime),
-			ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
+			ETag:         gofakes3.FormatETag(meta.Hash),
 			Size:         size,
 		})
 
@@ -419,7 +419,9 @@ func (db *MultiBucketBackend) GetObject(bucketName, objectName string, rangeRequ
 func (db *MultiBucketBackend) PutObject(
 	bucketName, objectName string,
 	meta map[string]string,
-	input io.Reader, size int64,
+	input io.Reader,
+	size int64,
+	conditions *gofakes3.PutConditions,
 ) (result gofakes3.PutObjectResult, err error) {
 
 	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
@@ -436,6 +438,16 @@ func (db *MultiBucketBackend) PutObject(
 		return result, err
 	} else if !exists {
 		return result, gofakes3.BucketNotFound(bucketName)
+	}
+
+	if conditions != nil {
+		objectInfo, err := db.getConditionalObjectInfo(bucketName, objectName)
+		if err != nil {
+			return result, err
+		}
+		if err := gofakes3.CheckPutConditions(conditions, objectInfo); err != nil {
+			return result, err
+		}
 	}
 
 	objectPath := path.Join(bucketName, objectName)
@@ -557,4 +569,30 @@ func (db *MultiBucketBackend) DeleteMulti(bucketName string, objects ...string) 
 	}
 
 	return result, nil
+}
+
+// getConditionalObjectInfo returns information about an object for conditional checking.
+// This method assumes the backend lock is already held.
+func (db *MultiBucketBackend) getConditionalObjectInfo(bucketName, objectName string) (*gofakes3.ConditionalObjectInfo, error) {
+	fullPath := path.Join(bucketName, objectName)
+
+	stat, err := db.bucketFs.Stat(filepath.FromSlash(fullPath))
+	if os.IsNotExist(err) {
+		return &gofakes3.ConditionalObjectInfo{Exists: false}, nil
+	} else if err != nil {
+		return nil, err
+	} else if stat.IsDir() {
+		return &gofakes3.ConditionalObjectInfo{Exists: false}, nil
+	}
+
+	size, mtime := stat.Size(), stat.ModTime()
+	meta, err := db.metaStore.loadMeta(bucketName, objectName, size, mtime)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gofakes3.ConditionalObjectInfo{
+		Exists: true,
+		Hash:   meta.Hash,
+	}, nil
 }

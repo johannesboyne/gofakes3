@@ -624,7 +624,7 @@ func (g *GoFakeS3) createObjectBrowserUpload(bucket string, w http.ResponseWrite
 		return err
 	}
 
-	result, err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size)
+	result, err := g.storage.PutObject(bucket, key, meta, rdr, fileHeader.Size, nil)
 	if err != nil {
 		return err
 	}
@@ -651,6 +651,12 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 
 	if _, ok := meta["X-Amz-Copy-Source"]; ok {
 		return g.copyObject(bucket, object, meta, w, r)
+	}
+
+	// Parse conditional headers for PutObject
+	conditions, err := parsePutConditions(r.Header)
+	if err != nil {
+		return err
 	}
 
 	contentLength := r.Header.Get("Content-Length")
@@ -698,7 +704,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	result, err := g.storage.PutObject(bucket, object, meta, rdr, size)
+	result, err := g.storage.PutObject(bucket, object, meta, rdr, size, conditions)
 	if err != nil {
 		return err
 	}
@@ -1192,4 +1198,30 @@ func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsP
 	_, page.HasVersionIDMarker = query["version-id-marker"]
 
 	return page, nil
+}
+
+// parsePutConditions extracts conditional headers from HTTP request headers
+// and returns a PutConditions struct, or nil if no conditional headers are present.
+func parsePutConditions(headers http.Header) (*PutConditions, error) {
+	var conditions *PutConditions
+
+	// Check If-Match header
+	if ifMatch := headers.Get("If-Match"); ifMatch != "" {
+		if conditions == nil {
+			conditions = &PutConditions{}
+		}
+		conditions.IfMatch = &ifMatch
+	}
+
+	// Check If-None-Match header
+	if ifNoneMatch := headers.Get("If-None-Match"); ifNoneMatch != "" {
+		if conditions == nil {
+			conditions = &PutConditions{}
+		}
+		conditions.IfNoneMatch = &ifNoneMatch
+	}
+
+
+
+	return conditions, nil
 }

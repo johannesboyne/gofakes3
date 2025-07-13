@@ -2,7 +2,6 @@ package s3mem
 
 import (
 	"crypto/md5"
-	"encoding/hex"
 	"io"
 	"sync"
 
@@ -120,7 +119,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 			response.Add(&gofakes3.Content{
 				Key:          item.data.name,
 				LastModified: gofakes3.NewContentTime(item.data.lastModified),
-				ETag:         `"` + hex.EncodeToString(item.data.hash) + `"`,
+				ETag:         gofakes3.FormatETag(item.data.hash),
 				Size:         int64(len(item.data.body)),
 			})
 		}
@@ -233,7 +232,14 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 	return result, nil
 }
 
-func (db *Backend) PutObject(bucketName, objectName string, meta map[string]string, input io.Reader, size int64) (result gofakes3.PutObjectResult, err error) {
+func (db *Backend) PutObject(
+	bucketName,
+	objectName string,
+	meta map[string]string,
+	input io.Reader,
+	size int64,
+	conditions *gofakes3.PutConditions,
+) (result gofakes3.PutObjectResult, err error) {
 	// No need to lock the backend while we read the data into memory; it holds
 	// the write lock open unnecessarily, and could be blocked for an unreasonably
 	// long time by a connection timing out:
@@ -255,13 +261,22 @@ func (db *Backend) PutObject(bucketName, objectName string, meta map[string]stri
 		return result, gofakes3.BucketNotFound(bucketName)
 	}
 
+	if conditions != nil {
+		objectInfo, err := db.getConditionalObjectInfo(bucket, objectName)
+		if err != nil {
+			return result, err
+		}
+		if err := gofakes3.CheckPutConditions(conditions, objectInfo); err != nil {
+			return result, err
+		}
+	}
+
 	hash := md5.Sum(bts)
 
 	item := &bucketData{
 		name:         objectName,
 		body:         bts,
 		hash:         hash[:],
-		etag:         `"` + hex.EncodeToString(hash[:]) + `"`,
 		metadata:     meta,
 		lastModified: db.timeSource.Now(),
 	}
@@ -542,7 +557,7 @@ func (db *Backend) ListBucketVersions(
 					IsLatest:     version == object.data,
 					LastModified: gofakes3.NewContentTime(version.lastModified),
 					Size:         int64(len(version.body)),
-					ETag:         version.etag,
+					ETag:         gofakes3.FormatETag(version.hash),
 				}
 				if bucket.versioning != gofakes3.VersioningNone { // S300005
 					resultVer.VersionID = version.versionID
@@ -562,6 +577,19 @@ done:
 	result.IsTruncated = truncated || iter.Next()
 
 	return result, nil
+}
+
+// getConditionalObjectInfo returns information about an object for conditional checking.
+// This method assumes the bucket lock is already held.
+func (db *Backend) getConditionalObjectInfo(bucket *bucket, objectName string) (*gofakes3.ConditionalObjectInfo, error) {
+	existing := bucket.object(objectName)
+	if existing == nil || existing.data.deleteMarker {
+		return &gofakes3.ConditionalObjectInfo{Exists: false}, nil
+	}
+	return &gofakes3.ConditionalObjectInfo{
+		Exists: true,
+		Hash:   existing.data.hash,
+	}, nil
 }
 
 // nextVersion assumes the backend's lock is acquired
