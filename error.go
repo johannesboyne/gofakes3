@@ -88,6 +88,12 @@ const (
 	// No need to retransmit the object
 	ErrNotModified ErrorCode = "NotModified"
 
+	// At least one of the preconditions you specified did not hold
+	ErrPreconditionFailed ErrorCode = "PreconditionFailed"
+
+	// A conflicting conditional operation is currently in progress against this resource
+	ErrConditionalRequestConflict ErrorCode = "ConditionalRequestConflict"
+
 	ErrRequestTimeTooSkewed ErrorCode = "RequestTimeTooSkewed"
 	ErrTooManyBuckets       ErrorCode = "TooManyBuckets"
 	ErrNotImplemented       ErrorCode = "NotImplemented"
@@ -226,6 +232,10 @@ func (e ErrorCode) Message() string {
 		return "The difference between the request time and the current time is too large"
 	case ErrMalformedXML:
 		return "The XML you provided was not well-formed or did not validate against our published schema"
+	case ErrPreconditionFailed:
+		return "At least one of the preconditions you specified did not hold"
+	case ErrConditionalRequestConflict:
+		return "A conflicting conditional operation is currently in progress against this resource"
 	default:
 		return ""
 	}
@@ -236,6 +246,12 @@ func (e ErrorCode) Status() int {
 	case ErrBucketAlreadyExists,
 		ErrBucketNotEmpty:
 		return http.StatusConflict
+
+	case ErrConditionalRequestConflict:
+		return http.StatusConflict
+
+	case ErrPreconditionFailed:
+		return http.StatusPreconditionFailed
 
 	case ErrBadDigest,
 		ErrIllegalVersioningConfiguration,
