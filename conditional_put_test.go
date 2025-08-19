@@ -2,12 +2,13 @@ package gofakes3_test
 
 import (
 	"bytes"
+	"context"
 	"io/ioutil"
 	"os"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/afero"
 	bolt "go.etcd.io/bbolt"
 
@@ -127,25 +128,23 @@ func testConditionalPutIfNoneMatch(t *testing.T, ts *testServer) {
 	body := []byte("test content")
 
 	// Test 1: If-None-Match with * should succeed when object doesn't exist
-	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader(body),
+	_, err := svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:      bucket,
+		Key:         key,
+		Body:        bytes.NewReader(body),
+		IfNoneMatch: aws.String("*"),
 	})
-	req.HTTPRequest.Header.Set("If-None-Match", "*")
-	err := req.Send()
 	if err != nil {
 		t.Fatal("Expected success when object doesn't exist:", err)
 	}
 
 	// Test 2: If-None-Match with * should fail when object exists
-	req2, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("new content")),
+	_, err = svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:      bucket,
+		Key:         key,
+		Body:        bytes.NewReader([]byte("new content")),
+		IfNoneMatch: aws.String("*"),
 	})
-	req2.HTTPRequest.Header.Set("If-None-Match", "*")
-	err = req2.Send()
 	if err == nil {
 		t.Fatal("Expected failure when object exists")
 	}
@@ -172,7 +171,7 @@ func testConditionalPutIfMatch(t *testing.T, ts *testServer) {
 	body := []byte("test content")
 
 	// Create initial object
-	putResp, err := svc.PutObject(&s3.PutObjectInput{
+	putResp, err := svc.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: bucket,
 		Key:    key,
 		Body:   bytes.NewReader(body),
@@ -183,25 +182,23 @@ func testConditionalPutIfMatch(t *testing.T, ts *testServer) {
 	etag := *putResp.ETag
 
 	// Test 1: If-Match with correct ETag should succeed
-	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("updated content")),
+	_, err = svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:  bucket,
+		Key:     key,
+		Body:    bytes.NewReader([]byte("updated content")),
+		IfMatch: aws.String(etag),
 	})
-	req.HTTPRequest.Header.Set("If-Match", etag)
-	err = req.Send()
 	if err != nil {
 		t.Fatal("Expected success with matching ETag:", err)
 	}
 
 	// Test 2: If-Match with wrong ETag should fail
-	req2, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("another update")),
+	_, err = svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:  bucket,
+		Key:     key,
+		Body:    bytes.NewReader([]byte("another update")),
+		IfMatch: aws.String(`"wrong-etag"`),
 	})
-	req2.HTTPRequest.Header.Set("If-Match", `"wrong-etag"`)
-	err = req2.Send()
 	if err == nil {
 		t.Fatal("Expected failure with wrong ETag")
 	}
@@ -227,13 +224,12 @@ func testConditionalPutNonExistentObject(t *testing.T, ts *testServer) {
 	key := aws.String("nonexistent-object")
 
 	// Test: If-Match on non-existent object should fail
-	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("content")),
+	_, err := svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:  bucket,
+		Key:     key,
+		Body:    bytes.NewReader([]byte("content")),
+		IfMatch: aws.String(`"some-etag"`),
 	})
-	req.HTTPRequest.Header.Set("If-Match", `"some-etag"`)
-	err := req.Send()
 	if err == nil {
 		t.Fatal("Expected failure when object doesn't exist")
 	}
@@ -259,7 +255,7 @@ func testConditionalPutMultipleConditions(t *testing.T, ts *testServer) {
 	body := []byte("test content")
 
 	// Create initial object
-	putResp, err := svc.PutObject(&s3.PutObjectInput{
+	putResp, err := svc.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: bucket,
 		Key:    key,
 		Body:   bytes.NewReader(body),
@@ -270,13 +266,12 @@ func testConditionalPutMultipleConditions(t *testing.T, ts *testServer) {
 	etag := *putResp.ETag
 
 	// Test: If-Match condition should pass
-	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("updated content")),
+	_, err = svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:  bucket,
+		Key:     key,
+		Body:    bytes.NewReader([]byte("updated content")),
+		IfMatch: aws.String(etag),
 	})
-	req.HTTPRequest.Header.Set("If-Match", etag)
-	err = req.Send()
 	if err != nil {
 		t.Fatal("Expected success with If-Match condition:", err)
 	}
@@ -300,7 +295,7 @@ func testConditionalPutCopyOperation(t *testing.T, ts *testServer) {
 	destKey := aws.String("dest-object")
 
 	// Create source object
-	_, err := svc.PutObject(&s3.PutObjectInput{
+	_, err := svc.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: bucket,
 		Key:    sourceKey,
 		Body:   bytes.NewReader([]byte("source content")),
@@ -311,7 +306,7 @@ func testConditionalPutCopyOperation(t *testing.T, ts *testServer) {
 
 	// Test: Copy operation should not be affected by conditional headers
 	// (copy operations always pass nil conditions to backend)
-	_, err = svc.CopyObject(&s3.CopyObjectInput{
+	_, err = svc.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:     bucket,
 		Key:        destKey,
 		CopySource: aws.String(defaultBucket + "/" + *sourceKey),
@@ -339,7 +334,7 @@ func testConditionalPutETagComparison(t *testing.T, ts *testServer) {
 	body := []byte("test content")
 
 	// Create initial object
-	putResp, err := svc.PutObject(&s3.PutObjectInput{
+	putResp, err := svc.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: bucket,
 		Key:    key,
 		Body:   bytes.NewReader(body),
@@ -350,19 +345,18 @@ func testConditionalPutETagComparison(t *testing.T, ts *testServer) {
 	etag := *putResp.ETag
 
 	// Test 1: ETag with quotes should work
-	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("updated content 1")),
+	_, err = svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:  bucket,
+		Key:     key,
+		Body:    bytes.NewReader([]byte("updated content 1")),
+		IfMatch: aws.String(etag), // ETag already has quotes
 	})
-	req.HTTPRequest.Header.Set("If-Match", etag) // ETag already has quotes
-	err = req.Send()
 	if err != nil {
 		t.Fatal("Expected success with quoted ETag:", err)
 	}
 
 	// Get new ETag
-	getResp, err := svc.GetObject(&s3.GetObjectInput{
+	getResp, err := svc.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: bucket,
 		Key:    key,
 	})
@@ -373,13 +367,12 @@ func testConditionalPutETagComparison(t *testing.T, ts *testServer) {
 
 	// Test 2: ETag without quotes should also work
 	unquotedEtag := newEtag[1 : len(newEtag)-1] // Remove quotes
-	req2, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: bucket,
-		Key:    key,
-		Body:   bytes.NewReader([]byte("updated content 2")),
+	_, err = svc.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:  bucket,
+		Key:     key,
+		Body:    bytes.NewReader([]byte("updated content 2")),
+		IfMatch: aws.String(unquotedEtag),
 	})
-	req2.HTTPRequest.Header.Set("If-Match", unquotedEtag)
-	err = req2.Send()
 	if err != nil {
 		t.Fatal("Expected success with unquoted ETag:", err)
 	}
