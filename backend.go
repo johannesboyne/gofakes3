@@ -127,6 +127,69 @@ type PutObjectResult struct {
 	VersionID VersionID
 }
 
+// PutConditions represents the conditional headers for S3 PutObject operations.
+// These conditions are checked atomically before writing the object.
+type PutConditions struct {
+	// IfMatch specifies that the object should only be written if its ETag
+	// matches this value. If the ETag doesn't match, ErrPreconditionFailed
+	// should be returned.
+	IfMatch *string
+
+	// IfNoneMatch specifies that the object should only be written if the
+	// object key doesn't already exist. The value should be "*".
+	// If the object exists, ErrPreconditionFailed should be returned.
+	IfNoneMatch *string
+}
+
+// ConditionalObjectInfo represents the current state of an object for conditional checking.
+// Backends should provide this information to the shared CheckPutConditions function.
+type ConditionalObjectInfo struct {
+	// Exists indicates whether the object exists
+	Exists bool
+
+	// Hash is the MD5 hash of the object content (used for ETag comparison)
+	// Only required if Exists is true
+	Hash []byte
+}
+
+// ObjectInfo is a deprecated alias for ConditionalObjectInfo.
+// Use ConditionalObjectInfo instead.
+type ObjectInfo = ConditionalObjectInfo
+
+// FormatETag formats a hash as an S3 ETag with quotes
+func FormatETag(hash []byte) string {
+	return `"` + hex.EncodeToString(hash) + `"`
+}
+
+// CheckPutConditions validates conditional headers for PutObject operations.
+// This is a shared implementation that all backends can use.
+func CheckPutConditions(conditions *PutConditions, objectInfo *ConditionalObjectInfo) error {
+	// Check If-None-Match: object should not exist
+	if conditions.IfNoneMatch != nil {
+		if *conditions.IfNoneMatch == "*" && objectInfo.Exists {
+			return ErrorMessage(ErrPreconditionFailed, "The object already exists")
+		}
+	}
+
+	// Check If-Match: if specified, object must exist and ETag must match
+	if conditions.IfMatch != nil {
+		if !objectInfo.Exists {
+			return ErrorMessage(ErrPreconditionFailed, "The object does not exist")
+		}
+		expectedETag := *conditions.IfMatch
+		// Remove quotes if present for comparison
+		if len(expectedETag) >= 2 && expectedETag[0] == '"' && expectedETag[len(expectedETag)-1] == '"' {
+			expectedETag = expectedETag[1 : len(expectedETag)-1]
+		}
+		actualETag := hex.EncodeToString(objectInfo.Hash)
+		if expectedETag != actualETag {
+			return ErrorMessage(ErrPreconditionFailed, "The ETag does not match")
+		}
+	}
+
+	return nil
+}
+
 // Backend provides a set of operations to be implemented in order to support
 // gofakes3.
 //
@@ -234,7 +297,11 @@ type Backend interface {
 	//
 	// The size can be used if the backend needs to read the whole reader; use
 	// gofakes3.ReadAll() for this job rather than ioutil.ReadAll().
-	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64) (PutObjectResult, error)
+	//
+	// If conditions is not nil, the backend should check the conditions before
+	// writing the object. If conditions fail, it should return ErrPreconditionFailed
+	// or ErrConditionalRequestConflict as appropriate.
+	PutObject(bucketName, key string, meta map[string]string, input io.Reader, size int64, conditions *PutConditions) (PutObjectResult, error)
 
 	DeleteMulti(bucketName string, objects ...string) (MultiDeleteResult, error)
 
@@ -344,7 +411,7 @@ func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta ma
 	}
 	defer c.Contents.Close()
 
-	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size)
+	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size, nil)
 	if err != nil {
 		return
 	}

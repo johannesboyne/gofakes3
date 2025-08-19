@@ -3,15 +3,15 @@ package s3bolt
 import (
 	"bytes"
 	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 
-	"github.com/johannesboyne/gofakes3"
-	"github.com/johannesboyne/gofakes3/internal/s3io"
 	bolt "go.etcd.io/bbolt"
 	"gopkg.in/mgo.v2/bson"
+
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/internal/s3io"
 )
 
 var (
@@ -165,7 +165,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 				}
 				item := &gofakes3.Content{
 					Key:          string(k[:]),
-					ETag:         `"` + hex.EncodeToString(b.Hash[:]) + `"`,
+					ETag:         gofakes3.FormatETag(b.Hash),
 					Size:         b.Size,
 					LastModified: gofakes3.NewContentTime(b.LastModified.UTC()),
 				}
@@ -334,7 +334,9 @@ func (db *Backend) GetObject(bucketName, objectName string, rangeRequest *gofake
 func (db *Backend) PutObject(
 	bucketName, objectName string,
 	meta map[string]string,
-	input io.Reader, size int64,
+	input io.Reader,
+	size int64,
+	conditions *gofakes3.PutConditions,
 ) (result gofakes3.PutObjectResult, err error) {
 
 	bts, err := gofakes3.ReadAll(input, size)
@@ -354,6 +356,16 @@ func (db *Backend) PutObject(
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return gofakes3.BucketNotFound(bucketName)
+		}
+
+		if conditions != nil {
+			objectInfo, err := db.getConditionalObjectInfo(b, objectName)
+			if err != nil {
+				return err
+			}
+			if err := gofakes3.CheckPutConditions(conditions, objectInfo); err != nil {
+				return err
+			}
 		}
 
 		data, err := bson.Marshal(&boltObject{
@@ -418,4 +430,21 @@ func (db *Backend) DeleteMulti(bucketName string, objects ...string) (result gof
 	})
 
 	return result, err
+}
+
+// getConditionalObjectInfo returns information about an object for conditional checking.
+// This method assumes it's called within a bolt transaction.
+func (db *Backend) getConditionalObjectInfo(bucket *bolt.Bucket, objectName string) (*gofakes3.ConditionalObjectInfo, error) {
+	existingData := bucket.Get([]byte(objectName))
+	if existingData == nil {
+		return &gofakes3.ConditionalObjectInfo{Exists: false}, nil
+	}
+	var existing boltObject
+	if err := bson.Unmarshal(existingData, &existing); err != nil {
+		return nil, fmt.Errorf("gofakes3: could not unmarshal object %q: %v", objectName, err)
+	}
+	return &gofakes3.ConditionalObjectInfo{
+		Exists: true,
+		Hash:   existing.Hash,
+	}, nil
 }

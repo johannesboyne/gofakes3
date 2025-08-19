@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"github.com/cevatbarisyilmaz/ara"
 	"io"
 	"io/ioutil"
 	"log"
@@ -31,12 +30,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cevatbarisyilmaz/ara"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
@@ -258,12 +260,12 @@ func (ts *testServer) backendObjectExists(bucket, key string) (bool, bool) {
 
 func (ts *testServer) backendPutString(bucket, key string, meta map[string]string, in string) {
 	ts.Helper()
-	ts.OKAll(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in), int64(len(in))))
+	ts.OKAll(ts.backend.PutObject(bucket, key, meta, strings.NewReader(in), int64(len(in)), nil))
 }
 
 func (ts *testServer) backendPutBytes(bucket, key string, meta map[string]string, in []byte) {
 	ts.Helper()
-	ts.OKAll(ts.backend.PutObject(bucket, key, meta, bytes.NewReader(in), int64(len(in))))
+	ts.OKAll(ts.backend.PutObject(bucket, key, meta, bytes.NewReader(in), int64(len(in)), nil))
 }
 
 func (ts *testServer) backendGetString(bucket, key string, rnge *gofakes3.ObjectRangeRequest) string {

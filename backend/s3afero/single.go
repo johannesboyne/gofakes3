@@ -2,7 +2,6 @@ package s3afero
 
 import (
 	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"io"
 	"log"
@@ -13,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/afero"
+
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/internal/s3io"
-	"github.com/spf13/afero"
 )
 
 // SingleBucketBackend is a gofakes3.Backend that allows you to treat an existing
@@ -144,7 +144,7 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 			response.Add(&gofakes3.Content{
 				Key:          objectPath,
 				LastModified: gofakes3.NewContentTime(mtime),
-				ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
+				ETag:         gofakes3.FormatETag(meta.Hash),
 				Size:         size,
 			})
 		}
@@ -176,7 +176,7 @@ func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string,
 		response.Add(&gofakes3.Content{
 			Key:          objectPath,
 			LastModified: gofakes3.NewContentTime(mtime),
-			ETag:         `"` + hex.EncodeToString(meta.Hash) + `"`,
+			ETag:         gofakes3.FormatETag(meta.Hash),
 			Size:         size,
 		})
 
@@ -322,7 +322,9 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 func (db *SingleBucketBackend) PutObject(
 	bucketName, objectName string,
 	meta map[string]string,
-	input io.Reader, size int64,
+	input io.Reader,
+	size int64,
+	conditions *gofakes3.PutConditions,
 ) (result gofakes3.PutObjectResult, err error) {
 
 	if bucketName != db.name {
@@ -336,6 +338,16 @@ func (db *SingleBucketBackend) PutObject(
 
 	db.lock.Lock()
 	defer db.lock.Unlock()
+
+	if conditions != nil {
+		objectInfo, err := db.getConditionalObjectInfo(bucketName, objectName)
+		if err != nil {
+			return result, err
+		}
+		if err := gofakes3.CheckPutConditions(conditions, objectInfo); err != nil {
+			return result, err
+		}
+	}
 
 	objectFilePath := filepath.FromSlash(objectName)
 	objectDir := filepath.Dir(objectFilePath)
@@ -498,4 +510,28 @@ func (db *SingleBucketBackend) ForceDeleteBucket(name string) error {
 
 func (db *SingleBucketBackend) BucketExists(name string) (exists bool, err error) {
 	return db.name == name, nil
+}
+
+// getConditionalObjectInfo returns information about an object for conditional checking.
+// This method assumes the backend lock is already held.
+func (db *SingleBucketBackend) getConditionalObjectInfo(bucketName, objectName string) (*gofakes3.ConditionalObjectInfo, error) {
+	stat, err := db.fs.Stat(filepath.FromSlash(objectName))
+	if os.IsNotExist(err) {
+		return &gofakes3.ConditionalObjectInfo{Exists: false}, nil
+	} else if err != nil {
+		return nil, err
+	} else if stat.IsDir() {
+		return &gofakes3.ConditionalObjectInfo{Exists: false}, nil
+	}
+
+	size, mtime := stat.Size(), stat.ModTime()
+	meta, err := db.ensureMeta(bucketName, objectName, size, mtime)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gofakes3.ConditionalObjectInfo{
+		Exists: true,
+		Hash:   meta.Hash,
+	}, nil
 }
