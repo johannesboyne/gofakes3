@@ -72,3 +72,7 @@ func server() {
 
 	log.Println("Server exited gracefully")
 }
+
+func main() {
+	server()
+}
