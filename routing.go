@@ -20,7 +20,7 @@ import (
 // to degrade, especially around multipart uploads.
 func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	var (
-		path   = strings.Trim(r.URL.Path, "/")
+		path   = strings.TrimPrefix(r.URL.Path, "/")
 		parts  = strings.SplitN(path, "/", 2)
 		bucket = parts[0]
 		query  = r.URL.Query()
