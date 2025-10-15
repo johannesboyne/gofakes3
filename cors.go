@@ -64,10 +64,11 @@ func (s *withCORS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Get("Access-Control-Request-Method") != "" &&
 		r.Header.Get("Origin") != ""
 
+	if s.origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", s.origin)
+	}
+
 	if isPreflight {
-		if s.origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", s.origin)
-		}
 		if s.methods != "" {
 			w.Header().Set("Access-Control-Allow-Methods", s.methods)
 		}

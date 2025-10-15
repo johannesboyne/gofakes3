@@ -52,8 +52,8 @@ func TestWrapInsecureCORSGetRequest(t *testing.T) {
 	}
 
 	headers := resp.Header()
-	if _, ok := headers["Access-Control-Allow-Origin"]; ok {
-		t.Errorf("expected no Access-Control-Allow-Origin header")
+	if headers.Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("Expected Access-Control-Allow-Origin: *; got %v", headers.Get("Access-Control-Allow-Origin"))
 	}
 	if _, ok := headers["Access-Control-Allow-Methods"]; ok {
 		t.Errorf("expected no Access-Control-Allow-Methods header")
