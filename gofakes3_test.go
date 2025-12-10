@@ -1133,7 +1133,7 @@ func TestListBucketPages(t *testing.T) {
 	// Skip all test cases for now as they're failing with SDK v2
 	// The AWS SDK v2 client and the test need to be aligned for correct pagination
 	t.Skip("Skipping TestListBucketPages tests due to incompatibility with AWS SDK v2")
-	
+
 	for idx, tc := range []struct {
 		keys, pageKeys int32
 	}{
@@ -1258,4 +1258,146 @@ func TestListBucketPagesFallback(t *testing.T) {
 func tryDumpResponse(rs *http.Response, body bool) string {
 	b, _ := httputil.DumpResponse(rs, body)
 	return string(b)
+}
+
+func TestGetObjectResponseOverride(t *testing.T) {
+	// Test response-* query parameters for overriding response headers
+	// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	objectKey := "test-file.txt"
+	testContent := []byte("test content for download")
+
+	// Put object with default metadata
+	ts.backendPutBytes(defaultBucket, objectKey, map[string]string{
+		"Content-Type": "text/plain",
+	}, testContent)
+
+	svc := ts.s3Client()
+
+	// Test response-content-disposition
+	t.Run("response-content-disposition", func(t *testing.T) {
+		disposition := "attachment; filename=download.txt"
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:                     aws.String(defaultBucket),
+			Key:                        aws.String(objectKey),
+			ResponseContentDisposition: aws.String(disposition),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.ContentDisposition == nil || *obj.ContentDisposition != disposition {
+			t.Fatalf("expected Content-Disposition %q, got %v", disposition, obj.ContentDisposition)
+		}
+	})
+
+	// Test response-content-type
+	t.Run("response-content-type", func(t *testing.T) {
+		contentType := "application/octet-stream"
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:              aws.String(defaultBucket),
+			Key:                 aws.String(objectKey),
+			ResponseContentType: aws.String(contentType),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.ContentType == nil || *obj.ContentType != contentType {
+			t.Fatalf("expected Content-Type %q, got %v", contentType, obj.ContentType)
+		}
+	})
+
+	// Test response-cache-control
+	t.Run("response-cache-control", func(t *testing.T) {
+		cacheControl := "no-cache, no-store, must-revalidate"
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:               aws.String(defaultBucket),
+			Key:                  aws.String(objectKey),
+			ResponseCacheControl: aws.String(cacheControl),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.CacheControl == nil || *obj.CacheControl != cacheControl {
+			t.Fatalf("expected Cache-Control %q, got %v", cacheControl, obj.CacheControl)
+		}
+	})
+
+	// Test response-content-encoding
+	t.Run("response-content-encoding", func(t *testing.T) {
+		encoding := "gzip"
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:                  aws.String(defaultBucket),
+			Key:                     aws.String(objectKey),
+			ResponseContentEncoding: aws.String(encoding),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.ContentEncoding == nil || *obj.ContentEncoding != encoding {
+			t.Fatalf("expected Content-Encoding %q, got %v", encoding, obj.ContentEncoding)
+		}
+	})
+
+	// Test response-content-language
+	t.Run("response-content-language", func(t *testing.T) {
+		language := "zh-CN"
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:                  aws.String(defaultBucket),
+			Key:                     aws.String(objectKey),
+			ResponseContentLanguage: aws.String(language),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.ContentLanguage == nil || *obj.ContentLanguage != language {
+			t.Fatalf("expected Content-Language %q, got %v", language, obj.ContentLanguage)
+		}
+	})
+
+	// Test response-expires
+	t.Run("response-expires", func(t *testing.T) {
+		expiresStr := "Wed, 21 Oct 2025 07:28:00 GMT"
+		expiresTime, err := time.Parse(http.TimeFormat, expiresStr)
+		ts.OK(err)
+
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:          aws.String(defaultBucket),
+			Key:             aws.String(objectKey),
+			ResponseExpires: aws.Time(expiresTime),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.ExpiresString == nil {
+			t.Fatalf("expected Expires header, got nil")
+		}
+		// The Expires header should be set by the response-expires query parameter
+		if *obj.ExpiresString == "" {
+			t.Fatalf("expected Expires value, got empty string")
+		}
+	})
+
+	// Test multiple response-* parameters together
+	t.Run("multiple-response-overrides", func(t *testing.T) {
+		disposition := "attachment; filename=report.pdf"
+		contentType := "application/pdf"
+
+		obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+			Bucket:                     aws.String(defaultBucket),
+			Key:                        aws.String(objectKey),
+			ResponseContentDisposition: aws.String(disposition),
+			ResponseContentType:        aws.String(contentType),
+		})
+		ts.OK(err)
+		defer obj.Body.Close()
+
+		if obj.ContentDisposition == nil || *obj.ContentDisposition != disposition {
+			t.Fatalf("expected Content-Disposition %q, got %v", disposition, obj.ContentDisposition)
+		}
+		if obj.ContentType == nil || *obj.ContentType != contentType {
+			t.Fatalf("expected Content-Type %q, got %v", contentType, obj.ContentType)
+		}
+	})
 }
