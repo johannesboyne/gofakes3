@@ -134,9 +134,6 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 	if prefix == nil {
 		prefix = emptyPrefix
 	}
-	if !page.IsEmpty() {
-		return nil, gofakes3.ErrInternalPageNotImplemented
-	}
 
 	objects := gofakes3.NewObjectList()
 
@@ -149,7 +146,20 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 		c := b.Cursor()
 		var match gofakes3.PrefixMatch
 
-		for k, v := c.First(); k != nil; k, v = c.Next() {
+		var k, v []byte
+		if page.HasMarker {
+			k, v = c.Seek([]byte(page.Marker))
+			if string(k) == page.Marker {
+				k, v = c.Next()
+			}
+		} else {
+			k, v = c.First()
+		}
+
+		var cnt int64 = 0
+		var lastKey string
+
+		for ; k != nil; k, v = c.Next() {
 			key := string(k)
 			if !prefix.Match(key, &match) {
 				continue
@@ -170,6 +180,17 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 					LastModified: gofakes3.NewContentTime(b.LastModified.UTC()),
 				}
 				objects.Add(item)
+				lastKey = key
+			}
+
+			cnt++
+			if page.MaxKeys > 0 && cnt >= page.MaxKeys {
+				nextK, _ := c.Next()
+				if nextK != nil {
+					objects.IsTruncated = true
+					objects.NextMarker = lastKey
+				}
+				break
 			}
 		}
 
