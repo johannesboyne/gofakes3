@@ -503,6 +503,15 @@ func (g *GoFakeS3) getObject(
 	return nil
 }
 
+var responseHeaderOverridesMap = map[string]string{
+	"response-content-type":        "Content-Type",
+	"response-content-language":    "Content-Language",
+	"response-expires":             "Expires",
+	"response-cache-control":       "Cache-Control",
+	"response-content-disposition": "Content-Disposition",
+	"response-content-encoding":    "Content-Encoding",
+}
+
 // writeGetOrHeadObjectResponse contains shared logic for constructing headers for
 // a HEAD and a GET request for a /bucket/object URL.
 func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWriter, r *http.Request) error {
@@ -537,6 +546,15 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 	}
 
 	w.Header().Set("Accept-Ranges", "bytes")
+
+	// Handle response-* query parameters to override response headers
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+	query := r.URL.Query()
+	for queryParam, headerName := range responseHeaderOverridesMap {
+		if v := query.Get(queryParam); v != "" {
+			w.Header().Set(headerName, v)
+		}
+	}
 
 	return nil
 }
@@ -1218,8 +1236,6 @@ func parsePutConditions(headers http.Header) (*PutConditions, error) {
 		}
 		conditions.IfNoneMatch = &ifNoneMatch
 	}
-
-
 
 	return conditions, nil
 }
