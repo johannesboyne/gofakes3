@@ -172,3 +172,48 @@ func TestListBucketPrefixWithMarker(t *testing.T) {
 		t.Errorf("expected first object to be 'folder/b.txt', got '%s'", result.Contents[0].Key)
 	}
 }
+
+func TestRepro_NextMarkerEmptyWithDelimiter(t *testing.T) {
+	boltDB, cleanup := setupTestBucket(t, "b", []string{"a/1", "a/2", "a/3", "b/1"})
+	defer cleanup()
+
+	p := &gofakes3.Prefix{HasDelimiter: true, Delimiter: "/"}
+	out, err := boltDB.ListBucket("b", p, gofakes3.ListBucketPage{MaxKeys: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.IsTruncated {
+		t.Fatalf("expected truncated")
+	}
+	if out.NextMarker == "" {
+		t.Fatalf("expected non-empty next marker, got empty")
+	}
+}
+
+func TestRepro_TruncatedShouldRespectPrefixFilter(t *testing.T) {
+	boltDB, cleanup := setupTestBucket(t, "b", []string{"x/1", "x/2", "y/1"})
+	defer cleanup()
+
+	p := &gofakes3.Prefix{HasPrefix: true, Prefix: "x/"}
+	out, err := boltDB.ListBucket("b", p, gofakes3.ListBucketPage{MaxKeys: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.IsTruncated {
+		t.Fatalf("expected not truncated when no more matching keys")
+	}
+}
+
+func TestRepro_DuplicateCommonPrefixCountsTowardMaxKeys(t *testing.T) {
+	boltDB, cleanup := setupTestBucket(t, "b", []string{"a/1", "a/2", "a/3", "b/1"})
+	defer cleanup()
+
+	p := &gofakes3.Prefix{HasDelimiter: true, Delimiter: "/"}
+	out, err := boltDB.ListBucket("b", p, gofakes3.ListBucketPage{MaxKeys: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.CommonPrefixes) != 2 {
+		t.Fatalf("expected 2 common prefixes (a/, b/), got %d", len(out.CommonPrefixes))
+	}
+}

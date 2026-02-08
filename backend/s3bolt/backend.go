@@ -157,6 +157,7 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 		}
 
 		var cnt int64 = 0
+		var lastMatchedPart string
 		var lastKey string
 
 		for ; k != nil; k, v = c.Next() {
@@ -165,7 +166,13 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 				continue
 
 			} else if match.CommonPrefix {
+				if match.MatchedPart == lastMatchedPart {
+					continue // Should not count towards keys
+				}
 				objects.AddPrefix(match.MatchedPart)
+				lastMatchedPart = match.MatchedPart
+				lastKey = match.MatchedPart
+				cnt++
 
 			} else {
 				var b boltObject
@@ -181,12 +188,21 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 				}
 				objects.Add(item)
 				lastKey = key
+				cnt++
 			}
 
-			cnt++
+			// cnt is incremented above when items are actually added
 			if page.MaxKeys > 0 && cnt >= page.MaxKeys {
-				nextK, _ := c.Next()
-				if nextK != nil {
+				// Check if there are more keys matching the prefix
+				var hasMore bool
+				for nextK, _ := c.Next(); nextK != nil; nextK, _ = c.Next() {
+					var nextMatch gofakes3.PrefixMatch
+					if prefix.Match(string(nextK), &nextMatch) {
+						hasMore = true
+						break
+					}
+				}
+				if hasMore {
 					objects.IsTruncated = true
 					objects.NextMarker = lastKey
 				}
