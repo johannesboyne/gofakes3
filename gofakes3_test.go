@@ -776,6 +776,54 @@ func TestGetObjectRange(t *testing.T) {
 	}
 }
 
+func TestGetObjectRangeStatusCode(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := ts.rawClient()
+
+	body := []byte("hello")
+	ts.backendPutBytes(defaultBucket, "foo", nil, body)
+	objURL := client.URL("/" + defaultBucket + "/foo").String()
+
+	getObject := func(rangeHeader string) (int, http.Header, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, objURL, nil)
+		ts.OK(err)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+
+		res, err := client.Do(req)
+		ts.OK(err)
+		defer res.Body.Close()
+
+		out, err := io.ReadAll(res.Body)
+		ts.OK(err)
+		return res.StatusCode, res.Header, out
+	}
+
+	rangeStatus, rangeHeader, rangeOut := getObject("bytes=1-3")
+
+	if rangeStatus != http.StatusPartialContent {
+		t.Fatal("expected partial content", rangeStatus)
+	}
+	if rangeHeader.Get("Content-Range") != "bytes 1-3/5" {
+		t.Fatal("unexpected content range", rangeHeader.Get("Content-Range"))
+	}
+	if !bytes.Equal(rangeOut, body[1:4]) {
+		t.Fatal("unexpected ranged response body")
+	}
+
+	normalStatus, normalHeader, _ := getObject("")
+
+	if normalStatus != http.StatusOK {
+		t.Fatal("expected status ok", normalStatus)
+	}
+	if normalHeader.Get("Content-Range") != "" {
+		t.Fatal("unexpected content range", normalHeader.Get("Content-Range"))
+	}
+}
+
 func TestGetObjectRangeInvalid(t *testing.T) {
 	assertRangeInvalid := func(ts *testServer, key string, hdr string) {
 		svc := ts.s3Client()

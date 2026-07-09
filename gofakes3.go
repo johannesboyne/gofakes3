@@ -495,6 +495,9 @@ func (g *GoFakeS3) getObject(
 
 	// Writes Content-Length, and Content-Range if applicable:
 	obj.Range.writeHeader(obj.Size, w)
+	if obj.Range != nil {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 
 	if _, err := io.Copy(w, obj.Contents); err != nil {
 		return err
