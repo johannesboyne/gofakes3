@@ -392,7 +392,7 @@ type ListMultipartUploadsResult struct {
 	Prefix string `xml:"Prefix,omitempty"`
 
 	CommonPrefixes []CommonPrefix `xml:"CommonPrefixes,omitempty"`
-	IsTruncated    bool           `xml:"IsTruncated,omitempty"`
+	IsTruncated    bool           `xml:"IsTruncated"`
 
 	Uploads []ListMultipartUploadItem `xml:"Upload"`
 }
@@ -418,7 +418,7 @@ type ListMultipartUploadPartsResult struct {
 	PartNumberMarker     int          `xml:"PartNumberMarker"`
 	NextPartNumberMarker int          `xml:"NextPartNumberMarker"`
 	MaxParts             int64        `xml:"MaxParts"`
-	IsTruncated          bool         `xml:"IsTruncated,omitempty"`
+	IsTruncated          bool         `xml:"IsTruncated"`
 
 	Parts []ListMultipartUploadPartItem `xml:"Part"`
 }

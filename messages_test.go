@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 )
@@ -152,5 +153,22 @@ func TestCopyObjectResult(t *testing.T) {
 	}
 	if string(out) != expected {
 		t.Fatalf("unexpected XML output: %s", string(out))
+	}
+}
+
+func TestMultipartListResultsIncludeIsTruncatedFalse(t *testing.T) {
+	for name, res := range map[string]any{
+		"uploads": ListMultipartUploadsResult{Bucket: "bucket"},
+		"parts":   ListMultipartUploadPartsResult{Bucket: "bucket", Key: "key", UploadID: "upload"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := xml.Marshal(res)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(out), "<IsTruncated>false</IsTruncated>") {
+				t.Fatalf("expected IsTruncated=false in XML: %s", string(out))
+			}
+		})
 	}
 }
