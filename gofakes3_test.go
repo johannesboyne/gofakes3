@@ -490,6 +490,77 @@ func TestCopyObjectWithSpecialCharsEscapedInvalied(t *testing.T) {
 	}
 }
 
+func TestCopyObjectFullyEncodedSource(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	srcMeta := map[string]string{
+		"Content-Type": "text/plain",
+	}
+	srcKey := "path/to/source-file.txt"
+	content := "test content"
+	ts.backendPutString(defaultBucket, srcKey, srcMeta, content)
+
+	// Fully encode the source, including "/" as "%2F"
+	copySource := url.QueryEscape(defaultBucket + "/" + srcKey)
+	_, err := svc.CopyObject(t.Context(), &s3.CopyObjectInput{
+		Bucket:     aws.String(defaultBucket),
+		Key:        aws.String("dst-key"),
+		CopySource: aws.String(copySource),
+	})
+	ts.OK(err)
+
+	obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("dst-key"),
+	})
+	ts.OK(err)
+	defer obj.Body.Close()
+
+	objContent, err := io.ReadAll(obj.Body)
+	ts.OK(err)
+	if string(objContent) != content {
+		t.Fatalf("object contents mismatch: got %q, want %q", objContent, content)
+	}
+}
+
+func TestCopyObjectFullyEncodedSourceWithSpecialChars(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	svc := ts.s3Client()
+
+	srcMeta := map[string]string{
+		"Content-Type": "text/plain",
+	}
+	srcKey := "file+name with spaces.txt"
+	content := "test content"
+	ts.backendPutString(defaultBucket, srcKey, srcMeta, content)
+
+	// Fully encode the source, including "/" as "%2F"
+	// The "+" becomes "%2B" and space becomes "+"
+	copySource := url.QueryEscape(defaultBucket + "/" + srcKey)
+	_, err := svc.CopyObject(t.Context(), &s3.CopyObjectInput{
+		Bucket:     aws.String(defaultBucket),
+		Key:        aws.String("dst-key"),
+		CopySource: aws.String(copySource),
+	})
+	ts.OK(err)
+
+	obj, err := svc.GetObject(t.Context(), &s3.GetObjectInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("dst-key"),
+	})
+	ts.OK(err)
+	defer obj.Body.Close()
+
+	objContent, err := io.ReadAll(obj.Body)
+	ts.OK(err)
+	if string(objContent) != content {
+		t.Fatalf("object contents mismatch: got %q, want %q", objContent, content)
+	}
+}
+
 func TestDeleteBucket(t *testing.T) {
 	t.Run("delete-empty", func(t *testing.T) {
 		ts := newTestServer(t, withoutInitialBuckets())
@@ -1133,7 +1204,7 @@ func TestListBucketPages(t *testing.T) {
 	// Skip all test cases for now as they're failing with SDK v2
 	// The AWS SDK v2 client and the test need to be aligned for correct pagination
 	t.Skip("Skipping TestListBucketPages tests due to incompatibility with AWS SDK v2")
-	
+
 	for idx, tc := range []struct {
 		keys, pageKeys int32
 	}{

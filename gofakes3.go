@@ -733,12 +733,30 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 
 	// XXX No support for versionId subresource
 	parts := strings.SplitN(strings.TrimPrefix(source, "/"), "/", 2)
+	sourceDecoded := false
+	if len(parts) < 2 {
+		// The source may be fully URL-encoded (including "/" as "%2F").
+		// Try decoding and splitting again.
+		decoded, err := url.QueryUnescape(source)
+		if err != nil {
+			return err
+		}
+		parts = strings.SplitN(strings.TrimPrefix(decoded, "/"), "/", 2)
+		sourceDecoded = true
+	}
+	if len(parts) < 2 {
+		return ErrorMessage(ErrInvalidArgument, "X-Amz-Copy-Source must contain bucket and key separated by '/'")
+	}
 	srcBucket := parts[0]
 	srcKey := strings.SplitN(parts[1], "?", 2)[0]
 
-	srcKey, err = url.QueryUnescape(srcKey)
-	if err != nil {
-		return err
+	// Only decode the key if we didn't already decode the entire source,
+	// to avoid double-decoding (which corrupts "+" characters).
+	if !sourceDecoded {
+		srcKey, err = url.QueryUnescape(srcKey)
+		if err != nil {
+			return err
+		}
 	}
 	srcObj, err := g.storage.HeadObject(srcBucket, srcKey)
 	if err != nil {
@@ -1218,8 +1236,6 @@ func parsePutConditions(headers http.Header) (*PutConditions, error) {
 		}
 		conditions.IfNoneMatch = &ifNoneMatch
 	}
-
-
 
 	return conditions, nil
 }
