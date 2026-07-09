@@ -1520,3 +1520,58 @@ func TestGetObjectResponseOverride(t *testing.T) {
 		}
 	})
 }
+
+func TestHeadObjectRangeStatusCode(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := ts.rawClient()
+
+	body := []byte("hello")
+	ts.backendPutBytes(defaultBucket, "foo", nil, body)
+	objURL := client.URL("/" + defaultBucket + "/foo").String()
+
+	headObject := func(rangeHeader string) (int, http.Header, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodHead, objURL, nil)
+		ts.OK(err)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+
+		res, err := client.Do(req)
+		ts.OK(err)
+		defer res.Body.Close()
+
+		out, err := io.ReadAll(res.Body)
+		ts.OK(err)
+		return res.StatusCode, res.Header, out
+	}
+
+	// A ranged HEAD must return 206 with a Content-Range/Content-Length scoped
+	// to the requested range, and no body.
+	rangeStatus, rangeHeader, rangeOut := headObject("bytes=1-3")
+	if rangeStatus != http.StatusPartialContent {
+		t.Fatal("expected partial content", rangeStatus)
+	}
+	if rangeHeader.Get("Content-Range") != "bytes 1-3/5" {
+		t.Fatal("unexpected content range", rangeHeader.Get("Content-Range"))
+	}
+	if rangeHeader.Get("Content-Length") != "3" {
+		t.Fatal("unexpected content length", rangeHeader.Get("Content-Length"))
+	}
+	if len(rangeOut) != 0 {
+		t.Fatal("expected empty HEAD body")
+	}
+
+	// A plain HEAD is unchanged: 200, no Content-Range, full Content-Length.
+	normalStatus, normalHeader, _ := headObject("")
+	if normalStatus != http.StatusOK {
+		t.Fatal("expected status ok", normalStatus)
+	}
+	if normalHeader.Get("Content-Range") != "" {
+		t.Fatal("unexpected content range", normalHeader.Get("Content-Range"))
+	}
+	if normalHeader.Get("Content-Length") != "5" {
+		t.Fatal("unexpected content length", normalHeader.Get("Content-Length"))
+	}
+}

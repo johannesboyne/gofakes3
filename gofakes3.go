@@ -590,7 +590,23 @@ func (g *GoFakeS3) headObject(
 		return err
 	}
 
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", obj.Size))
+	// HeadObject does not fetch a ranged body, but S3 still honours the Range
+	// header on HEAD: it responds with 206 and a Content-Range/Content-Length
+	// scoped to the requested range. Resolve the range against the object size.
+	rngeReq, err := parseRangeHeader(r.Header.Get("Range"))
+	if err != nil {
+		return err
+	}
+	rnge, err := rngeReq.Range(obj.Size)
+	if err != nil {
+		return err
+	}
+
+	// Writes Content-Length, and Content-Range if a range applies:
+	rnge.writeHeader(obj.Size, w)
+	if rnge != nil {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 
 	return nil
 }
