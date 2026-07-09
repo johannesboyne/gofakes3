@@ -27,6 +27,22 @@ For production environments, consider more established solutions. Some recommend
 
 ## How to use it?
 
+### Install
+
+You can use (GOFAKE)S3 in your application in the following ways:
+
+**Docker** (Recommended)
+
+```bash
+docker pull johannesboyne/gofakes3
+```
+
+**Go install**
+
+```bash
+go get github.com/johannesboyne/gofakes3
+```
+
 ### Example with AWS SDK v2 (Recommended)
 
 ```golang
