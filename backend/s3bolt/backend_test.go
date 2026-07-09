@@ -217,3 +217,76 @@ func TestRepro_DuplicateCommonPrefixCountsTowardMaxKeys(t *testing.T) {
 		t.Fatalf("expected 2 common prefixes (a/, b/), got %d", len(out.CommonPrefixes))
 	}
 }
+
+// TestDelimiterPaginationTerminates guards against the infinite-pagination bug
+// where NextMarker was set to a common prefix (e.g. "a/") that never advanced
+// past the keys under it. Paginating with a delimiter and small MaxKeys must
+// terminate and surface every distinct common prefix exactly once.
+func TestDelimiterPaginationTerminates(t *testing.T) {
+	boltDB, cleanup := setupTestBucket(t, "b", []string{"a/1", "a/2", "a/3", "b/1", "c/1", "c/2"})
+	defer cleanup()
+	p := &gofakes3.Prefix{HasDelimiter: true, Delimiter: "/"}
+
+	seenPrefixes := []string{}
+	page := gofakes3.ListBucketPage{MaxKeys: 1}
+	for i := 0; ; i++ {
+		if i > 20 {
+			t.Fatalf("pagination did not terminate; seen so far: %v", seenPrefixes)
+		}
+		out, err := boltDB.ListBucket("b", p, page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cp := range out.CommonPrefixes {
+			seenPrefixes = append(seenPrefixes, string(cp.Prefix))
+		}
+		if !out.IsTruncated {
+			break
+		}
+		if out.NextMarker == "" {
+			t.Fatal("truncated response with empty NextMarker")
+		}
+		if out.NextMarker == page.Marker {
+			t.Fatalf("NextMarker did not advance: stuck at %q", out.NextMarker)
+		}
+		page = gofakes3.ListBucketPage{MaxKeys: 1, Marker: out.NextMarker, HasMarker: true}
+	}
+
+	want := []string{"a/", "b/", "c/"}
+	if len(seenPrefixes) != len(want) {
+		t.Fatalf("expected prefixes %v exactly once each, got %v", want, seenPrefixes)
+	}
+	for i := range want {
+		if seenPrefixes[i] != want[i] {
+			t.Fatalf("expected prefixes %v, got %v", want, seenPrefixes)
+		}
+	}
+}
+
+// TestPaginationTerminatesPlainKeys does the same for a flat key listing.
+func TestPaginationTerminatesPlainKeys(t *testing.T) {
+	boltDB, cleanup := setupTestBucket(t, "b", []string{"a", "b", "c", "d", "e"})
+	defer cleanup()
+
+	seen := []string{}
+	page := gofakes3.ListBucketPage{MaxKeys: 2}
+	for i := 0; ; i++ {
+		if i > 20 {
+			t.Fatalf("pagination did not terminate; seen so far: %v", seen)
+		}
+		out, err := boltDB.ListBucket("b", &gofakes3.Prefix{}, page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range out.Contents {
+			seen = append(seen, c.Key)
+		}
+		if !out.IsTruncated {
+			break
+		}
+		page = gofakes3.ListBucketPage{MaxKeys: 2, Marker: out.NextMarker, HasMarker: true}
+	}
+	if strings.Join(seen, ",") != "a,b,c,d,e" {
+		t.Fatalf("expected a,b,c,d,e exactly once, got %v", seen)
+	}
+}

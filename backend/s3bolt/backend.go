@@ -171,7 +171,10 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 				}
 				objects.AddPrefix(match.MatchedPart)
 				lastMatchedPart = match.MatchedPart
-				lastKey = match.MatchedPart
+				// NextMarker must be the raw key, not the common prefix: using
+				// the prefix (e.g. "a/") as a marker does not advance past the
+				// keys under it (since "a/1" > "a/"), causing infinite pagination.
+				lastKey = key
 				cnt++
 
 			} else {
@@ -193,18 +196,29 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 			// cnt is incremented above when items are actually added
 			if page.MaxKeys > 0 && cnt >= page.MaxKeys {
-				// Check if there are more keys matching the prefix
+				// Look ahead to decide truncation and the correct NextMarker.
+				// Keys that roll up into the common prefix we just emitted are
+				// already represented by it, so they don't make a new page — but
+				// NextMarker must still advance past the whole group, otherwise
+				// the next page re-emits (or, if set to the prefix itself, loops
+				// forever on) that prefix.
+				nextMarker := lastKey
 				var hasMore bool
 				for nextK, _ := c.Next(); nextK != nil; nextK, _ = c.Next() {
 					var nextMatch gofakes3.PrefixMatch
-					if prefix.Match(string(nextK), &nextMatch) {
-						hasMore = true
-						break
+					if !prefix.Match(string(nextK), &nextMatch) {
+						continue
 					}
+					if nextMatch.CommonPrefix && nextMatch.MatchedPart == lastMatchedPart {
+						nextMarker = string(nextK)
+						continue
+					}
+					hasMore = true
+					break
 				}
 				if hasMore {
 					objects.IsTruncated = true
-					objects.NextMarker = lastKey
+					objects.NextMarker = nextMarker
 				}
 				break
 			}
