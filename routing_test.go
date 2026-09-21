@@ -1,7 +1,12 @@
 package gofakes3_test
 
 import (
+	"context"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 func assertStatus(ts *testServer, t *testing.T, url string, code int, descr string) {
@@ -82,6 +87,26 @@ func TestRoutingMoreSlashes(t *testing.T) {
 	// re-run test in reverse order
 	testRoutingMoreSlashes(t, testData)
 
+}
+
+// TestRoutingPutObjectAcl verifies that PUT /bucket/key?acl is accepted as a
+// no-op and does not overwrite the object body with the ACL XML payload.
+func TestRoutingPutObjectAcl(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	const body = "hello world"
+	ts.backendPutString(defaultBucket, "obj", nil, body)
+
+	svc := ts.s3Client()
+	_, err := svc.PutObjectAcl(context.TODO(), &s3.PutObjectAclInput{
+		Bucket: aws.String(defaultBucket),
+		Key:    aws.String("obj"),
+		ACL:    s3types.ObjectCannedACLPublicRead,
+	})
+	ts.OK(err)
+
+	ts.assertObject(defaultBucket, "obj", nil, body)
 }
 
 func testRoutingMoreSlashes(t *testing.T, testData [][]string) {
