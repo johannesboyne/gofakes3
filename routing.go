@@ -54,6 +54,11 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	} else if versionID := versionFromQuery(query["versionId"]); versionID != "" {
 		err = g.routeVersion(bucket, object, VersionID(versionID), w, r)
 
+	} else if _, ok := query["acl"]; ok {
+		// ACLs are not enforced; accept the request as a no-op
+		w.WriteHeader(http.StatusOK)
+		return
+
 	} else if bucket != "" && object != "" {
 		err = g.routeObject(bucket, object, w, r)
 
