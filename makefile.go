@@ -56,22 +56,12 @@ func run() error {
 
 func runBuildDocker() error {
 	cmd := command(
-		"go", "build", "-a",
-		"-installsuffix", "cgo",
-		"-o", "./build/main",
-		"./cmd/gofakes3",
+		"docker", "buildx", "build",
+		"--platform", "linux/amd64,linux/arm64",
+		"-t", "johannesboyne/gofakes3",
+		".",
 	)
-	cmd.Env = append(cmd.Env, "GO111MODULE=on", "CGO_ENABLED=0", "GOOS=linux")
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	cmd = command("docker", "build", "-t", "johannesboyne/gofakes3", ".")
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	return nil
+	return cmd.Run()
 }
 
 func runRelease(args []string) error {
