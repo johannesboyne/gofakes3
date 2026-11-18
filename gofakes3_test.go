@@ -824,6 +824,36 @@ func TestGetObjectRangeStatusCode(t *testing.T) {
 	}
 }
 
+func TestGetObjectRangeOmitsChecksum(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := ts.rawClient()
+
+	meta := map[string]string{"X-Amz-Checksum-Crc32": "NhCmhg=="}
+	ts.backendPutBytes(defaultBucket, "foo", meta, []byte("hello"))
+	objURL := client.URL("/" + defaultBucket + "/foo").String()
+
+	getChecksum := func(rangeHeader string) string {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, objURL, nil)
+		ts.OK(err)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+		res, err := client.Do(req)
+		ts.OK(err)
+		res.Body.Close()
+		return res.Header.Get("X-Amz-Checksum-Crc32")
+	}
+
+	if got := getChecksum("bytes=1-2"); got != "" {
+		t.Fatal("ranged get returned the full object checksum", got)
+	}
+	if got := getChecksum(""); got != "NhCmhg==" {
+		t.Fatal("full get lost the checksum", got)
+	}
+}
+
 func TestGetObjectRangeInvalid(t *testing.T) {
 	assertRangeInvalid := func(ts *testServer, key string, hdr string) {
 		svc := ts.s3Client()
