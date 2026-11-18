@@ -496,6 +496,13 @@ func (g *GoFakeS3) getObject(
 	// Writes Content-Length, and Content-Range if applicable:
 	obj.Range.writeHeader(obj.Size, w)
 	if obj.Range != nil {
+		// The stored checksum covers the whole object; SDKs check it against
+		// the partial body and fail.
+		for hk := range w.Header() {
+			if strings.HasPrefix(hk, "X-Amz-Checksum-") {
+				w.Header().Del(hk)
+			}
+		}
 		w.WriteHeader(http.StatusPartialContent)
 	}
 
