@@ -696,15 +696,18 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	contentLength := r.Header.Get("Content-Length")
-	if contentLength == "" {
-		return ErrMissingContentLength
-	}
+	var size int64
+	if !hasDecodedLength(r) {
+		contentLength := r.Header.Get("Content-Length")
+		if contentLength == "" {
+			return ErrMissingContentLength
+		}
 
-	size, err := strconv.ParseInt(contentLength, 10, 64)
-	if err != nil || size < 0 {
-		w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
-		return nil
+		size, err = strconv.ParseInt(contentLength, 10, 64)
+		if err != nil || size < 0 {
+			w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
+			return nil
+		}
 	}
 
 	if len(object) > KeySizeLimit {
@@ -960,9 +963,11 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrInvalidPart
 	}
 
-	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
-	if err != nil || size <= 0 {
-		return ErrMissingContentLength
+	if !hasDecodedLength(r) {
+		size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+		if err != nil || size <= 0 {
+			return ErrMissingContentLength
+		}
 	}
 
 	defer r.Body.Close()
@@ -1001,6 +1006,15 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 
 	w.Header().Add("ETag", etag)
 	return nil
+}
+
+// Reports whether r is a streaming (aws-chunked) upload that
+// announces its payload size in X-Amz-Decoded-Content-Length. Such requests
+// may legitimately omit Content-Length, e.g. when sent with
+// Transfer-Encoding: chunked over TLS.
+func hasDecodedLength(r *http.Request) bool {
+	return isStreamingPayload(r.Header.Get("X-Amz-Content-Sha256")) &&
+		r.Header.Get("X-Amz-Decoded-Content-Length") != ""
 }
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {

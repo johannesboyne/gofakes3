@@ -1636,9 +1636,21 @@ func crc64NVMEBase64(s string) string {
 // decoded as its decoded length.
 func putAWSChunked(ts *testServer, body, decoded, trailer, trailerValue string) *http.Response {
 	ts.Helper()
+	return sendAWSChunked(ts, "/"+defaultBucket+"/data.json", body, decoded, trailer, trailerValue, true)
+}
+
+// sendAWSChunked PUTs an aws-chunked payload to path. With withContentLength
+// false, the request is sent with Transfer-Encoding: chunked and no
+// Content-Length, as the AWS CLI does when talking to a server directly over TLS.
+func sendAWSChunked(ts *testServer, path, body, decoded, trailer, trailerValue string, withContentLength bool) *http.Response {
+	ts.Helper()
 	payload := fmt.Sprintf("%X\r\n%s\r\n0\r\n%s:%s\r\n\r\n", len(body), body, trailer, trailerValue)
 
-	req, err := http.NewRequest("PUT", ts.url("/"+defaultBucket+"/data.json"), strings.NewReader(payload))
+	var reader io.Reader = strings.NewReader(payload)
+	if !withContentLength {
+		reader = struct{ io.Reader }{reader} // hide the length so net/http uses chunked encoding
+	}
+	req, err := http.NewRequest("PUT", ts.url(path), reader)
 	ts.OK(err)
 	req.Header.Set("Content-Encoding", "aws-chunked")
 	req.Header.Set("X-Amz-Content-Sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
@@ -1648,4 +1660,62 @@ func putAWSChunked(ts *testServer, body, decoded, trailer, trailerValue string) 
 	res, err := http.DefaultClient.Do(req)
 	ts.OK(err)
 	return res
+}
+
+// Without Content-Length (Transfer-Encoding: chunked), PutObject must rely on
+// X-Amz-Decoded-Content-Length instead of returning 411.
+func TestPutObjectAWSChunkedNoContentLength(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	body := "hello world"
+	res := sendAWSChunked(ts, "/"+defaultBucket+"/data.json", body, body,
+		"x-amz-checksum-crc64nvme", crc64NVMEBase64(body), false)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+	if got := ts.backendGetString(defaultBucket, "data.json", nil); got != body {
+		t.Fatalf("stored object differs from payload: %q", got)
+	}
+}
+
+// A non-streaming upload still needs Content-Length.
+func TestPutObjectNoContentLengthRejected(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	req, err := http.NewRequest("PUT", ts.url("/"+defaultBucket+"/data.json"),
+		struct{ io.Reader }{strings.NewReader("hello")})
+	ts.OK(err)
+	res, err := http.DefaultClient.Do(req)
+	ts.OK(err)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusLengthRequired {
+		t.Fatalf("expected 411, got %d", res.StatusCode)
+	}
+}
+
+// Same as above, for a multipart upload part.
+func TestUploadPartAWSChunkedNoContentLength(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	uploadID := ts.createMultipartUpload(defaultBucket, "multi", nil)
+
+	body := "hello world"
+	path := fmt.Sprintf("/%s/multi?partNumber=1&uploadId=%s", defaultBucket, uploadID)
+	res := sendAWSChunked(ts, path, body, body,
+		"x-amz-checksum-crc64nvme", crc64NVMEBase64(body), false)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+	etag := res.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("missing ETag")
+	}
+
+	ts.assertCompleteUpload(defaultBucket, "multi", uploadID,
+		[]s3types.CompletedPart{{ETag: &etag, PartNumber: aws.Int32(1)}}, []byte(body))
 }
