@@ -686,14 +686,12 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	if _, ok := meta["X-Amz-Copy-Source"]; ok {
-		return g.copyObject(bucket, object, meta, w, r)
-	}
-
-	// Parse conditional headers for PutObject
-	conditions, err := parsePutConditions(r.Header)
+	dest, err := ParseWriteConditions(r.Header)
 	if err != nil {
 		return err
+	}
+	if _, ok := meta["X-Amz-Copy-Source"]; ok {
+		return g.copyObject(bucket, object, meta, w, r, dest)
 	}
 
 	contentLength := r.Header.Get("Content-Length")
@@ -741,7 +739,12 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return err
 	}
 
-	result, err := g.storage.PutObject(bucket, object, meta, rdr, size, conditions)
+	var result PutObjectResult
+	if b, ok := g.storage.(ConditionalWriteBackend); dest != nil && ok {
+		result, err = b.PutObjectConditional(bucket, object, meta, rdr, size, dest)
+	} else {
+		result, err = g.storage.PutObject(bucket, object, meta, rdr, size, dest.putConditions())
+	}
 	if err != nil {
 		return err
 	}
@@ -756,7 +759,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 }
 
 // CopyObject copies an existing S3 object
-func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w http.ResponseWriter, r *http.Request) (err error) {
+func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w http.ResponseWriter, r *http.Request, dest *WriteConditions) (err error) {
 	if err := g.ensureBucketExists(bucket); err != nil {
 		return err
 	}
@@ -800,6 +803,13 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 		return err
 	}
 
+	if srcObj.Contents != nil {
+		defer srcObj.Contents.Close()
+	}
+	if err := checkCopySource(r.Header, srcObj); err != nil {
+		return err
+	}
+
 	// XXX No support for delete marker
 	// "If the current version of the object is a delete marker, Amazon S3
 	// behaves as if the object was deleted."
@@ -811,7 +821,17 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 		}
 	}
 
-	result, err := g.storage.CopyObject(srcBucket, srcKey, bucket, object, meta)
+	var result CopyObjectResult
+	if b, ok := g.storage.(ConditionalWriteBackend); dest != nil && ok {
+		result, err = b.CopyObjectConditional(srcBucket, srcKey, bucket, object, meta, dest)
+	} else {
+		if dest != nil {
+			if err := g.checkDestination(bucket, object, dest); err != nil {
+				return err
+			}
+		}
+		result, err = g.storage.CopyObject(srcBucket, srcKey, bucket, object, meta)
+	}
 	if err != nil {
 		return err
 	}
@@ -1009,7 +1029,22 @@ func (g *GoFakeS3) completeMultipartUpload(bucket, object string, uploadID Uploa
 		return err
 	}
 
-	versionID, etag, err := g.uploader.CompleteMultipartUpload(bucket, object, uploadID, &in)
+	dest, err := ParseWriteConditions(r.Header)
+	if err != nil {
+		return err
+	}
+	var versionID VersionID
+	var etag string
+	if b, ok := g.uploader.(ConditionalMultipartBackend); dest != nil && ok {
+		versionID, etag, err = b.CompleteMultipartUploadConditional(bucket, object, uploadID, &in, dest)
+	} else {
+		if dest != nil {
+			if err := g.checkDestination(bucket, object, dest); err != nil {
+				return err
+			}
+		}
+		versionID, etag, err = g.uploader.CompleteMultipartUpload(bucket, object, uploadID, &in)
+	}
 	if err != nil {
 		return err
 	}
@@ -1251,28 +1286,4 @@ func listBucketVersionsPageFromQuery(query url.Values) (page ListBucketVersionsP
 	_, page.HasVersionIDMarker = query["version-id-marker"]
 
 	return page, nil
-}
-
-// parsePutConditions extracts conditional headers from HTTP request headers
-// and returns a PutConditions struct, or nil if no conditional headers are present.
-func parsePutConditions(headers http.Header) (*PutConditions, error) {
-	var conditions *PutConditions
-
-	// Check If-Match header
-	if ifMatch := headers.Get("If-Match"); ifMatch != "" {
-		if conditions == nil {
-			conditions = &PutConditions{}
-		}
-		conditions.IfMatch = &ifMatch
-	}
-
-	// Check If-None-Match header
-	if ifNoneMatch := headers.Get("If-None-Match"); ifNoneMatch != "" {
-		if conditions == nil {
-			conditions = &PutConditions{}
-		}
-		conditions.IfNoneMatch = &ifNoneMatch
-	}
-
-	return conditions, nil
 }
