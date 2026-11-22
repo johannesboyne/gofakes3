@@ -701,15 +701,18 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 		return g.copyObject(bucket, object, meta, w, r, dest)
 	}
 
-	contentLength := r.Header.Get("Content-Length")
-	if contentLength == "" {
-		return ErrMissingContentLength
-	}
+	var size int64
+	if !hasDecodedLength(r) {
+		contentLength := r.Header.Get("Content-Length")
+		if contentLength == "" {
+			return ErrMissingContentLength
+		}
 
-	size, err := strconv.ParseInt(contentLength, 10, 64)
-	if err != nil || size < 0 {
-		w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
-		return nil
+		size, err = strconv.ParseInt(contentLength, 10, 64)
+		if err != nil || size < 0 {
+			w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
+			return nil
+		}
 	}
 
 	if len(object) > KeySizeLimit {
@@ -727,8 +730,8 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 
 	var reader io.Reader
 
-	if sha, ok := meta["X-Amz-Content-Sha256"]; ok && sha == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
-		reader = newChunkedReader(r.Body)
+	if sha, ok := meta["X-Amz-Content-Sha256"]; ok && isStreamingPayload(sha) {
+		reader = newChunkedReader(r.Body).verifyTrailer(meta["X-Amz-Trailer"])
 		size, err = strconv.ParseInt(meta["X-Amz-Decoded-Content-Length"], 10, 64)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
@@ -987,13 +990,26 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		return ErrInvalidPart
 	}
 
-	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
-	if err != nil || size <= 0 {
-		return ErrMissingContentLength
+	if !hasDecodedLength(r) {
+		size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+		if err != nil || size <= 0 {
+			return ErrMissingContentLength
+		}
 	}
 
 	defer r.Body.Close()
 	var rdr io.Reader = r.Body
+	uploadSize := r.ContentLength
+
+	if isStreamingPayload(r.Header.Get("X-Amz-Content-Sha256")) {
+		rdr = newChunkedReader(r.Body).verifyTrailer(r.Header.Get("X-Amz-Trailer"))
+		decoded, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
+		if err != nil || decoded < 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return nil
+		}
+		uploadSize = decoded
+	}
 
 	if g.integrityCheck {
 		md5Base64 := r.Header.Get("Content-MD5")
@@ -1010,13 +1026,22 @@ func (g *GoFakeS3) putMultipartUploadPart(bucket, object string, uploadID Upload
 		}
 	}
 
-	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), r.ContentLength, rdr)
+	etag, err := g.uploader.UploadPart(bucket, object, uploadID, int(partNumber), uploadSize, rdr)
 	if err != nil {
 		return err
 	}
 
 	w.Header().Add("ETag", etag)
 	return nil
+}
+
+// Reports whether r is a streaming (aws-chunked) upload that
+// announces its payload size in X-Amz-Decoded-Content-Length. Such requests
+// may legitimately omit Content-Length, e.g. when sent with
+// Transfer-Encoding: chunked over TLS.
+func hasDecodedLength(r *http.Request) bool {
+	return isStreamingPayload(r.Header.Get("X-Amz-Content-Sha256")) &&
+		r.Header.Get("X-Amz-Decoded-Content-Length") != ""
 }
 
 func (g *GoFakeS3) abortMultipartUpload(bucket, object string, uploadID UploadID, w http.ResponseWriter, r *http.Request) error {
@@ -1236,6 +1261,20 @@ func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (
 			hk == "Content-Disposition" ||
 			hk == "Content-Encoding" {
 			meta[hk] = hv[0]
+		}
+	}
+	// aws-chunked is a transport encoding, not part of the stored object so strip it.
+	if ce, ok := meta["Content-Encoding"]; ok {
+		var encodings []string
+		for _, e := range strings.Split(ce, ",") {
+			if e = strings.TrimSpace(e); e != "" && !strings.EqualFold(e, "aws-chunked") {
+				encodings = append(encodings, e)
+			}
+		}
+		if len(encodings) == 0 {
+			delete(meta, "Content-Encoding")
+		} else {
+			meta["Content-Encoding"] = strings.Join(encodings, ",")
 		}
 	}
 	meta["Last-Modified"] = formatHeaderTime(at)
