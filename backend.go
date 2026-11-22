@@ -420,6 +420,11 @@ func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta ma
 	}, nil
 }
 
+// MergeMetadata adds the metadata of an existing object to meta, for every key
+// meta does not set.
+//
+// Deprecated: S3 replaces all metadata of an object when it is written. The
+// bundled backends no longer call this.
 func MergeMetadata(db Backend, bucketName string, objectName string, meta map[string]string) error {
 	// get potential existing object to potentially carry metadata over
 	existingObj, err := db.GetObject(bucketName, objectName, nil)
@@ -431,6 +436,7 @@ func MergeMetadata(db Backend, bucketName string, objectName string, meta map[st
 	}
 	// carry over metadata if it exists
 	if existingObj != nil {
+		defer existingObj.Contents.Close()
 		for k, v := range existingObj.Metadata {
 			// new metadata overwrites old but keep the rest
 			// TODO: check how metadata can be deleted?!

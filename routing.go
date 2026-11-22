@@ -51,6 +51,9 @@ func (g *GoFakeS3) routeBase(w http.ResponseWriter, r *http.Request) {
 	} else if _, ok := query["versions"]; ok {
 		err = g.routeVersions(bucket, w, r)
 
+	} else if _, ok := query["tagging"]; ok {
+		err = g.routeTagging(bucket, object, VersionID(versionFromQuery(query["versionId"])), w, r)
+
 	} else if versionID := versionFromQuery(query["versionId"]); versionID != "" {
 		err = g.routeVersion(bucket, object, VersionID(versionID), w, r)
 
@@ -170,6 +173,25 @@ func (g *GoFakeS3) routeVersion(bucket, object string, versionID VersionID, w ht
 		return g.headObject(bucket, object, versionID, w, r)
 	case "DELETE":
 		return g.deleteObjectVersion(bucket, object, versionID, w, r)
+	default:
+		return ErrMethodNotAllowed
+	}
+}
+
+// routeTagging operates on routes that contain '?tagging' in the query string.
+// The versionID is empty if the request did not name a version.
+func (g *GoFakeS3) routeTagging(bucket, object string, versionID VersionID, w http.ResponseWriter, r *http.Request) error {
+	if object == "" {
+		return g.routeBucketTagging(bucket, w, r)
+	}
+
+	switch r.Method {
+	case "GET":
+		return g.getObjectTagging(bucket, object, versionID, w, r)
+	case "PUT":
+		return g.putObjectTagging(bucket, object, versionID, w, r)
+	case "DELETE":
+		return g.deleteObjectTagging(bucket, object, versionID, w, r)
 	default:
 		return ErrMethodNotAllowed
 	}

@@ -376,15 +376,47 @@ func TestCreateObjectMetadataAndObjectTagging(t *testing.T) {
 		t.Fatal("wrong metadata key")
 	}
 
+	if body := ts.backendGetString(defaultBucket, "object", nil); body != "hello" {
+		t.Fatalf("PutObjectTagging changed the object to %q", body)
+	}
+
 	result, err := svc.GetObjectTagging(t.Context(), &s3.GetObjectTaggingInput{
 		Bucket: aws.String(defaultBucket),
 		Key:    aws.String("object"),
 	})
 	ts.OK(err)
 
-	if *result.TagSet[0].Key != "Tag-Test" && *result.TagSet[0].Value != "test" {
-		t.Fatalf("tag set wrong: %+v", head.Metadata)
+	if len(result.TagSet) != 1 || *result.TagSet[0].Key != "Tag-Test" || *result.TagSet[0].Value != "test" {
+		t.Fatalf("tag set wrong: %+v", result.TagSet)
 	}
+}
+
+// A PUT replaces all metadata of an object. Metadata carried over from the
+// previous object included its checksums, which SDKs then checked against
+// the new contents.
+func TestPutObjectReplacesMetadata(t *testing.T) {
+	runWithAllBackends(t, func(t *testing.T, ts *testServer) {
+		ts.backendPutString(defaultBucket, "object", map[string]string{
+			"X-Amz-Checksum-Crc32": "NhCmhg==",
+			"X-Amz-Meta-Old":       "old",
+		}, "hello")
+		ts.backendPutString(defaultBucket, "object", map[string]string{
+			"X-Amz-Meta-New": "new",
+		}, "world")
+
+		obj, err := ts.backend.HeadObject(defaultBucket, "object")
+		ts.OK(err)
+		obj.Contents.Close()
+
+		for _, key := range []string{"X-Amz-Checksum-Crc32", "X-Amz-Meta-Old"} {
+			if _, ok := obj.Metadata[key]; ok {
+				t.Errorf("%s of the previous object was kept: %v", key, obj.Metadata)
+			}
+		}
+		if obj.Metadata["X-Amz-Meta-New"] != "new" {
+			t.Errorf("new metadata missing: %v", obj.Metadata)
+		}
+	})
 }
 
 func TestCopyObject(t *testing.T) {
@@ -1653,6 +1685,28 @@ func TestPutObjectAWSChunkedTrailerBadLength(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusOK {
 		t.Fatal("expected failure for length mismatch")
+	}
+}
+
+// A negative X-Amz-Decoded-Content-Length must be rejected before the body is
+// read; allocating a buffer of that size panics.
+func TestPutObjectAWSChunkedNegativeLength(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	for _, sha := range []string{"STREAMING-AWS4-HMAC-SHA256-PAYLOAD", "STREAMING-UNSIGNED-PAYLOAD-TRAILER"} {
+		req, err := http.NewRequest("PUT", ts.url("/"+defaultBucket+"/negative"), strings.NewReader("0\r\n\r\n"))
+		ts.OK(err)
+		req.Header.Set("Content-Encoding", "aws-chunked")
+		req.Header.Set("X-Amz-Content-Sha256", sha)
+		req.Header.Set("X-Amz-Decoded-Content-Length", "-1")
+
+		res, err := http.DefaultClient.Do(req)
+		ts.OK(err)
+		res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s: got status %d, want 400", sha, res.StatusCode)
+		}
 	}
 }
 

@@ -535,6 +535,13 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 	}
 
 	for mk, mv := range obj.Metadata {
+		if mk == taggingMetaKey {
+			// S3 returns only the number of tags; GetObjectTagging returns the tags.
+			if tags, _ := decodeTags(mv); len(tags) > 0 {
+				w.Header().Set("x-amz-tagging-count", strconv.Itoa(len(tags)))
+			}
+			continue
+		}
 		w.Header().Set(mk, mv)
 	}
 
@@ -692,6 +699,9 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	if err != nil {
 		return err
 	}
+	if err := validateTaggingHeader(meta); err != nil {
+		return err
+	}
 
 	dest, err := ParseWriteConditions(r.Header)
 	if err != nil {
@@ -733,7 +743,7 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	if sha, ok := meta["X-Amz-Content-Sha256"]; ok && isStreamingPayload(sha) {
 		reader = newChunkedReader(r.Body).verifyTrailer(meta["X-Amz-Trailer"])
 		size, err = strconv.ParseInt(meta["X-Amz-Decoded-Content-Length"], 10, 64)
-		if err != nil {
+		if err != nil || size < 0 {
 			w.WriteHeader(http.StatusBadRequest) // XXX: no code for this, according to s3tests
 			return nil
 		}
@@ -824,9 +834,16 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	// "If the current version of the object is a delete marker, Amazon S3
 	// behaves as if the object was deleted."
 
+	// x-amz-tagging-directive COPY (the default) keeps the tags of the source,
+	// REPLACE takes the tags from x-amz-tagging.
+	replaceTags := strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE")
+	if !replaceTags {
+		delete(meta, taggingMetaKey)
+	}
+
 	// merge metadata, ACL is not preserved
 	for k, v := range srcObj.Metadata {
-		if _, found := meta[k]; !found && k != "X-Amz-Acl" {
+		if _, found := meta[k]; !found && k != "X-Amz-Acl" && !(replaceTags && k == taggingMetaKey) {
 			meta[k] = v
 		}
 	}
@@ -957,6 +974,9 @@ func (g *GoFakeS3) initiateMultipartUpload(bucket, object string, w http.Respons
 
 	meta, err := metadataHeaders(r.Header, g.timeSource.Now(), g.metadataSizeLimit)
 	if err != nil {
+		return err
+	}
+	if err := validateTaggingHeader(meta); err != nil {
 		return err
 	}
 	if err := g.ensureBucketExists(bucket); err != nil {
