@@ -164,30 +164,28 @@ func FormatETag(hash []byte) string {
 // CheckPutConditions validates conditional headers for PutObject operations.
 // This is a shared implementation that all backends can use.
 func CheckPutConditions(conditions *PutConditions, objectInfo *ConditionalObjectInfo) error {
-	// Check If-None-Match: object should not exist
-	if conditions.IfNoneMatch != nil {
-		if *conditions.IfNoneMatch == "*" && objectInfo.Exists {
-			return ErrorMessage(ErrPreconditionFailed, "The object already exists")
-		}
+	if conditions == nil {
+		return nil
 	}
-
-	// Check If-Match: if specified, object must exist and ETag must match
+	var c WriteConditions
 	if conditions.IfMatch != nil {
-		if !objectInfo.Exists {
-			return ErrorMessage(ErrPreconditionFailed, "The object does not exist")
-		}
-		expectedETag := *conditions.IfMatch
-		// Remove quotes if present for comparison
-		if len(expectedETag) >= 2 && expectedETag[0] == '"' && expectedETag[len(expectedETag)-1] == '"' {
-			expectedETag = expectedETag[1 : len(expectedETag)-1]
-		}
-		actualETag := hex.EncodeToString(objectInfo.Hash)
-		if expectedETag != actualETag {
-			return ErrorMessage(ErrPreconditionFailed, "The ETag does not match")
+		c.match = splitEntityTags(*conditions.IfMatch)
+		if c.match == nil {
+			return ErrInvalidArgument
 		}
 	}
-
-	return nil
+	if conditions.IfNoneMatch != nil {
+		c.none = splitEntityTags(*conditions.IfNoneMatch)
+		if c.none == nil {
+			return ErrInvalidArgument
+		}
+	}
+	err := c.Check(objectInfo.Exists, FormatETag(objectInfo.Hash))
+	// Preserve the existing PutObject response for a missing destination.
+	if err == ErrNoSuchKey {
+		return ErrPreconditionFailed
+	}
+	return err
 }
 
 // Backend provides a set of operations to be implemented in order to support

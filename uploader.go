@@ -408,6 +408,10 @@ func (u *uploader) UploadPart(bucket, object string, id UploadID, partNumber int
 }
 
 func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, input *CompleteMultipartUploadRequest) (version VersionID, etag string, err error) {
+	return u.CompleteMultipartUploadConditional(bucket, object, id, input, nil)
+}
+
+func (u *uploader) CompleteMultipartUploadConditional(bucket, object string, id UploadID, input *CompleteMultipartUploadRequest, dest *WriteConditions) (version VersionID, etag string, err error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
@@ -461,7 +465,12 @@ func (u *uploader) CompleteMultipartUpload(bucket, object string, id UploadID, i
 
 	etag = fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hash.Sum(nil)), len(input.Parts))
 
-	result, err := u.storage.PutObject(bucket, object, mpu.Meta, bytes.NewReader(body), int64(len(body)), nil)
+	var result PutObjectResult
+	if b, ok := u.storage.(ConditionalWriteBackend); dest != nil && ok {
+		result, err = b.PutObjectConditional(bucket, object, mpu.Meta, bytes.NewReader(body), int64(len(body)), dest)
+	} else {
+		result, err = u.storage.PutObject(bucket, object, mpu.Meta, bytes.NewReader(body), int64(len(body)), dest.putConditions())
+	}
 	if err != nil {
 		return "", "", err
 	}

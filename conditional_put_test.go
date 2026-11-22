@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/spf13/afero"
 	bolt "go.etcd.io/bbolt"
 
@@ -304,15 +305,30 @@ func testConditionalPutCopyOperation(t *testing.T, ts *testServer) {
 		t.Fatal("Failed to create source object:", err)
 	}
 
-	// Test: Copy operation should not be affected by conditional headers
-	// (copy operations always pass nil conditions to backend)
 	_, err = svc.CopyObject(context.TODO(), &s3.CopyObjectInput{
-		Bucket:     bucket,
-		Key:        destKey,
-		CopySource: aws.String(defaultBucket + "/" + *sourceKey),
+		Bucket: bucket, Key: destKey, CopySource: aws.String(defaultBucket + "/" + *sourceKey),
+		CopySourceIfMatch: aws.String(`"wrong"`), IfNoneMatch: aws.String("*"),
+	})
+	if !hasErrorCode(err, gofakes3.ErrPreconditionFailed) {
+		t.Fatalf("copy with stale source ETag: %v", err)
+	}
+
+	// Create the destination with a conditional copy.
+	_, err = svc.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:      bucket,
+		Key:         destKey,
+		CopySource:  aws.String(defaultBucket + "/" + *sourceKey),
+		IfNoneMatch: aws.String("*"),
 	})
 	if err != nil {
 		t.Fatal("Copy operation failed:", err)
+	}
+
+	_, err = svc.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket: bucket, Key: destKey, CopySource: aws.String(defaultBucket + "/" + *sourceKey), IfNoneMatch: aws.String("*"),
+	})
+	if !hasErrorCode(err, gofakes3.ErrPreconditionFailed) {
+		t.Fatalf("copy to existing destination: %v", err)
 	}
 
 	// Verify copy succeeded
@@ -376,4 +392,27 @@ func testConditionalPutETagComparison(t *testing.T, ts *testServer) {
 	if err != nil {
 		t.Fatal("Expected success with unquoted ETag:", err)
 	}
+}
+
+func TestConditionalMultipartCompletion(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	const key = "multipart-destination"
+	id := ts.createMultipartUpload(defaultBucket, key, nil)
+	part := ts.uploadPart(defaultBucket, key, id, 1, []byte("replacement"))
+	svc := ts.s3Client()
+	existing, err := svc.PutObject(context.Background(), &s3.PutObjectInput{Bucket: aws.String(defaultBucket), Key: aws.String(key), Body: bytes.NewReader([]byte("original"))})
+	ts.OK(err)
+	in := &s3.CompleteMultipartUploadInput{Bucket: aws.String(defaultBucket), Key: aws.String(key), UploadId: aws.String(id), IfNoneMatch: aws.String("*"), MultipartUpload: &s3types.CompletedMultipartUpload{Parts: []s3types.CompletedPart{part}}}
+	_, err = svc.CompleteMultipartUpload(context.Background(), in)
+	if !hasErrorCode(err, gofakes3.ErrPreconditionFailed) {
+		t.Fatalf("completion over existing object: %v", err)
+	}
+	if got := ts.backendGetString(defaultBucket, key, nil); got != "original" {
+		t.Fatalf("destination after failed completion: %q", got)
+	}
+	in.IfNoneMatch = nil
+	in.IfMatch = existing.ETag
+	_, err = svc.CompleteMultipartUpload(context.Background(), in)
+	ts.OK(err)
 }
