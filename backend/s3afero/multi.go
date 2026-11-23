@@ -424,11 +424,6 @@ func (db *MultiBucketBackend) PutObject(
 	conditions *gofakes3.PutConditions,
 ) (result gofakes3.PutObjectResult, err error) {
 
-	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
-	if err != nil {
-		return result, err
-	}
-
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

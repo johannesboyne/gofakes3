@@ -248,11 +248,6 @@ func (db *Backend) PutObject(
 		return result, err
 	}
 
-	err = gofakes3.MergeMetadata(db, bucketName, objectName, meta)
-	if err != nil {
-		return result, err
-	}
-
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

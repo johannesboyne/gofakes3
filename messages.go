@@ -491,6 +491,25 @@ type UploadID string
 
 type VersionID string
 
+// Tagging is the tag set of an object, as sent to PutObjectTagging and
+// returned by GetObjectTagging.
+type Tagging struct {
+	XMLName xml.Name `xml:"Tagging"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	TagSet  TagSet   `xml:"TagSet"`
+}
+
+// TagSet is a struct rather than a slice so that an object without tags is
+// returned with an empty TagSet element, as S3 does.
+type TagSet struct {
+	Tags []Tag `xml:"Tag"`
+}
+
+type Tag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
 type VersioningConfiguration struct {
 	XMLName xml.Name `xml:"VersioningConfiguration"`
 

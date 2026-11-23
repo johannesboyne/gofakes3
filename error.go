@@ -85,6 +85,12 @@ const (
 
 	ErrNoSuchVersion ErrorCode = "NoSuchVersion"
 
+	// The bucket has no tag set.
+	ErrNoSuchTagSet ErrorCode = "NoSuchTagSet"
+
+	// A tag is invalid or the tag set exceeds the S3 limits.
+	ErrInvalidTag ErrorCode = "InvalidTag"
+
 	// No need to retransmit the object
 	ErrNotModified ErrorCode = "NotModified"
 
@@ -236,6 +242,8 @@ func (e ErrorCode) Message() string {
 		return "At least one of the preconditions you specified did not hold"
 	case ErrConditionalRequestConflict:
 		return "A conflicting conditional operation is currently in progress against this resource"
+	case ErrNoSuchTagSet:
+		return "The TagSet does not exist"
 	default:
 		return ""
 	}
@@ -263,6 +271,7 @@ func (e ErrorCode) Status() int {
 		ErrInvalidDigest,
 		ErrInvalidPart,
 		ErrInvalidPartOrder,
+		ErrInvalidTag,
 		ErrInvalidToken,
 		ErrInvalidURI,
 		ErrKeyTooLong,
@@ -281,6 +290,7 @@ func (e ErrorCode) Status() int {
 
 	case ErrNoSuchBucket,
 		ErrNoSuchKey,
+		ErrNoSuchTagSet,
 		ErrNoSuchUpload,
 		ErrNoSuchVersion:
 		return http.StatusNotFound
