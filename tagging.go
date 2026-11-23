@@ -109,67 +109,84 @@ func (g *GoFakeS3) deleteObjectTagging(bucket, object string, versionID VersionI
 	return g.setObjectTags(bucket, object, versionID, "", http.StatusNoContent, w)
 }
 
+// tagWriteAttempts is how often setObjectTags reads and writes an object
+// again when it was replaced in the meantime.
+const tagWriteAttempts = 5
+
 // setObjectTags replaces the tags of the current version of an object with
-// tags, as encoded by encodeTags. The Backend interface cannot change the
-// metadata of an object on its own, so the object is written again with its
-// contents and the new metadata. In a versioned bucket, this creates a new
-// version.
+// tags, as encoded by encodeTags, and writes the response.
 func (g *GoFakeS3) setObjectTags(bucket, object string, versionID VersionID, tags string, status int, w http.ResponseWriter) error {
+	for attempt := 1; ; attempt++ {
+		version, err := g.writeObjectTags(bucket, object, versionID, tags)
+		if HasErrorCode(err, ErrPreconditionFailed) {
+			if attempt < tagWriteAttempts {
+				continue
+			}
+			return ErrConditionalRequestConflict
+		} else if err != nil {
+			return err
+		}
+
+		if version != "" {
+			w.Header().Set("x-amz-version-id", string(version))
+		}
+		w.WriteHeader(status)
+		return nil
+	}
+}
+
+// writeObjectTags stores tags with the current version of an object. The
+// Backend interface cannot change the metadata of an object on its own, so the
+// object is written again with its contents and the new metadata; in a
+// versioned bucket, this creates a new version. The write is conditional on the
+// ETag that was read and fails with ErrPreconditionFailed if the object was
+// replaced in the meantime.
+func (g *GoFakeS3) writeObjectTags(bucket, object string, versionID VersionID, tags string) (VersionID, error) {
 	obj, err := g.storage.GetObject(bucket, object, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if obj == nil {
-		return ErrInternal
+		return "", ErrInternal
 	}
 
 	if versionID != "" && versionID != obj.VersionID {
 		// Writing an older version again would make it the current one.
 		obj.Contents.Close()
-		return ErrNotImplemented
+		return "", ErrNotImplemented
 	}
 
 	if obj.Metadata[taggingMetaKey] == tags {
 		obj.Contents.Close()
-	} else {
-		// Read the whole body first: a backend may truncate the stored object
-		// before it reads the new contents.
-		body, err := ReadAll(obj.Contents, obj.Size)
-		obj.Contents.Close()
-		if err != nil {
-			return err
-		}
-
-		meta := make(map[string]string, len(obj.Metadata)+1)
-		for k, v := range obj.Metadata {
-			meta[k] = v
-		}
-		if tags == "" {
-			delete(meta, taggingMetaKey)
-		} else {
-			meta[taggingMetaKey] = tags
-		}
-
-		// Refuse to overwrite an object that was replaced in the meantime.
-		etag := FormatETag(obj.Hash)
-		result, err := g.storage.PutObject(bucket, object, meta, bytes.NewReader(body), int64(len(body)), &PutConditions{IfMatch: &etag})
-		if HasErrorCode(err, ErrPreconditionFailed) {
-			return ErrConditionalRequestConflict
-		} else if err != nil {
-			return err
-		}
-		obj.VersionID = result.VersionID
+		return obj.VersionID, nil
 	}
 
-	if obj.VersionID != "" {
-		w.Header().Set("x-amz-version-id", string(obj.VersionID))
+	// Read the whole body first: a backend may truncate the stored object
+	// before it reads the new contents.
+	body, err := ReadAll(obj.Contents, obj.Size)
+	obj.Contents.Close()
+	if err != nil {
+		return "", err
 	}
-	w.WriteHeader(status)
-	return nil
+
+	meta := make(map[string]string, len(obj.Metadata)+1)
+	for k, v := range obj.Metadata {
+		meta[k] = v
+	}
+	// An empty value rather than no key, so that a backend which still merges
+	// the previous metadata into a PUT does not bring the old tags back.
+	meta[taggingMetaKey] = tags
+
+	etag := FormatETag(obj.Hash)
+	result, err := g.storage.PutObject(bucket, object, meta, bytes.NewReader(body), int64(len(body)), &PutConditions{IfMatch: &etag})
+	if err != nil {
+		return "", err
+	}
+	return result.VersionID, nil
 }
 
 // validateTaggingHeader checks the tags sent with PutObject, CopyObject or
-// CreateMultipartUpload in the x-amz-tagging header.
+// CreateMultipartUpload in the x-amz-tagging header, if there is one.
 func validateTaggingHeader(meta map[string]string) error {
 	value, ok := meta[taggingMetaKey]
 	if !ok {

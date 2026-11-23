@@ -3,8 +3,10 @@ package gofakes3_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -12,6 +14,7 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
 // tagging builds a tag set from key/value pairs.
@@ -246,6 +249,94 @@ func TestCopyObjectTagging(t *testing.T) {
 		}
 		assertTags(t, ts, "dst", tc.want)
 	}
+}
+
+// racingBackend replaces an object right after GetObject has read it, as a
+// concurrent PUT would, while races is positive.
+type racingBackend struct {
+	gofakes3.Backend
+	races atomic.Int32
+}
+
+func (b *racingBackend) GetObject(bucket, key string, rnge *gofakes3.ObjectRangeRequest) (*gofakes3.Object, error) {
+	obj, err := b.Backend.GetObject(bucket, key, rnge)
+	if n := b.races.Add(-1); err == nil && n >= 0 {
+		body := fmt.Sprintf("replaced %d", n)
+		if _, err := b.Backend.PutObject(bucket, key, map[string]string{}, strings.NewReader(body), int64(len(body)), nil); err != nil {
+			obj.Contents.Close()
+			return nil, err
+		}
+	}
+	return obj, err
+}
+
+// PutObjectTagging writes the object again. It must not overwrite an object
+// that was replaced after it was read; it tags the new one instead.
+func TestObjectTaggingConcurrentWrite(t *testing.T) {
+	backend := &racingBackend{Backend: s3mem.New()}
+	ts := newTestServer(t, withBackend(backend))
+	defer ts.Close()
+	svc := ts.s3Client()
+	ctx := context.TODO()
+	ts.backendPutString(defaultBucket, "object", nil, "hello")
+
+	backend.races.Store(1)
+	_, err := svc.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
+		Bucket: aws.String(defaultBucket), Key: aws.String("object"), Tagging: tagging("k", "v"),
+	})
+	ts.OK(err)
+	backend.races.Store(0)
+	if body := ts.backendGetString(defaultBucket, "object", nil); body != "replaced 0" {
+		t.Fatalf("got %q, want the object written concurrently", body)
+	}
+	assertTags(t, ts, "object", map[string]string{"k": "v"})
+
+	// The object changes before every attempt: give up with 409.
+	backend.races.Store(100)
+	_, err = svc.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
+		Bucket: aws.String(defaultBucket), Key: aws.String("object"), Tagging: tagging("k", "w"),
+	})
+	backend.races.Store(0)
+	if !hasErrorCode(err, gofakes3.ErrConditionalRequestConflict) {
+		t.Fatalf("expected ConditionalRequestConflict, got %v", err)
+	}
+	if body := ts.backendGetString(defaultBucket, "object", nil); !strings.HasPrefix(body, "replaced") || body == "replaced 0" {
+		t.Fatalf("got %q, want the last object written concurrently", body)
+	}
+	assertTags(t, ts, "object", map[string]string{})
+}
+
+// mergingBackend merges the metadata of the previous object into every PUT, as
+// the bundled backends did before. Other backends may still do so.
+type mergingBackend struct {
+	gofakes3.Backend
+}
+
+func (b *mergingBackend) PutObject(bucket, key string, meta map[string]string, input io.Reader, size int64, conditions *gofakes3.PutConditions) (gofakes3.PutObjectResult, error) {
+	if err := gofakes3.MergeMetadata(b.Backend, bucket, key, meta); err != nil {
+		return gofakes3.PutObjectResult{}, err
+	}
+	return b.Backend.PutObject(bucket, key, meta, input, size, conditions)
+}
+
+func TestDeleteObjectTaggingMergingBackend(t *testing.T) {
+	ts := newTestServer(t, withBackend(&mergingBackend{Backend: s3mem.New()}))
+	defer ts.Close()
+	svc := ts.s3Client()
+	ctx := context.TODO()
+
+	_, err := svc.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:  aws.String(defaultBucket),
+		Key:     aws.String("object"),
+		Body:    strings.NewReader("hello"),
+		Tagging: aws.String("a=1"),
+	})
+	ts.OK(err)
+	_, err = svc.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{
+		Bucket: aws.String(defaultBucket), Key: aws.String("object"),
+	})
+	ts.OK(err)
+	assertTags(t, ts, "object", map[string]string{})
 }
 
 func TestObjectTaggingVersioned(t *testing.T) {

@@ -87,6 +87,34 @@ func createAllBackends(t *testing.T) []backendTestCase {
 		cleanup: nil,
 	})
 
+	// 5. and 6. s3afero on the OS file system. Unlike MemMapFs, truncating a
+	// file there also empties a reader that opened it before.
+	singleOsFs, err := s3afero.FsPath(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal("Failed to create file system:", err)
+	}
+	singleOsBackend, err := s3afero.SingleBucket(defaultBucket, singleOsFs, nil)
+	if err != nil {
+		t.Fatal("Failed to create s3afero single backend:", err)
+	}
+	backends = append(backends, backendTestCase{
+		name:    "s3afero-single-os",
+		backend: singleOsBackend,
+	})
+
+	multiOsFs, err := s3afero.FsPath(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal("Failed to create file system:", err)
+	}
+	multiOsBackend, err := s3afero.MultiBucket(multiOsFs)
+	if err != nil {
+		t.Fatal("Failed to create s3afero multi backend:", err)
+	}
+	backends = append(backends, backendTestCase{
+		name:    "s3afero-multi-os",
+		backend: multiOsBackend,
+	})
+
 	return backends
 }
 
@@ -103,7 +131,7 @@ func runWithAllBackends(t *testing.T, testFunc func(*testing.T, *testServer)) {
 
 			// Create test server with this backend
 			var ts *testServer
-			if backendCase.name == "s3afero-single" {
+			if backendCase.name == "s3afero-single" || backendCase.name == "s3afero-single-os" {
 				// SingleBucket backend already has the bucket, don't try to create it
 				ts = newTestServer(t, withBackend(backendCase.backend), withoutInitialBuckets())
 			} else {

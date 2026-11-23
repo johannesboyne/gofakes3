@@ -699,16 +699,15 @@ func (g *GoFakeS3) createObject(bucket, object string, w http.ResponseWriter, r 
 	if err != nil {
 		return err
 	}
-	if err := validateTaggingHeader(meta); err != nil {
-		return err
-	}
-
 	dest, err := ParseWriteConditions(r.Header)
 	if err != nil {
 		return err
 	}
 	if _, ok := meta["X-Amz-Copy-Source"]; ok {
 		return g.copyObject(bucket, object, meta, w, r, dest)
+	}
+	if err := validateTaggingHeader(meta); err != nil {
+		return err
 	}
 
 	var size int64
@@ -837,7 +836,11 @@ func (g *GoFakeS3) copyObject(bucket, object string, meta map[string]string, w h
 	// x-amz-tagging-directive COPY (the default) keeps the tags of the source,
 	// REPLACE takes the tags from x-amz-tagging.
 	replaceTags := strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE")
-	if !replaceTags {
+	if replaceTags {
+		if err := validateTaggingHeader(meta); err != nil {
+			return err
+		}
+	} else {
 		delete(meta, taggingMetaKey)
 	}
 
