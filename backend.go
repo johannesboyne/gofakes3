@@ -1,6 +1,7 @@
 package gofakes3
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 
@@ -407,9 +408,23 @@ func CopyObject(db Backend, srcBucket, srcKey, dstBucket, dstKey string, meta ma
 	if err != nil {
 		return
 	}
-	defer c.Contents.Close()
 
-	_, err = db.PutObject(dstBucket, dstKey, meta, c.Contents, c.Size, nil)
+	var body io.Reader = c.Contents
+	if srcBucket == dstBucket && srcKey == dstKey {
+		// Copying an object onto itself is how clients change its metadata.
+		// A backend may truncate the destination before it reads the source,
+		// so read the source completely first.
+		data, err := ReadAll(c.Contents, c.Size)
+		c.Contents.Close()
+		if err != nil {
+			return result, err
+		}
+		body = bytes.NewReader(data)
+	} else {
+		defer c.Contents.Close()
+	}
+
+	_, err = db.PutObject(dstBucket, dstKey, meta, body, c.Size, nil)
 	if err != nil {
 		return
 	}
