@@ -534,9 +534,7 @@ func (g *GoFakeS3) writeGetOrHeadObjectResponse(obj *Object, w http.ResponseWrit
 		return KeyNotFound(obj.Name)
 	}
 
-	for mk, mv := range obj.Metadata {
-		w.Header().Set(mk, mv)
-	}
+	writeMetadataHeaders(w.Header(), obj.Metadata)
 
 	if obj.VersionID != "" {
 		w.Header().Set("x-amz-version-id", string(obj.VersionID))
@@ -1251,6 +1249,19 @@ func metadataSize(meta map[string]string) int {
 		total += len(k) + len(v)
 	}
 	return total
+}
+
+// writeMetadataHeaders writes the stored metadata to the response. User metadata goes
+// out with lowercase names, as S3 sends them: clients such as boto3 build the
+// Metadata keys from the header names.
+func writeMetadataHeaders(h http.Header, meta map[string]string) {
+	for mk, mv := range meta {
+		if strings.HasPrefix(mk, "X-Amz-Meta-") {
+			h[strings.ToLower(mk)] = []string{mv}
+		} else {
+			h.Set(mk, mv)
+		}
+	}
 }
 
 func metadataHeaders(headers map[string][]string, at time.Time, sizeLimit int) (map[string]string, error) {

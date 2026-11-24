@@ -1749,3 +1749,26 @@ func TestUploadPartAWSChunkedNoContentLength(t *testing.T) {
 	ts.assertCompleteUpload(defaultBucket, "multi", uploadID,
 		[]s3types.CompletedPart{{ETag: &etag, PartNumber: aws.Int32(1)}}, []byte(body))
 }
+
+func TestUserMetadataHeadersAreLowercase(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	ts.backendPutString(defaultBucket, "object", map[string]string{"X-Amz-Meta-User-Id": "42"}, "x")
+
+	client := ts.rawClient()
+	rq, err := http.NewRequest("HEAD", client.URL(fmt.Sprintf("/%s/object", defaultBucket)).String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetHeaders(rq, nil)
+	rq.Header.Set("Connection", "close")
+	raw, err := client.SendRaw(rq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// S3 sends user metadata names in lowercase, and clients such as boto3 keep the case
+	if !bytes.Contains(raw, []byte("\r\nx-amz-meta-user-id: 42\r\n")) {
+		t.Fatalf("user metadata header not lowercase:\n%s", raw)
+	}
+}
