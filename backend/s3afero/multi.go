@@ -132,9 +132,15 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 	bucketPath := path.Join(bucket, prefixPath)
 
 	dirEntries, err := afero.ReadDir(db.bucketFs, filepath.FromSlash(bucketPath))
-	if os.IsNotExist(err) {
-		return nil, gofakes3.BucketNotFound(bucket)
-	} else if err != nil {
+	if err != nil {
+		// A prefix with nothing under it yet (or one that runs through an object)
+		// is an empty listing, not a missing bucket
+		if isDir, _ := afero.DirExists(db.bucketFs, filepath.FromSlash(bucketPath)); !isDir {
+			if exists, _ := afero.DirExists(db.bucketFs, filepath.FromSlash(bucket)); exists {
+				return gofakes3.NewObjectList(), nil
+			}
+			return nil, gofakes3.BucketNotFound(bucket)
+		}
 		return nil, err
 	}
 
