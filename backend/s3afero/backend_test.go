@@ -318,3 +318,53 @@ func TestMultiCreateBucket(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestListMissingPrefix(t *testing.T) {
+	for _, backend := range testingBackends(t) {
+		t.Run(fmt.Sprintf("%T", backend), func(t *testing.T) {
+			result, err := backend.ListBucket("test",
+				&gofakes3.Prefix{HasPrefix: true, Prefix: "photos/", HasDelimiter: true, Delimiter: "/"},
+				gofakes3.ListBucketPage{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Contents) != 0 || len(result.CommonPrefixes) != 0 {
+				t.Fatal("want an empty listing, got", result)
+			}
+		})
+	}
+}
+
+func TestMultiListMissingBucket(t *testing.T) {
+	multi, err := MultiBucket(afero.NewMemMapFs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = multi.ListBucket("nope",
+		&gofakes3.Prefix{HasPrefix: true, Prefix: "photos/", HasDelimiter: true, Delimiter: "/"},
+		gofakes3.ListBucketPage{})
+	if !gofakes3.HasErrorCode(err, gofakes3.ErrNoSuchBucket) {
+		t.Fatal("want NoSuchBucket, got", err)
+	}
+}
+
+func TestListPrefixThroughObject(t *testing.T) {
+	for _, backend := range testingBackends(t) {
+		t.Run(fmt.Sprintf("%T", backend), func(t *testing.T) {
+			contents := []byte("contents")
+			if _, err := backend.PutObject("test", "photos", nil, bytes.NewReader(contents), int64(len(contents)), nil); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := backend.ListBucket("test",
+				&gofakes3.Prefix{HasPrefix: true, Prefix: "photos/", HasDelimiter: true, Delimiter: "/"},
+				gofakes3.ListBucketPage{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Contents) != 0 || len(result.CommonPrefixes) != 0 {
+				t.Fatal("want an empty listing, got", result)
+			}
+		})
+	}
+}

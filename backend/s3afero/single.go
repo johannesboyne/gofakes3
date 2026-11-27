@@ -115,6 +115,11 @@ func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix
 func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ObjectList, error) {
 	dirEntries, err := afero.ReadDir(db.fs, filepath.FromSlash(prefixPath))
 	if err != nil {
+		// A prefix with nothing under it yet (or one that runs through an object)
+		// is an empty listing
+		if isDir, _ := afero.DirExists(db.fs, filepath.FromSlash(prefixPath)); !isDir {
+			return gofakes3.NewObjectList(), nil
+		}
 		return nil, err
 	}
 
