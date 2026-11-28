@@ -126,8 +126,28 @@ func (db *Backend) ListBucket(name string, prefix *gofakes3.Prefix, page gofakes
 
 		cnt++
 		if page.MaxKeys > 0 && cnt >= page.MaxKeys {
-			response.NextMarker = item.data.name
-			response.IsTruncated = iter.Next()
+			// Keys that roll up into the common prefix just emitted don't make a
+			// new page, but NextMarker must move past the whole group, or the
+			// next page emits the prefix again (same as the bolt backend).
+			nextMarker := item.data.name
+			var hasMore bool
+			for iter.Next() {
+				next := iter.Value().(*bucketObject)
+				var nextMatch gofakes3.PrefixMatch
+				if next.data.deleteMarker || !prefix.Match(next.data.name, &nextMatch) {
+					continue
+				}
+				if nextMatch.CommonPrefix && nextMatch.MatchedPart == lastMatchedPart {
+					nextMarker = next.data.name
+					continue
+				}
+				hasMore = true
+				break
+			}
+			if hasMore {
+				response.IsTruncated = true
+				response.NextMarker = nextMarker
+			}
 			break
 		}
 	}
